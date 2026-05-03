@@ -1,7 +1,9 @@
 # RorisDB vs Apache Doris 兼容性矩阵
 
 > 最后更新: 2026-05-04
-> 测试总数: 145 tests / 43 suites / 0 failures
+> 测试总数: 145 tests / 43 suites / 0 failures (v0.1.1)
+>
+> 版本: 0.1.1 - Parser improvements + date/time functions
 
 ---
 
@@ -11,21 +13,22 @@
 |------|:-----------:|:-------:|:--------:|------|
 | SELECT / WHERE / ORDER BY / LIMIT | ✅ | ✅ | ✅ | 完整支持 |
 | GROUP BY + 聚合函数 | ✅ | ✅ | ✅ | COUNT/SUM/AVG/MIN/MAX/COUNT DISTINCT/GROUP_CONCAT |
-| HAVING 子句 | ✅ | ✅ (解析) | ❌ | AST 支持, planner 未转换 |
-| JOIN (INNER/LEFT/RIGHT/FULL/CROSS) | ✅ | ✅ (解析) | ✅ (部分) | INNER/LEFT 有测试 |
+| HAVING 子句 | ✅ | ✅ | ❌ | Filter→Aggregate, 待测试 |
+| JOIN (INNER/LEFT/RIGHT/FULL/CROSS) | ✅ | ✅ | ✅ (部分) | INNER/LEFT 有测试 |
 | 子查询 (IN/EXISTS) | ✅ | ✅ (AST) | ❌ | 解析器支持, planner 未实现 |
 | CTE (WITH 子句) | ✅ | ❌ | ❌ | 未实现 |
 | UNION / UNION ALL | ✅ | ❌ | ❌ | 未实现 |
-| INSERT INTO ... VALUES | ✅ | ✅ (解析) | ✅ | 支持 |
-| INSERT INTO ... SELECT | ✅ | ❌ | ❌ | 未实现 |
+| INSERT INTO ... VALUES | ✅ | ✅ | ✅ | 支持 |
+| INSERT INTO ... SELECT | ✅ | ✅ | ❌ | Planner 支持, 待执行器 |
 | CREATE DATABASE / TABLE | ✅ | ✅ | ✅ | 完整支持 |
 | DROP DATABASE / TABLE | ✅ | ✅ | ✅ | 完整支持 |
 | ALTER TABLE (ADD/DROP/RENAME COLUMN) | ✅ | ✅ (解析) | ❌ | AST 支持, 转换不完整 |
 | TRUNCATE TABLE | ✅ | ❌ | ❌ | 未实现 |
-| DESCRIBE / DESC TABLE | ✅ | ❌ | ❌ | 未实现 |
-| SHOW CREATE TABLE | ✅ | ❌ | ❌ | 未实现 |
+| DESCRIBE / DESC TABLE | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
+| SHOW CREATE TABLE | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
+| SHOW COLUMNS | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
 | USE DATABASE | ✅ | ✅ | ✅ | 完整支持 |
-| SET 变量 | ✅ | ✅ (忽略) | ✅ | 接受但不生效 |
+| SET 变量 | ✅ | ✅ | ✅ | 接受但不生效 |
 | CREATE VIEW | ✅ | ❌ | ❌ | 未实现 |
 | 窗口函数 (OVER / PARTITION BY) | ✅ | ❌ | ❌ | 未实现 |
 | 查询提示 (Hints) | ✅ | ❌ | ❌ | 未实现 |
@@ -65,7 +68,7 @@
 | 字符串 | ~50 | 6 | ✅ | upper, lower, length, concat, substring, trim |
 | 聚合 | ~15 | 7 | ✅ | count, sum, avg, min, max, count_distinct, group_concat |
 | 空值处理 | ~8 | 3 | ❌ | coalesce, ifnull, nullif |
-| 日期函数 | ~30 | 0 | ❌ | DATE_ADD, DATE_SUB, DATE_FORMAT, NOW, CURDATE, YEAR, MONTH, DAY |
+| 日期函数 | ~30 | 17 | ❌ | YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, DATEDIFF, CURDATE, NOW, DATE_ADD, DATE_SUB, DATE_FORMAT, DATE_TRUNC, WEEK, QUARTER, MONTHNAME, DAYNAME |
 | 条件表达式 | ~5 | 1 | ❌ | CASE WHEN (已有), IF |
 | 数学 | ~20 | 0 | ❌ | sin, cos, tan, log, exp, sqrt, pow |
 | JSON | ~15 | 0 | ❌ | json_parse, json_query, json_value |
