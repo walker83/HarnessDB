@@ -24,9 +24,9 @@
 | DROP DATABASE / TABLE | ✅ | ✅ | ✅ | 完整支持 |
 | ALTER TABLE (ADD/DROP/RENAME COLUMN) | ✅ | ✅ (解析) | ❌ | AST 支持, 转换不完整 |
 | TRUNCATE TABLE | ✅ | ❌ | ❌ | 未实现 |
-| DESCRIBE / DESC TABLE | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
-| SHOW CREATE TABLE | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
-| SHOW COLUMNS | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
+| DESCRIBE / DESC TABLE | ✅ | ✅ | ❌ | Planner 支持, 待执行器 |
+| SHOW CREATE TABLE | ✅ | ❌ | ❌ | 未实现 |
+| SHOW COLUMNS | ✅ | ✅ | ❌ | Planner 支持, 待执行器 |
 | USE DATABASE | ✅ | ✅ | ✅ | 完整支持 |
 | SET 变量 | ✅ | ✅ | ✅ | 接受但不生效 |
 | CREATE VIEW | ✅ | ❌ | ❌ | 未实现 |
@@ -222,27 +222,27 @@ SQL 输入
 
 ### P0 - 核心功能缺失 (影响基本可用性)
 
-| # | 特性 | 预估工作量 | 影响范围 |
-|---|------|-----------|---------|
-| 1 | INSERT INTO ... SELECT | 3天 | 数据导入必需 |
-| 2 | 日期函数 (DATE_ADD/DATE_FORMAT/NOW 等) | 5天 | OLAP 查询高频使用 |
-| 3 | CTE (WITH 子句) | 5天 | 复杂分析查询必需 |
-| 4 | 实际 Pipeline 执行 | 10天 | 查询端到端执行 |
-| 5 | gRPC FE-BE 通信 | 7天 | 分布式执行必需 |
+| # | 特性 | 预估工作量 | 影响范围 | 状态 |
+|---|------|-----------|---------|------|
+| 1 | INSERT INTO ... SELECT | 3天 | 数据导入必需 | ✅ 已实现 |
+| 2 | 日期函数 (DATE_ADD/DATE_FORMAT/NOW 等) | 5天 | OLAP 查询高频使用 | ✅ 已实现 (17函数) |
+| 3 | CTE (WITH 子句) | 5天 | 复杂分析查询必需 | ❌ 未实现 |
+| 4 | 实际 Pipeline 执行 | 10天 | 查询端到端执行 | ❌ 未实现 |
+| 5 | gRPC FE-BE 通信 | 7天 | 分布式执行必需 | ❌ 未实现 |
 
 ### P1 - 重要功能增强
 
-| # | 特性 | 预估工作量 | 影响范围 |
-|---|------|-----------|---------|
-| 6 | UNION / UNION ALL | 2天 | 多结果集合并 |
-| 7 | 子查询解嵌 | 5天 | IN/EXISTS 支持 |
-| 8 | HAVING 子句转换 | 1天 | 聚合后过滤 |
-| 9 | 窗口函数 | 10天 | 排名/累计计算 |
-| 10 | DESCRIBE / SHOW CREATE TABLE | 1天 | 元数据查询 |
-| 11 | ZSTD 压缩 | 2天 | 更高压缩比 |
-| 12 | FE HA (Raft) | 15天 | 高可用 |
-| 13 | DECIMAL 运算 | 3天 | 精确数值计算 |
-| 14 | JSON 函数 | 5天 | 半结构化数据处理 |
+| # | 特性 | 预估工作量 | 影响范围 | 状态 |
+|---|------|-----------|---------|------|
+| 6 | UNION / UNION ALL | 2天 | 多结果集合并 | ✅ 已解析 |
+| 7 | 子查询解嵌 | 5天 | IN/EXISTS 支持 | ❌ 未实现 |
+| 8 | HAVING 子句转换 | 1天 | 聚合后过滤 | ✅ 已实现 |
+| 9 | 窗口函数 | 10天 | 排名/累计计算 | ❌ 未实现 |
+| 10 | DESCRIBE / SHOW CREATE TABLE | 1天 | 元数据查询 | ✅ DESCRIBE/SHOW COLUMNS |
+| 11 | ZSTD 压缩 | 2天 | 更高压缩比 | ❌ 未实现 |
+| 12 | FE HA (Raft) | 15天 | 高可用 | ❌ 未实现 |
+| 13 | DECIMAL 运算 | 3天 | 精确数值计算 | ❌ 未实现 |
+| 14 | JSON 函数 | 5天 | 半结构化数据处理 | ❌ 未实现 |
 
 ### P2 - 功能完善
 
