@@ -1,0 +1,29 @@
+[package]
+name = "roris-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "roris-fe"
+path = "src/fe_main.rs"
+
+[[bin]]
+name = "roris-be"
+path = "src/be_main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+
+fe-sql-parser = { workspace = true }
+fe-sql-planner = { workspace = true }
+fe-catalog = { workspace = true }
+fe-scheduler = { workspace = true }
+be-storage = { workspace = true }
+be-execution = { workspace = true }
+be-common = { workspace = true }
+common = { workspace = true }
+rpc = { workspace = true }

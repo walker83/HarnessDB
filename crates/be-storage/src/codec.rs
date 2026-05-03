@@ -1,0 +1,285 @@
+use types::{DataType, ScalarValue};
+
+/// Column encoding types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EncodingType {
+    Raw,
+    Dictionary,
+    RunLength,
+    Lz4,
+    BitPacked,
+}
+
+/// Choose the best encoding for a column based on data characteristics.
+pub fn choose_encoding(data_type: &DataType, cardinality_ratio: f64, is_sorted: bool) -> EncodingType {
+    if is_sorted {
+        return EncodingType::RunLength;
+    }
+    match data_type {
+        DataType::String | DataType::Varchar(_) | DataType::Char(_) => {
+            if cardinality_ratio < 0.1 {
+                EncodingType::Dictionary
+            } else {
+                EncodingType::Raw
+            }
+        }
+        DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::Int128
+        | DataType::Date
+        | DataType::DateTime => EncodingType::BitPacked,
+        _ => EncodingType::Raw,
+    }
+}
+
+/// Encode a raw byte buffer with LZ4 compression.
+pub fn lz4_compress(data: &[u8]) -> Vec<u8> {
+    lz4_flex::block::compress(data)
+}
+
+/// Decode an LZ4-compressed buffer.
+pub fn lz4_decompress(data: &[u8], original_size: usize) -> Result<Vec<u8>, String> {
+    lz4_flex::block::decompress(data, original_size).map_err(|e| format!("LZ4 decompress error: {}", e))
+}
+
+/// Run-length encode a slice of i64 values.
+/// Output format: [(value, count), ...]
+pub fn rle_encode_i64(values: &[i64]) -> Vec<(i64, u32)> {
+    if values.is_empty() {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    let mut current = values[0];
+    let mut count = 1u32;
+    for &v in &values[1..] {
+        if v == current {
+            count += 1;
+        } else {
+            result.push((current, count));
+            current = v;
+            count = 1;
+        }
+    }
+    result.push((current, count));
+    result
+}
+
+/// Decode run-length encoded i64 values.
+pub fn rle_decode_i64(pairs: &[(i64, u32)]) -> Vec<i64> {
+    let cap: usize = pairs.iter().map(|(_, c)| *c as usize).sum();
+    let mut result = Vec::with_capacity(cap);
+    for &(val, count) in pairs {
+        for _ in 0..count {
+            result.push(val);
+        }
+    }
+    result
+}
+
+/// Dictionary-encode string data.
+/// Returns (dictionary: unique strings, indices: u32 index into dictionary).
+pub fn dictionary_encode(strings: &[Option<&str>]) -> (Vec<String>, Vec<u32>) {
+    let mut dict: Vec<String> = Vec::new();
+    let mut index_map = std::collections::HashMap::<String, u32>::new();
+    let mut indices = Vec::with_capacity(strings.len());
+    for &opt in strings {
+        if let Some(s) = opt {
+            let idx = if let Some(&idx) = index_map.get(s) {
+                idx
+            } else {
+                let idx = dict.len() as u32;
+                dict.push(s.to_string());
+                index_map.insert(s.to_string(), idx);
+                idx
+            };
+            indices.push(idx);
+        } else {
+            // nulls use max u32 as sentinel
+            indices.push(u32::MAX);
+        }
+    }
+    (dict, indices)
+}
+
+/// Decode dictionary-encoded strings.
+/// Nulls are represented by index == u32::MAX.
+pub fn dictionary_decode(dict: &[String], indices: &[u32]) -> Vec<Option<String>> {
+    indices
+        .iter()
+        .map(|&idx| {
+            if idx == u32::MAX {
+                None
+            } else {
+                dict.get(idx as usize).cloned()
+            }
+        })
+        .collect()
+}
+
+/// Bit-pack a slice of i64 values.
+/// Finds the min value and number of bits needed, then stores deltas.
+/// Returns (min_value, bits_per_value, packed_bytes).
+pub fn bit_pack_i64(values: &[i64]) -> (i64, u8, Vec<u8>) {
+    if values.is_empty() {
+        return (0, 0, Vec::new());
+    }
+    let min_val = *values.iter().min().unwrap_or(&0);
+    let max_delta = values.iter().map(|&v| (v - min_val) as u128).max().unwrap_or(0);
+    let bits_needed = if max_delta == 0 {
+        1u8
+    } else {
+        (128 - max_delta.leading_zeros()) as u8
+    };
+
+    let total_bits = values.len() as u64 * bits_needed as u64;
+    let byte_len = ((total_bits + 7) / 8) as usize;
+    let mut packed = vec![0u8; byte_len];
+
+    let mut bit_offset: u64 = 0;
+    let mask = if bits_needed == 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits_needed) - 1
+    };
+    for &v in values {
+        let delta = (v - min_val) as u128;
+        let byte_idx = (bit_offset / 8) as usize;
+        let bit_in_byte = (bit_offset % 8) as u8;
+        let val = (delta & mask) as u64;
+        // Write val (bits_needed bits) starting at bit_offset
+        let mut remaining = bits_needed;
+        let mut bits_written = 0u8;
+        let mut cur_byte = byte_idx;
+        let mut cur_bit = bit_in_byte;
+        let val_shifted = val;
+        while remaining > 0 && cur_byte < packed.len() {
+            let available = 8 - cur_bit;
+            let to_write = available.min(remaining);
+            let bits = (val_shifted >> bits_written) & ((1u64 << to_write) - 1);
+            packed[cur_byte] |= (bits as u8) << cur_bit;
+            bits_written += to_write;
+            remaining -= to_write;
+            cur_bit = 0;
+            cur_byte += 1;
+        }
+        bit_offset += bits_needed as u64;
+    }
+
+    (min_val, bits_needed, packed)
+}
+
+/// Unpack bit-packed i64 values.
+pub fn bit_unpack_i64(min_val: i64, bits_per_value: u8, packed: &[u8], count: usize) -> Vec<i64> {
+    if bits_per_value == 0 || count == 0 {
+        return vec![min_val; count];
+    }
+    let mask = if bits_per_value == 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits_per_value) - 1
+    };
+
+    let mut result = Vec::with_capacity(count);
+    let mut bit_offset: u64 = 0;
+    for _ in 0..count {
+        let mut val: u64 = 0;
+        let mut bits_read = 0u8;
+        let mut remaining = bits_per_value;
+        let mut cur_byte = (bit_offset / 8) as usize;
+        let mut cur_bit = (bit_offset % 8) as u8;
+        while remaining > 0 && cur_byte < packed.len() {
+            let available = 8 - cur_bit;
+            let to_read = available.min(remaining);
+            let byte_mask = ((1u64 << to_read) - 1) << cur_bit;
+            let bits = ((packed[cur_byte] as u64 & byte_mask) >> cur_bit) << bits_read;
+            val |= bits;
+            bits_read += to_read;
+            remaining -= to_read;
+            cur_bit = 0;
+            cur_byte += 1;
+        }
+        result.push(min_val + (val & (mask as u64)) as i64);
+        bit_offset += bits_per_value as u64;
+    }
+    result
+}
+
+/// Serialize a ScalarValue to bytes for storage.
+pub fn serialize_scalar(val: &ScalarValue) -> Vec<u8> {
+    match val {
+        ScalarValue::Null => vec![0u8],
+        ScalarValue::Boolean(b) => vec![if *b { 1 } else { 0 }],
+        ScalarValue::Int8(n) => n.to_le_bytes().to_vec(),
+        ScalarValue::Int16(n) => n.to_le_bytes().to_vec(),
+        ScalarValue::Int32(n) => n.to_le_bytes().to_vec(),
+        ScalarValue::Int64(n) => n.to_le_bytes().to_vec(),
+        ScalarValue::Int128(n) => n.to_le_bytes().to_vec(),
+        ScalarValue::Float32(f) => f.to_le_bytes().to_vec(),
+        ScalarValue::Float64(f) => f.to_le_bytes().to_vec(),
+        ScalarValue::Date(d) => d.to_le_bytes().to_vec(),
+        ScalarValue::DateTime(d) => d.to_le_bytes().to_vec(),
+        ScalarValue::String(s) => {
+            let bytes = s.as_bytes();
+            let len = bytes.len() as u32;
+            let mut out = len.to_le_bytes().to_vec();
+            out.extend_from_slice(bytes);
+            out
+        }
+        ScalarValue::Binary(b) => {
+            let len = b.len() as u32;
+            let mut out = len.to_le_bytes().to_vec();
+            out.extend_from_slice(b);
+            out
+        }
+        ScalarValue::Array(arr) => {
+            let mut out = (arr.len() as u32).to_le_bytes().to_vec();
+            for v in arr {
+                out.extend(serialize_scalar(v));
+            }
+            out
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rle_encode_decode() {
+        let values = vec![1i64, 1, 1, 2, 2, 3, 3, 3, 3];
+        let encoded = rle_encode_i64(&values);
+        assert_eq!(encoded, vec![(1, 3), (2, 2), (3, 4)]);
+        let decoded = rle_decode_i64(&encoded);
+        assert_eq!(decoded, values);
+    }
+
+    #[test]
+    fn test_bit_pack_unpack() {
+        let values = vec![100i64, 101, 102, 103, 100, 105];
+        let (min_val, bits, packed) = bit_pack_i64(&values);
+        let decoded = bit_unpack_i64(min_val, bits, &packed, values.len());
+        assert_eq!(decoded, values);
+    }
+
+    #[test]
+    fn test_dictionary_encode_decode() {
+        let strings: Vec<Option<&str>> = vec![Some("hello"), Some("world"), Some("hello"), None];
+        let (dict, indices) = dictionary_encode(&strings);
+        let decoded = dictionary_decode(&dict, &indices);
+        assert_eq!(decoded[0], Some("hello".to_string()));
+        assert_eq!(decoded[1], Some("world".to_string()));
+        assert_eq!(decoded[2], Some("hello".to_string()));
+        assert_eq!(decoded[3], None);
+    }
+
+    #[test]
+    fn test_lz4_roundtrip() {
+        let data = b"hello world this is a test of lz4 compression in rovisdb storage engine";
+        let compressed = lz4_compress(data);
+        let decompressed = lz4_decompress(&compressed, data.len()).unwrap();
+        assert_eq!(decompressed, data.to_vec());
+    }
+}

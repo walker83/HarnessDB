@@ -1,0 +1,19 @@
+[package]
+name = "roris-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "roris-cli"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+rustyline = "15"
+clap = { version = "4", features = ["derive"] }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+common = { workspace = true }
+fe-sql-parser = { workspace = true }
+fe-sql-planner = { workspace = true }
+fe-catalog = { workspace = true }

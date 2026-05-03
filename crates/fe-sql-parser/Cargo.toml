@@ -1,0 +1,10 @@
+[package]
+name = "fe-sql-parser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sqlparser = { workspace = true }
+thiserror = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }

@@ -1,0 +1,10 @@
+[package]
+name = "be-common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+tracing = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }

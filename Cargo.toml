@@ -1,0 +1,94 @@
+[workspace]
+resolver = "2"
+members = [
+    # Main entry point
+    "roris-server",
+
+    # Frontend (FE) - SQL parsing, query planning, catalog management
+    "crates/fe-sql-parser",
+    "crates/fe-sql-planner",
+    "crates/fe-catalog",
+    "crates/fe-scheduler",
+    "crates/fe-common",
+    "crates/fe-expression",
+    "crates/mysql-protocol",
+
+    # Backend (BE) - Storage engine, query execution
+    "crates/be-storage",
+    "crates/be-execution",
+    "crates/be-segment",
+    "crates/be-common",
+
+    # Shared crates
+    "crates/common",
+    "crates/rpc",
+    "crates/types",
+    "crates/proto",
+
+    # Tools & utilities
+    "tools/roris-cli",
+
+    # Benchmarks
+    "benches/tpch",
+
+    # Integration tests
+    "tests/integration",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/user/rovisdb"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+protobuf = "3"
+
+# Logging & tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Networking / RPC
+tonic = "0.12"
+prost = "0.13"
+
+# Data structures
+hashbrown = "0.15"
+indexmap = "2"
+bytes = "1"
+
+# SQL parsing
+sqlparser = "0.53"
+
+# Storage
+rocksdb = "0.23"
+
+# Testing
+mockall = "0.13"
+
+# Internal crates
+fe-sql-parser = { path = "crates/fe-sql-parser" }
+fe-sql-planner = { path = "crates/fe-sql-planner" }
+fe-catalog = { path = "crates/fe-catalog" }
+fe-scheduler = { path = "crates/fe-scheduler" }
+fe-common = { path = "crates/fe-common" }
+be-storage = { path = "crates/be-storage" }
+be-execution = { path = "crates/be-execution" }
+be-segment = { path = "crates/be-segment" }
+be-common = { path = "crates/be-common" }
+common = { path = "crates/common" }
+rpc = { path = "crates/rpc" }
+types = { path = "crates/types" }
+proto = { path = "crates/proto" }
+fe-expression = { path = "crates/fe-expression" }
+mysql-protocol = { path = "crates/mysql-protocol" }

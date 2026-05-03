@@ -1,0 +1,13 @@
+[package]
+name = "fe-catalog"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = "0.12"
+common = { workspace = true }
+types = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "tpch-bench"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+types = { workspace = true }
+common = { workspace = true }
+fe-sql-parser = { workspace = true }
+fe-sql-planner = { workspace = true }
+fe-catalog = { workspace = true }
+criterion = "0.5"
+
+[[bench]]
+name = "tpch_bench"
+harness = false

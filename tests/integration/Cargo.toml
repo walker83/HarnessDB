@@ -1,0 +1,15 @@
+[package]
+name = "integration-tests"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+types = { workspace = true }
+common = { workspace = true }
+fe-sql-parser = { workspace = true }
+fe-sql-planner = { workspace = true }
+fe-catalog = { workspace = true }
+be-storage = { workspace = true }
+mysql-protocol = { workspace = true }
+bytes = { workspace = true }

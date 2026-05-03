@@ -1,0 +1,10 @@
+[package]
+name = "fe-expression"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+types = { workspace = true }
+common = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "be-segment"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }

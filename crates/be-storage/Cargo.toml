@@ -1,0 +1,17 @@
+[package]
+name = "be-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = "0.12"
+bytes = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }
+be-common = { workspace = true }
+lz4_flex = "0.11"

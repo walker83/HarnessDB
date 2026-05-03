@@ -1,0 +1,16 @@
+[package]
+name = "rpc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+
+common = { workspace = true }
+proto = { workspace = true }
