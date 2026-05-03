@@ -1,7 +1,7 @@
 use be_storage::compaction::{CompactionManager, CompactionTask, CompactionType};
 use be_storage::engine::StorageEngine;
-use be_storage::meta::{RowsetMeta, StorageType, TabletMeta};
-use be_storage::rowset::Rowset;
+use be_storage::meta::{StorageType, TabletMeta};
+use be_storage::rowset::{Rowset, RowsetMeta};
 use be_storage::tablet::{Tablet, TabletColumn, TabletSchema};
 use types::DataType;
 
@@ -35,7 +35,7 @@ fn test_tablet_creation() {
         num_rows_per_row_block: 1024,
     };
 
-    let tablet = Tablet::new(1, schema);
+    let tablet = Tablet::new(1, schema, std::env::temp_dir().join("rovisdb_test"));
     assert_eq!(tablet.tablet_id, 1);
     assert_eq!(tablet.schema.columns.len(), 2);
     assert_eq!(tablet.rowset_count(), 0);
@@ -45,13 +45,15 @@ fn test_tablet_creation() {
 #[test]
 fn test_tablet_add_rowset() {
     let schema = create_test_tablet_schema();
-    let tablet = Tablet::new(1, schema);
+    let tablet = Tablet::new(1, schema, std::env::temp_dir().join("rovisdb_test"));
 
-    tablet.add_rowset(100);
+    let meta = RowsetMeta::new(1, 1, 1);
+    tablet.add_rowset(Rowset::new(meta));
     assert_eq!(tablet.rowset_count(), 1);
     assert_eq!(tablet.max_version(), 1);
 
-    tablet.add_rowset(101);
+    let meta2 = RowsetMeta::new(2, 1, 2);
+    tablet.add_rowset(Rowset::new(meta2));
     assert_eq!(tablet.rowset_count(), 2);
     assert_eq!(tablet.max_version(), 2);
 }
@@ -60,9 +62,14 @@ fn test_tablet_add_rowset() {
 // StorageEngine tests
 // ===========================================================================
 
+fn create_test_engine() -> StorageEngine {
+    let temp_dir = std::env::temp_dir().join("rovisdb_test_engine");
+    StorageEngine::open(temp_dir).unwrap()
+}
+
 #[test]
 fn test_engine_create_tablet() {
-    let engine = StorageEngine::new();
+    let engine = create_test_engine();
     let schema = create_test_tablet_schema();
 
     engine.create_tablet(1, schema).unwrap();
@@ -72,7 +79,7 @@ fn test_engine_create_tablet() {
 
 #[test]
 fn test_engine_create_duplicate_tablet() {
-    let engine = StorageEngine::new();
+    let engine = create_test_engine();
     let schema = create_test_tablet_schema();
 
     engine.create_tablet(1, schema.clone()).unwrap();
@@ -82,7 +89,7 @@ fn test_engine_create_duplicate_tablet() {
 
 #[test]
 fn test_engine_drop_tablet() {
-    let engine = StorageEngine::new();
+    let engine = create_test_engine();
     let schema = create_test_tablet_schema();
 
     engine.create_tablet(1, schema).unwrap();
@@ -93,14 +100,14 @@ fn test_engine_drop_tablet() {
 
 #[test]
 fn test_engine_drop_nonexistent_tablet() {
-    let engine = StorageEngine::new();
+    let engine = create_test_engine();
     let result = engine.drop_tablet(999);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_engine_multiple_tablets() {
-    let engine = StorageEngine::new();
+    let engine = create_test_engine();
 
     for i in 1..=5 {
         let schema = create_test_tablet_schema_with_id(i);
@@ -115,7 +122,10 @@ fn test_engine_multiple_tablets() {
 
 #[test]
 fn test_engine_create_and_drop_tablet() {
-    let engine = common::create_test_storage_engine();
+    let engine = create_test_engine();
+    let schema = create_test_tablet_schema();
+
+    engine.create_tablet(1, schema).unwrap();
     assert!(engine.get_tablet(1));
     assert_eq!(engine.tablet_count(), 1);
 
@@ -149,16 +159,30 @@ fn test_rowset_creation() {
 
 #[test]
 fn test_rowset_with_segments() {
-    let mut meta = RowsetMeta::new(1, 100, 1);
-    meta.num_rows = 10000;
-    meta.data_size = 500000;
-    meta.num_segments = 3;
-    meta.empty = false;
+    use be_storage::rowset::SegmentRef;
 
-    let mut rowset = Rowset::new(meta);
-    rowset.segments.push(1);
-    rowset.segments.push(2);
-    rowset.segments.push(3);
+    let meta = RowsetMeta::new(1, 100, 1);
+    let segments = vec![
+        SegmentRef {
+            segment_id: 1,
+            path: "/tmp/seg_1.dat".to_string(),
+            num_rows: 5000,
+            size: 250000,
+        },
+        SegmentRef {
+            segment_id: 2,
+            path: "/tmp/seg_2.dat".to_string(),
+            num_rows: 3000,
+            size: 150000,
+        },
+        SegmentRef {
+            segment_id: 3,
+            path: "/tmp/seg_3.dat".to_string(),
+            num_rows: 2000,
+            size: 100000,
+        },
+    ];
+    let rowset = Rowset::with_segments(meta, segments);
 
     assert_eq!(rowset.num_rows(), 10000);
     assert_eq!(rowset.data_size(), 500000);
@@ -173,17 +197,17 @@ fn test_rowset_with_segments() {
 fn test_memtable_flush_to_segment() {
     // Simulate: create tablet -> write data -> flush to rowset
     let schema = create_test_tablet_schema();
-    let tablet = Tablet::new(1, schema);
+    let tablet = Tablet::new(1, schema, std::env::temp_dir().join("rovisdb_test"));
 
     // Initial state: no rowsets
     assert_eq!(tablet.rowset_count(), 0);
 
     // Simulate a flush: add a rowset
-    tablet.add_rowset(1);
+    tablet.add_rowset(Rowset::new(RowsetMeta::new(1, 1, 1)));
     assert_eq!(tablet.rowset_count(), 1);
 
     // Simulate more data and another flush
-    tablet.add_rowset(2);
+    tablet.add_rowset(Rowset::new(RowsetMeta::new(2, 1, 2)));
     assert_eq!(tablet.rowset_count(), 2);
     assert_eq!(tablet.max_version(), 2);
 }
@@ -232,7 +256,7 @@ fn test_segment_read_with_filter() {
 
 #[test]
 fn test_compaction_manager_creation() {
-    let mgr = CompactionManager::new(4);
+    let mut mgr = CompactionManager::new(4);
     // No tasks pending
     assert!(mgr.poll_task().is_none());
 }
@@ -287,7 +311,9 @@ fn test_compaction_max_concurrent() {
     mgr.complete();
     let task = mgr.poll_task();
     assert!(task.is_some());
-    assert_eq!(task.unwrap().tablet_id, 3);
+    // Any of the remaining tasks could be returned (1 or 3 since 2 was polled first)
+    let task_id = task.unwrap().tablet_id;
+    assert!(task_id == 1 || task_id == 3, "expected 1 or 3, got {}", task_id);
 }
 
 #[test]

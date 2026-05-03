@@ -217,6 +217,10 @@ impl StringVector {
         &self.validity
     }
 
+    pub fn null_count(&self) -> usize {
+        self.validity.null_count()
+    }
+
     pub fn filter(&self, selection: &Bitmap) -> Self {
         let mut offsets = vec![0u32];
         let mut data = Vec::new();

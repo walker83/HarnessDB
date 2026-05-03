@@ -1,7 +1,9 @@
 use types::{
-    Bitmap, Block, DataType, Field, Int32Vector, Int64Vector, Float64Vector,
-    BooleanVector, DateVector, StringVector, Schema, ScalarValue, Vector,
-    Int8Vector, Int16Vector, Int128Vector, Float32Vector,
+    vector::{
+        Int32Vector, Int64Vector, Float64Vector, BooleanVector, DateVector,
+        StringVector, Int8Vector, Int16Vector, Int128Vector, Float32Vector,
+    },
+    Bitmap, Block, DataType, Field, Schema, ScalarValue, Vector,
 };
 
 // ===========================================================================

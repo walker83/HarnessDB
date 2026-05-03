@@ -4,7 +4,8 @@ pub mod queries;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fe_catalog::{CatalogManager, Table, TableColumn};
+use fe_catalog::table::TableColumn;
+use fe_catalog::{CatalogManager, Table};
 use fe_sql_planner::{Planner, PlanNode};
 use types::Block;
 

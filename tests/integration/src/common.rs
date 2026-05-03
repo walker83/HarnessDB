@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 
-use fe_catalog::{CatalogManager, Table, TableColumn};
+use fe_catalog::table::TableColumn;
+use fe_catalog::{CatalogManager, Table};
 use types::{
-    Block, DataType, Field, Float64Vector, Int64Vector, Schema,
-    StringVector, Vector,
+    vector::{Float64Vector, Int64Vector, StringVector},
+    Block, DataType, Field, Schema, Vector,
 };
 
 /// Create a CatalogManager pre-loaded with a test database and sample tables.

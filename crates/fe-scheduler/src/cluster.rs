@@ -273,6 +273,45 @@ impl ClusterManager {
         self.nodes.read().await.get(id).cloned()
     }
 
+    /// Mark a BE as dead
+    pub async fn mark_dead(&mut self, node_id: NodeId) {
+        if let Some(node) = self.nodes.write().await.get_mut(&node_id) {
+            node.health = NodeHealth::Dead;
+            warn!("BE node {} marked dead manually", node_id);
+        }
+    }
+
+    /// Check if a BE is alive (Healthy status)
+    pub async fn is_alive(&self, node_id: NodeId) -> bool {
+        self.nodes
+            .read()
+            .await
+            .get(&node_id)
+            .map(|n| n.health == NodeHealth::Healthy)
+            .unwrap_or(false)
+    }
+
+    /// Get only alive (Healthy) nodes
+    pub async fn get_alive_nodes(&self) -> Vec<BeNode> {
+        self.nodes
+            .read()
+            .await
+            .values()
+            .filter(|n| n.health == NodeHealth::Healthy)
+            .cloned()
+            .collect()
+    }
+
+    /// Get composite load score for a node (lower is better)
+    pub async fn node_load_score(&self, node_id: NodeId) -> f64 {
+        self.nodes
+            .read()
+            .await
+            .get(&node_id)
+            .map(|n| n.load.score())
+            .unwrap_or(f64::MAX)
+    }
+
     /// Number of registered nodes (regardless of health).
     pub async fn node_count(&self) -> usize {
         self.nodes.read().await.len()

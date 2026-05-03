@@ -24,6 +24,7 @@ members = [
     "crates/rpc",
     "crates/types",
     "crates/proto",
+    "crates/data-io",
 
     # Tools & utilities
     "tools/roris-cli",
@@ -66,6 +67,10 @@ prost = "0.13"
 hashbrown = "0.15"
 indexmap = "2"
 bytes = "1"
+tokio-stream = { version = "0.1", features = ["fs"] }
+
+# Date/time handling
+chrono = "0.4"
 
 # SQL parsing
 sqlparser = "0.53"
@@ -92,3 +97,4 @@ types = { path = "crates/types" }
 proto = { path = "crates/proto" }
 fe-expression = { path = "crates/fe-expression" }
 mysql-protocol = { path = "crates/mysql-protocol" }
+data-io = { path = "crates/data-io" }

@@ -1,6 +1,6 @@
 use types::{
-    Block, DataType, Field, Float64Vector, Int32Vector, Int64Vector, Schema,
-    StringVector, Vector,
+    vector::{Float64Vector, Int32Vector, Int64Vector, StringVector},
+    Block, DataType, Field, Schema, Vector,
 };
 
 /// TPC-H scale factor 0.01 data generator.

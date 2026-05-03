@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use fe_catalog::table::TableColumn;
 use fe_catalog::CatalogManager;
-use fe_sql_planner::{PlanNode, PlanNodeType, Planner};
+use fe_sql_planner::{Optimizer, PlanNode, PlanNodeType, Planner};
 
 use integration_tests::common;
 
@@ -87,7 +88,7 @@ fn test_create_table_multiple_types() {
         name: "all_types".to_string(),
         database: "typed_db".to_string(),
         columns: vec![
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_bool".into(),
                 data_type: types::DataType::Boolean,
                 nullable: false,
@@ -95,7 +96,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_int8".into(),
                 data_type: types::DataType::Int8,
                 nullable: true,
@@ -103,7 +104,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_int32".into(),
                 data_type: types::DataType::Int32,
                 nullable: true,
@@ -111,7 +112,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_int64".into(),
                 data_type: types::DataType::Int64,
                 nullable: false,
@@ -119,7 +120,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_float32".into(),
                 data_type: types::DataType::Float32,
                 nullable: true,
@@ -127,7 +128,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_float64".into(),
                 data_type: types::DataType::Float64,
                 nullable: true,
@@ -135,7 +136,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_string".into(),
                 data_type: types::DataType::String,
                 nullable: false,
@@ -143,7 +144,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_date".into(),
                 data_type: types::DataType::Date,
                 nullable: true,
@@ -151,7 +152,7 @@ fn test_create_table_multiple_types() {
                 agg_type: None,
                 comment: String::new(),
             },
-            fe_catalog::TableColumn {
+            TableColumn {
                 name: "col_datetime".into(),
                 data_type: types::DataType::DateTime,
                 nullable: true,
@@ -588,7 +589,7 @@ fn test_parse_aggregate_functions() {
 #[test]
 fn test_plan_select_query() {
     let catalog = common::create_test_catalog();
-    let planner = Planner::new(catalog);
+    let mut planner = Planner::new(catalog);
     planner.set_database("test_db");
 
     let stmts = fe_sql_parser::parse_sql(
@@ -606,7 +607,7 @@ fn test_plan_select_query() {
 #[test]
 fn test_plan_aggregate_query() {
     let catalog = common::create_test_catalog();
-    let planner = Planner::new(catalog);
+    let mut planner = Planner::new(catalog);
     planner.set_database("test_db");
 
     let stmts = fe_sql_parser::parse_sql(
@@ -624,7 +625,7 @@ fn test_plan_aggregate_query() {
 #[test]
 fn test_plan_order_limit_query() {
     let catalog = common::create_test_catalog();
-    let planner = Planner::new(catalog);
+    let mut planner = Planner::new(catalog);
     planner.set_database("test_db");
 
     let stmts = fe_sql_parser::parse_sql(

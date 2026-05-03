@@ -13,7 +13,7 @@ pub struct TabletMeta {
     pub storage_type: StorageType,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum StorageType {
     Local,
     Remote,
