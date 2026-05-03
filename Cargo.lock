@@ -182,7 +182,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "be-common"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "common",
  "serde",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "be-execution"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "be-storage",
  "common",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "be-segment"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "common",
@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "be-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "be-common",
  "bytes",
@@ -373,7 +373,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "common"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "serde",
@@ -456,7 +456,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "data-io"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "fe-catalog"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "common",
  "fe-common",
@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "fe-common"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "common",
  "serde",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "fe-expression"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "common",
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "fe-scheduler"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "common",
  "fe-catalog",
@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "fe-sql-parser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "common",
  "sqlparser",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "fe-sql-planner"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "common",
  "fe-catalog",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "integration-tests"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "be-storage",
  "bytes",
@@ -1050,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "mysql-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "common",
@@ -1255,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
 ]
@@ -1375,7 +1375,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "roris-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "roris-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "be-common",
@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "rpc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "common",
@@ -1787,7 +1787,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tpch-bench"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "common",
  "criterion",
@@ -1873,7 +1873,7 @@ checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
 
 [[package]]
 name = "types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "criterion",

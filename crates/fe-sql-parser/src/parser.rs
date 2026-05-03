@@ -146,11 +146,63 @@ fn convert_statement(
 fn convert_query(
     query: sqlparser::ast::Query,
 ) -> Result<QueryStmt, ParseError> {
-    let select = match *query.body {
-        sqlparser::ast::SetExpr::Select(select) => select,
-        _ => return Err(ParseError::Unsupported("non-SELECT query body".to_string())),
-    };
+    match *query.body {
+        sqlparser::ast::SetExpr::Select(select) => {
+            let order_by = query.order_by.map(|ob| ob.exprs).unwrap_or_default();
+            let limit = query.limit;
+            let offset = query.offset;
+            convert_select(*select, order_by, limit, offset)
+        }
+        sqlparser::ast::SetExpr::SetOperation { op, set_quantifier, left, right } => {
+            let left_query = convert_set_expr(*left)?;
+            let right_query = convert_set_expr(*right)?;
+            let union_op = match op {
+                sqlparser::ast::SetOperator::Union => UnionOperator::Union,
+                sqlparser::ast::SetOperator::Except => UnionOperator::Except,
+                sqlparser::ast::SetOperator::Intersect => UnionOperator::Intersect,
+            };
+            let _ = (union_op, set_quantifier);
+            let _ = right_query;
+            let order_by = query.order_by.map(|ob| ob.exprs).unwrap_or_default();
+            Ok(QueryStmt {
+                select_list: left_query.select_list,
+                from: left_query.from,
+                r#where: left_query.r#where,
+                group_by: left_query.group_by,
+                having: left_query.having,
+                order_by: order_by.into_iter().map(|o| OrderByItem {
+                    expr: convert_expr(o.expr),
+                    ascending: o.asc.unwrap_or(true),
+                    nulls_first: o.nulls_first.unwrap_or(true),
+                }).collect(),
+                limit: query.limit.and_then(|l| match l {
+                    sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
+                    _ => None,
+                }),
+                offset: query.offset.and_then(|o| match o.value {
+                    sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
+                    _ => None,
+                }),
+            })
+        }
+        _ => Err(ParseError::Unsupported("non-SELECT query body".to_string())),
+    }
+}
 
+fn convert_set_expr(expr: sqlparser::ast::SetExpr) -> Result<QueryStmt, ParseError> {
+    match expr {
+        sqlparser::ast::SetExpr::Select(select) => convert_select(*select, vec![], None, None),
+        sqlparser::ast::SetExpr::Query(query) => convert_query(*query),
+        _ => Err(ParseError::Unsupported("set operation not supported".to_string())),
+    }
+}
+
+fn convert_select(
+    select: sqlparser::ast::Select,
+    order_by: Vec<sqlparser::ast::OrderByExpr>,
+    limit: Option<sqlparser::ast::Expr>,
+    offset: Option<sqlparser::ast::Offset>,
+) -> Result<QueryStmt, ParseError> {
     let select_list = select.projection.into_iter().map(|item| {
         match item {
             sqlparser::ast::SelectItem::UnnamedExpr(expr) => SelectItem {
@@ -181,13 +233,21 @@ fn convert_query(
         _ => vec![],
     };
 
-    let order_by: Vec<OrderByItem> = query.order_by.into_iter().flat_map(|o| {
-        o.exprs.into_iter().map(|e| OrderByItem {
-            expr: convert_expr(e.expr),
-            ascending: e.asc.unwrap_or(true),
-            nulls_first: e.nulls_first.unwrap_or(true),
-        })
+    let order_by: Vec<OrderByItem> = order_by.into_iter().map(|o| OrderByItem {
+        expr: convert_expr(o.expr),
+        ascending: o.asc.unwrap_or(true),
+        nulls_first: o.nulls_first.unwrap_or(true),
     }).collect();
+
+    let limit = limit.and_then(|l| match l {
+        sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
+        _ => None,
+    });
+
+    let offset = offset.and_then(|o| match o.value {
+        sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
+        _ => None,
+    });
 
     Ok(QueryStmt {
         select_list,
@@ -196,14 +256,8 @@ fn convert_query(
         group_by,
         having: select.having.map(convert_expr),
         order_by,
-        limit: query.limit.and_then(|l| match l {
-            sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
-            _ => None,
-        }),
-        offset: query.offset.and_then(|o| match o.value {
-            sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
-            _ => None,
-        }),
+        limit,
+        offset,
     })
 }
 

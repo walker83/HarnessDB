@@ -15,6 +15,7 @@ pub enum Statement {
     Explain(ExplainStmt),
     UseDatabase(String),
     SetVariable(SetVariableStmt),
+    Union(UnionStmt),
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,21 @@ pub struct QueryStmt {
     pub order_by: Vec<OrderByItem>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnionStmt {
+    pub op: UnionOperator,
+    pub all: bool,
+    pub left: Box<QueryStmt>,
+    pub right: Box<QueryStmt>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnionOperator {
+    Union,
+    Except,
+    Intersect,
 }
 
 #[derive(Debug, Clone)]

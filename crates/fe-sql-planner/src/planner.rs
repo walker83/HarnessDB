@@ -76,16 +76,54 @@ impl Planner {
             Statement::ShowCreateTable(..) => Err(DrorisError::Plan(
                 "SHOW CREATE TABLE is not yet supported".into(),
             )),
-            Statement::Describe(_, _) => Err(DrorisError::Plan(
-                "DESCRIBE is not yet supported".into(),
-            )),
-            Statement::ShowColumns(_, _) => Err(DrorisError::Plan(
-                "SHOW COLUMNS is not yet supported".into(),
+            Statement::Describe(db, table) => self.plan_describe(db, table),
+            Statement::ShowColumns(db, table) => self.plan_show_columns(db, table),
+            Statement::Union(_) => Err(DrorisError::Plan(
+                "UNION is not yet supported".into(),
             )),
         }
     }
 
     // ---- DDL ----
+
+    fn plan_describe(&self, db: String, table: String) -> Result<PlanNode, DrorisError> {
+        let target_db = if db.is_empty() { &self.current_database } else { &db };
+        Ok(self.make_node(
+            PlanNodeType::Scan(ScanNode {
+                table_name: "information_schema.columns".into(),
+                database: Some("information_schema".into()),
+                columns: vec!["column_name".into(), "data_type".into(), "is_nullable".into(), "column_default".into(), "column_comment".into()],
+                predicates: vec![
+                    format!("table_schema = '{}'", target_db),
+                    format!("table_name = '{}'", table),
+                ],
+                limit: None,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_columns(&self, db: Option<String>, table: Option<String>) -> Result<PlanNode, DrorisError> {
+        let target_db = db.as_deref().unwrap_or(&self.current_database);
+        let table_pred = if let Some(tbl) = table {
+            format!("table_name = '{}'", tbl)
+        } else {
+            "1=1".to_string()
+        };
+        Ok(self.make_node(
+            PlanNodeType::Scan(ScanNode {
+                table_name: "information_schema.columns".into(),
+                database: Some("information_schema".into()),
+                columns: vec!["column_name".into(), "data_type".into(), "is_nullable".into(), "column_default".into(), "column_comment".into()],
+                predicates: vec![
+                    format!("table_schema = '{}'", target_db),
+                    table_pred,
+                ],
+                limit: None,
+            }),
+            vec![],
+        ))
+    }
 
     fn plan_create_database(&self, stmt: CreateDatabaseStmt) -> Result<PlanNode, DrorisError> {
         Ok(self.make_node(

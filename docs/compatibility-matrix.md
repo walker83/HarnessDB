@@ -1,9 +1,9 @@
 # RorisDB vs Apache Doris 兼容性矩阵
 
 > 最后更新: 2026-05-04
-> 测试总数: 145 tests / 43 suites / 0 failures (v0.1.1)
+> 测试总数: 145 tests / 43 suites / 0 failures (v0.1.2)
 >
-> 版本: 0.1.1 - Parser improvements + date/time functions
+> 版本: 0.1.2 - DESCRIBE/SHOW COLUMNS planner + UNION parsing
 
 ---
 
@@ -17,7 +17,7 @@
 | JOIN (INNER/LEFT/RIGHT/FULL/CROSS) | ✅ | ✅ | ✅ (部分) | INNER/LEFT 有测试 |
 | 子查询 (IN/EXISTS) | ✅ | ✅ (AST) | ❌ | 解析器支持, planner 未实现 |
 | CTE (WITH 子句) | ✅ | ❌ | ❌ | 未实现 |
-| UNION / UNION ALL | ✅ | ❌ | ❌ | 未实现 |
+| UNION / UNION ALL | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
 | INSERT INTO ... VALUES | ✅ | ✅ | ✅ | 支持 |
 | INSERT INTO ... SELECT | ✅ | ✅ | ❌ | Planner 支持, 待执行器 |
 | CREATE DATABASE / TABLE | ✅ | ✅ | ✅ | 完整支持 |
