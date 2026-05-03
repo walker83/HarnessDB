@@ -203,3 +203,419 @@ fn like_dp(s: &[char], p: &[char], si: usize, pi: usize) -> bool {
 }
 
 impl Default for ExprEvaluator { fn default() -> Self { Self::new() } }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use types::{Field, Schema};
+    use crate::expr::{ColumnRef, FunctionCall};
+
+    fn make_block() -> Block {
+        let schema = Schema::new(vec![
+            Field::new("a", DataType::Int64, false),
+            Field::new("b", DataType::Int64, false),
+            Field::new("x", DataType::Float64, false),
+            Field::new("s", DataType::String, false),
+        ]);
+        let cols = vec![
+            Vector::Int64(types::vector::Int64Vector::from_vec(vec![10, 20, 30, 40, 50])),
+            Vector::Int64(types::vector::Int64Vector::from_vec(vec![1, 2, 3, 4, 5])),
+            Vector::Float64(types::vector::Float64Vector::from_vec(vec![1.5, 2.5, 3.5, 4.5, 5.5])),
+            Vector::String(types::vector::StringVector::from_vec(vec!["hello", "world", "foo", "bar", "baz"])),
+        ];
+        Block::new(schema, cols)
+    }
+
+    // ---- Arithmetic ----
+
+    #[test]
+    fn test_int64_add() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Add, Expr::column(0, "a"), Expr::column(1, "b"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[11, 22, 33, 44, 55]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+
+    #[test]
+    fn test_int64_subtract() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Subtract, Expr::column(0, "a"), Expr::column(1, "b"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[9, 18, 27, 36, 45]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+
+    #[test]
+    fn test_int64_multiply() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Multiply, Expr::column(0, "a"), Expr::column(1, "b"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[10, 40, 90, 160, 250]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+
+    #[test]
+    fn test_float64_divide() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Divide, Expr::column(2, "x"), Expr::literal(ScalarValue::Float64(2.0)));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Float64(v) => {
+                let d = v.data();
+                assert!((d[0] - 0.75).abs() < 0.001);
+                assert!((d[4] - 2.75).abs() < 0.001);
+            }
+            _ => panic!("expected Float64 vector"),
+        }
+    }
+
+    #[test]
+    fn test_literal_arithmetic() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Add, Expr::literal(ScalarValue::Int64(100)), Expr::column(0, "a"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[110, 120, 130, 140, 150]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+
+    // ---- Comparison ----
+
+    #[test]
+    fn test_int64_eq() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Eq, Expr::column(0, "a"), Expr::literal(ScalarValue::Int64(30)));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, false, true, false, false]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    #[test]
+    fn test_int64_gt() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Gt, Expr::column(0, "a"), Expr::literal(ScalarValue::Int64(25)));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, false, true, true, true]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    #[test]
+    fn test_float64_comparison() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Le, Expr::column(2, "x"), Expr::literal(ScalarValue::Float64(3.5)));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[true, true, true, false, false]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    // ---- Logical ----
+
+    #[test]
+    fn test_and() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let gt = Expr::binary(BinaryOperator::Gt, Expr::column(0, "a"), Expr::literal(ScalarValue::Int64(15)));
+        let lt = Expr::binary(BinaryOperator::Lt, Expr::column(0, "a"), Expr::literal(ScalarValue::Int64(45)));
+        let expr = Expr::binary(BinaryOperator::And, gt, lt);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, true, true, true, false]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    #[test]
+    fn test_or() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let eq10 = Expr::binary(BinaryOperator::Eq, Expr::column(0, "a"), Expr::literal(ScalarValue::Int64(10)));
+        let eq50 = Expr::binary(BinaryOperator::Eq, Expr::column(0, "a"), Expr::literal(ScalarValue::Int64(50)));
+        let expr = Expr::binary(BinaryOperator::Or, eq10, eq50);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[true, false, false, false, true]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    #[test]
+    fn test_not() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let eq = Expr::binary(BinaryOperator::Eq, Expr::column(0, "a"), Expr::literal(ScalarValue::Int64(30)));
+        let expr = Expr::unary(UnaryOperator::Not, eq);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[true, true, false, true, true]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    // ---- IS NULL / IS NOT NULL ----
+
+    #[test]
+    fn test_is_null() {
+        let ev = ExprEvaluator::new();
+        let schema = Schema::new(vec![Field::new("v", DataType::Int64, true)]);
+        let block = Block::new(schema, vec![
+            Vector::Int64(types::vector::Int64Vector::from_nullable_vec(vec![Some(1), None, Some(3)])),
+        ]);
+        let expr = Expr::is_null(Expr::column(0, "v"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, true, false]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    #[test]
+    fn test_is_not_null() {
+        let ev = ExprEvaluator::new();
+        let schema = Schema::new(vec![Field::new("v", DataType::Int64, true)]);
+        let block = Block::new(schema, vec![
+            Vector::Int64(types::vector::Int64Vector::from_nullable_vec(vec![Some(1), None, Some(3)])),
+        ]);
+        let expr = Expr::is_not_null(Expr::column(0, "v"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[true, false, true]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    // ---- IN list ----
+
+    #[test]
+    fn test_in_list() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::in_list(
+            Expr::column(1, "b"),
+            vec![Expr::literal(ScalarValue::Int64(1)), Expr::literal(ScalarValue::Int64(3)), Expr::literal(ScalarValue::Int64(5))],
+            false,
+        );
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[true, false, true, false, true]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    #[test]
+    fn test_not_in_list() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::in_list(
+            Expr::column(1, "b"),
+            vec![Expr::literal(ScalarValue::Int64(1)), Expr::literal(ScalarValue::Int64(3))],
+            true,
+        );
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, true, false, true, true]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    // ---- BETWEEN ----
+
+    #[test]
+    fn test_between() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::between(
+            Expr::column(0, "a"),
+            Expr::literal(ScalarValue::Int64(20)),
+            Expr::literal(ScalarValue::Int64(40)),
+            false,
+        );
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, true, true, true, false]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    // ---- LIKE ----
+
+    #[test]
+    fn test_like_pattern() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::like(
+            Expr::column(3, "s"),
+            Expr::literal(ScalarValue::String("h%".to_string())),
+            false,
+        );
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[true, false, false, false, false]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    #[test]
+    fn test_like_underscore() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::like(
+            Expr::column(3, "s"),
+            Expr::literal(ScalarValue::String("___".to_string())),
+            false,
+        );
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, false, true, true, true]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    // ---- CAST ----
+
+    #[test]
+    fn test_cast_int64_to_float64() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::cast(Expr::column(0, "a"), DataType::Float64);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Float64(v) => assert_eq!(v.data(), &[10.0, 20.0, 30.0, 40.0, 50.0]),
+            _ => panic!("expected Float64 vector"),
+        }
+    }
+
+    #[test]
+    fn test_cast_float64_to_int64() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::cast(Expr::column(2, "x"), DataType::Int64);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[1, 2, 3, 4, 5]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+
+    #[test]
+    fn test_cast_int64_to_string() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::cast(Expr::column(0, "a"), DataType::String);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::String(v) => {
+                assert_eq!(v.get(0), Some("10"));
+                assert_eq!(v.get(4), Some("50"));
+            }
+            _ => panic!("expected String vector"),
+        }
+    }
+
+    // ---- Unary negate ----
+
+    #[test]
+    fn test_negate_int64() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::unary(UnaryOperator::Neg, Expr::column(0, "a"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[-10, -20, -30, -40, -50]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+
+    // ---- Functions ----
+
+    #[test]
+    fn test_function_abs() {
+        let ev = ExprEvaluator::new();
+        let schema = Schema::new(vec![Field::new("v", DataType::Int64, false)]);
+        let block = Block::new(schema, vec![
+            Vector::Int64(types::vector::Int64Vector::from_vec(vec![-5, 10, -3, 0, 7])),
+        ]);
+        let expr = Expr::call("abs", vec![Expr::column(0, "v")]);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[5, 10, 3, 0, 7]),
+            _ => panic!("expected Int64 vector, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_function_upper() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::call("upper", vec![Expr::column(3, "s")]);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::String(v) => {
+                assert_eq!(v.get(0), Some("HELLO"));
+                assert_eq!(v.get(1), Some("WORLD"));
+            }
+            _ => panic!("expected String vector"),
+        }
+    }
+
+    #[test]
+    fn test_function_length() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::call("length", vec![Expr::column(3, "s")]);
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[5, 5, 3, 3, 3]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+
+    // ---- String comparison ----
+
+    #[test]
+    fn test_string_eq() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Eq, Expr::column(3, "s"), Expr::literal(ScalarValue::String("foo".to_string())));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Boolean(v) => assert_eq!(v.data(), &[false, false, true, false, false]),
+            _ => panic!("expected Boolean vector"),
+        }
+    }
+
+    // ---- Modulo ----
+
+    #[test]
+    fn test_int64_modulo() {
+        let ev = ExprEvaluator::new();
+        let block = make_block();
+        let expr = Expr::binary(BinaryOperator::Modulo, Expr::column(0, "a"), Expr::column(1, "b"));
+        let result = ev.evaluate(&expr, &block);
+        match result {
+            Vector::Int64(v) => assert_eq!(v.data(), &[0, 0, 0, 0, 0]),
+            _ => panic!("expected Int64 vector"),
+        }
+    }
+}

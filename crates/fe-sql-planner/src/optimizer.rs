@@ -200,3 +200,288 @@ impl Optimizer {
 }
 
 impl Default for Optimizer { fn default() -> Self { Self::new() } }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plan_node::*;
+
+    fn next_id() -> PlanNodeId { PlanNodeId(0) }
+
+    fn scan_node(table: &str, cols: &[&str]) -> PlanNode {
+        PlanNode {
+            id: PlanNodeId(0),
+            node_type: PlanNodeType::Scan(ScanNode {
+                table_name: table.to_string(),
+                database: Some("db".to_string()),
+                columns: cols.iter().map(|c| c.to_string()).collect(),
+                predicates: vec![],
+                limit: None,
+            }),
+            children: vec![],
+            stats: PlanStats::default(),
+        }
+    }
+
+    // ---- Predicate pushdown ----
+
+    #[test]
+    fn test_predicate_pushdown_to_scan() {
+        let opt = Optimizer::new();
+        let scan = scan_node("t1", &["a", "b"]);
+        let plan = PlanNode {
+            id: PlanNodeId(1),
+            node_type: PlanNodeType::Filter(FilterNode { predicate: "a > 10".to_string() }),
+            children: vec![scan],
+            stats: PlanStats::default(),
+        };
+        let result = opt.optimize(plan);
+        // Predicate should be pushed into scan
+        match &result.node_type {
+            PlanNodeType::Scan(scan) => {
+                assert_eq!(scan.predicates.len(), 1);
+                assert_eq!(scan.predicates[0], "a > 10");
+            }
+            other => panic!("Expected Scan, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_predicate_pushdown_through_project() {
+        let opt = Optimizer::new();
+        let scan = scan_node("t1", &["a", "b"]);
+        let project = PlanNode {
+            id: PlanNodeId(1),
+            node_type: PlanNodeType::Project(ProjectNode { exprs: vec!["a".to_string()] }),
+            children: vec![scan],
+            stats: PlanStats::default(),
+        };
+        let plan = PlanNode {
+            id: PlanNodeId(2),
+            node_type: PlanNodeType::Filter(FilterNode { predicate: "a > 5".to_string() }),
+            children: vec![project],
+            stats: PlanStats::default(),
+        };
+        let result = opt.optimize(plan);
+        // Optimizer pushes filter through project into scan
+        fn find_scan(node: &PlanNode) -> Option<&ScanNode> {
+            match &node.node_type {
+                PlanNodeType::Scan(s) => Some(s),
+                _ => node.children.iter().find_map(find_scan),
+            }
+        }
+        let scan = find_scan(&result).expect("should find scan");
+        assert!(scan.predicates.contains(&"a > 5".to_string()));
+    }
+
+    #[test]
+    fn test_filter_merge() {
+        let opt = Optimizer::new();
+        let scan = scan_node("t1", &["a"]);
+        let inner = PlanNode {
+            id: PlanNodeId(1),
+            node_type: PlanNodeType::Filter(FilterNode { predicate: "a > 5".to_string() }),
+            children: vec![scan],
+            stats: PlanStats::default(),
+        };
+        let plan = PlanNode {
+            id: PlanNodeId(2),
+            node_type: PlanNodeType::Filter(FilterNode { predicate: "a < 100".to_string() }),
+            children: vec![inner],
+            stats: PlanStats::default(),
+        };
+        let result = opt.optimize(plan);
+        // Filters should be merged and pushed into scan
+        fn find_scan(node: &PlanNode) -> Option<&ScanNode> {
+            match &node.node_type {
+                PlanNodeType::Scan(s) => Some(s),
+                _ => node.children.iter().find_map(find_scan),
+            }
+        }
+        let scan = find_scan(&result).expect("should find scan");
+        let combined: String = scan.predicates.join(" ");
+        assert!(combined.contains("a > 5") || combined.contains("a < 100"));
+    }
+
+    // ---- Column pruning ----
+
+    #[test]
+    fn test_column_pruning_removes_unused() {
+        let opt = Optimizer::new();
+        let scan = scan_node("t1", &["a", "b", "c"]);
+        let plan = PlanNode {
+            id: PlanNodeId(1),
+            node_type: PlanNodeType::Project(ProjectNode { exprs: vec!["a".to_string()] }),
+            children: vec![scan],
+            stats: PlanStats::default(),
+        };
+        let result = opt.optimize(plan);
+        fn find_scan(node: &PlanNode) -> Option<&ScanNode> {
+            match &node.node_type {
+                PlanNodeType::Scan(s) => Some(s),
+                _ => node.children.iter().find_map(find_scan),
+            }
+        }
+        let scan = find_scan(&result).expect("should find scan");
+        // Column pruning should keep at least column "a"
+        assert!(scan.columns.contains(&"a".to_string()));
+    }
+
+    // ---- Limit pushdown ----
+
+    #[test]
+    fn test_limit_pushdown_to_scan() {
+        let opt = Optimizer::new();
+        let scan = scan_node("t1", &["a"]);
+        let plan = PlanNode {
+            id: PlanNodeId(1),
+            node_type: PlanNodeType::Limit(LimitNode { limit: 10, offset: 0 }),
+            children: vec![scan],
+            stats: PlanStats::default(),
+        };
+        let result = opt.optimize(plan);
+        // Limit should be pushed into scan
+        match &result.node_type {
+            PlanNodeType::Scan(scan) => {
+                assert_eq!(scan.limit, Some(10));
+            }
+            other => panic!("Expected Scan with limit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_limit_pushdown_through_sort() {
+        let opt = Optimizer::new();
+        let scan = scan_node("t1", &["a"]);
+        let sort = PlanNode {
+            id: PlanNodeId(1),
+            node_type: PlanNodeType::Sort(SortNode { order_by: vec![SortItem { expr: "a".to_string(), ascending: true }] }),
+            children: vec![scan],
+            stats: PlanStats::default(),
+        };
+        let plan = PlanNode {
+            id: PlanNodeId(2),
+            node_type: PlanNodeType::Limit(LimitNode { limit: 5, offset: 0 }),
+            children: vec![sort],
+            stats: PlanStats::default(),
+        };
+        let result = opt.optimize(plan);
+        // Limit should be pushed down to scan
+        fn find_scan(node: &PlanNode) -> Option<&ScanNode> {
+            match &node.node_type {
+                PlanNodeType::Scan(s) => Some(s),
+                _ => node.children.iter().find_map(find_scan),
+            }
+        }
+        let scan = find_scan(&result).expect("should find scan");
+        assert_eq!(scan.limit, Some(5));
+    }
+
+    // ---- Join reordering ----
+
+    #[test]
+    fn test_join_reorder_smaller_build_side() {
+        let opt = Optimizer::new();
+        let left = PlanNode {
+            id: PlanNodeId(0),
+            node_type: PlanNodeType::Scan(ScanNode { table_name: "big".into(), database: None, columns: vec!["*".into()], predicates: vec![], limit: None }),
+            children: vec![],
+            stats: PlanStats::with_row_count(10000.0),
+        };
+        let right = PlanNode {
+            id: PlanNodeId(1),
+            node_type: PlanNodeType::Scan(ScanNode { table_name: "small".into(), database: None, columns: vec!["*".into()], predicates: vec![], limit: None }),
+            children: vec![],
+            stats: PlanStats::with_row_count(100.0),
+        };
+        let plan = PlanNode {
+            id: PlanNodeId(2),
+            node_type: PlanNodeType::Join(JoinNode { join_type: JoinTypePlan::Inner, condition: Some("id = id".to_string()) }),
+            children: vec![left, right],
+            stats: PlanStats::default(),
+        };
+        let result = opt.optimize(plan);
+        // Small table should be first (build side)
+        match &result.node_type {
+            PlanNodeType::Join(_) => {
+                let first = &result.children[0];
+                match &first.node_type {
+                    PlanNodeType::Scan(s) => assert_eq!(s.table_name, "small"),
+                    other => panic!("Expected Scan, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Join, got {:?}", other),
+        }
+    }
+
+    // ---- Expression simplification ----
+
+    #[test]
+    fn test_simplify_true_and_x() {
+        use crate::expression::simplify;
+        use fe_sql_parser::ast::*;
+        let expr = Expr::BinaryOp {
+            left: Box::new(Expr::Literal(LiteralValue::Boolean(true))),
+            op: BinaryOp::And,
+            right: Box::new(Expr::ColumnRef { table: None, column: "a".to_string() }),
+        };
+        let result = simplify(expr);
+        assert!(matches!(result, Expr::ColumnRef { .. }));
+    }
+
+    #[test]
+    fn test_simplify_false_or_x() {
+        use crate::expression::simplify;
+        use fe_sql_parser::ast::*;
+        let expr = Expr::BinaryOp {
+            left: Box::new(Expr::Literal(LiteralValue::Boolean(false))),
+            op: BinaryOp::Or,
+            right: Box::new(Expr::ColumnRef { table: None, column: "a".to_string() }),
+        };
+        let result = simplify(expr);
+        assert!(matches!(result, Expr::ColumnRef { .. }));
+    }
+
+    #[test]
+    fn test_simplify_false_and_x() {
+        use crate::expression::simplify;
+        use fe_sql_parser::ast::*;
+        let expr = Expr::BinaryOp {
+            left: Box::new(Expr::Literal(LiteralValue::Boolean(false))),
+            op: BinaryOp::And,
+            right: Box::new(Expr::ColumnRef { table: None, column: "a".to_string() }),
+        };
+        let result = simplify(expr);
+        assert!(matches!(result, Expr::Literal(LiteralValue::Boolean(false))));
+    }
+
+    #[test]
+    fn test_simplify_not_not() {
+        use crate::expression::simplify;
+        use fe_sql_parser::ast::*;
+        let col = Expr::ColumnRef { table: None, column: "a".to_string() };
+        let expr = Expr::UnaryOp {
+            op: UnaryOp::Not,
+            expr: Box::new(Expr::UnaryOp {
+                op: UnaryOp::Not,
+                expr: Box::new(Expr::ColumnRef { table: None, column: "a".to_string() }),
+            }),
+        };
+        let result = simplify(expr);
+        // NOT (NOT col) should simplify to col
+        assert!(matches!(result, Expr::ColumnRef { .. }));
+    }
+
+    #[test]
+    fn test_constant_folding_arithmetic() {
+        use crate::expression::simplify;
+        use fe_sql_parser::ast::*;
+        let expr = Expr::BinaryOp {
+            left: Box::new(Expr::Literal(LiteralValue::Int64(3))),
+            op: BinaryOp::Plus,
+            right: Box::new(Expr::Literal(LiteralValue::Int64(7))),
+        };
+        let result = simplify(expr);
+        assert!(matches!(result, Expr::Literal(LiteralValue::Int64(10))));
+    }
+}

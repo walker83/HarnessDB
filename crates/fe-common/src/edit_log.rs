@@ -133,3 +133,101 @@ impl EditLog {
         &self.entries
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_edit_log_append() {
+        let mut log = EditLog::new("/tmp/rovisdb_test_edit_log");
+        let idx = log.append(OpType::CreateDatabase, b"mydb".to_vec());
+        assert_eq!(idx, 1);
+        assert_eq!(log.current_term(), 1);
+        assert_eq!(log.entries().len(), 1);
+    }
+
+    #[test]
+    fn test_edit_log_multiple_appends() {
+        let mut log = EditLog::new("/tmp/rovisdb_test_edit_log");
+        log.append(OpType::CreateDatabase, b"db1".to_vec());
+        log.append(OpType::CreateTable, b"t1".to_vec());
+        log.append(OpType::DropDatabase, b"db1".to_vec());
+        assert_eq!(log.entries().len(), 3);
+        assert_eq!(log.current_term(), 3);
+    }
+
+    #[test]
+    fn test_edit_log_get_entry() {
+        let mut log = EditLog::new("/tmp/rovisdb_test_edit_log");
+        log.append(OpType::CreateDatabase, b"mydb".to_vec());
+        let entry = log.get_entry(1);
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.op_type, OpType::CreateDatabase);
+        assert_eq!(entry.data, b"mydb");
+    }
+
+    #[test]
+    fn test_edit_log_get_nonexistent() {
+        let log = EditLog::new("/tmp/rovisdb_test_edit_log");
+        assert!(log.get_entry(999).is_none());
+    }
+
+    #[test]
+    fn test_edit_log_empty() {
+        let log = EditLog::new("/tmp/rovisdb_test_edit_log");
+        assert_eq!(log.entries().len(), 0);
+        assert_eq!(log.last_applied_index(), 0);
+        assert_eq!(log.current_term(), 0);
+        assert!(log.voted_for().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_edit_log_flush_and_replay() {
+        let dir = format!("/tmp/rovisdb_test_flush_{}", std::process::id());
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Write entries
+        {
+            let mut log = EditLog::new(&dir);
+            log.append(OpType::CreateDatabase, b"testdb".to_vec());
+            log.append(OpType::CreateTable, b"test_table".to_vec());
+            log.flush().await.unwrap();
+            assert_eq!(log.entries().len(), 0); // cleared after flush
+        }
+
+        // Replay
+        {
+            let mut log = EditLog::new(&dir);
+            log.replay().await.unwrap();
+            assert!(log.last_applied_index() > 0);
+        }
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_op_type_variants() {
+        assert_eq!(OpType::CreateDatabase, OpType::CreateDatabase);
+        assert_ne!(OpType::CreateDatabase, OpType::DropDatabase);
+    }
+
+    #[test]
+    fn test_edit_log_entry_serialization() {
+        let entry = EditLogEntry {
+            term: 1,
+            index: 5,
+            op_type: OpType::CreateTable,
+            data: b"hello".to_vec(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("CreateTable"));
+        let decoded: EditLogEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.term, 1);
+        assert_eq!(decoded.index, 5);
+        assert_eq!(decoded.op_type, OpType::CreateTable);
+        assert_eq!(decoded.data, b"hello");
+    }
+}

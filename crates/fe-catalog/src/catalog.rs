@@ -237,3 +237,126 @@ impl CatalogWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::table::{Table, TableColumn, KeysType};
+    use types::DataType;
+
+    fn make_table(id: u64, name: &str) -> Table {
+        Table {
+            id,
+            name: name.to_string(),
+            database: "testdb".to_string(),
+            columns: vec![
+                TableColumn {
+                    name: "id".into(),
+                    data_type: DataType::Int64,
+                    nullable: false,
+                    default_value: None,
+                    agg_type: None,
+                    comment: String::new(),
+                },
+            ],
+            keys_type: KeysType::Duplicate,
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+        }
+    }
+
+    #[test]
+    fn test_create_database() {
+        let mgr = CatalogManager::new();
+        assert!(mgr.create_database("db1").is_ok());
+        assert!(mgr.list_databases().contains(&"db1".to_string()));
+    }
+
+    #[test]
+    fn test_create_database_duplicate() {
+        let mgr = CatalogManager::new();
+        mgr.create_database("db1").unwrap();
+        let result = mgr.create_database("db1");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_drop_database() {
+        let mgr = CatalogManager::new();
+        mgr.create_database("db1").unwrap();
+        assert!(mgr.drop_database("db1").is_ok());
+        assert!(!mgr.list_databases().contains(&"db1".to_string()));
+    }
+
+    #[test]
+    fn test_drop_database_nonexistent() {
+        let mgr = CatalogManager::new();
+        assert!(mgr.drop_database("no_such_db").is_err());
+    }
+
+    #[test]
+    fn test_create_table() {
+        let mgr = CatalogManager::new();
+        mgr.create_database("mydb").unwrap();
+        let table = make_table(1, "users");
+        assert!(mgr.create_table("mydb", table).is_ok());
+        let t = mgr.get_table("mydb", "users");
+        assert!(t.is_some());
+        assert_eq!(t.unwrap().name, "users");
+    }
+
+    #[test]
+    fn test_create_table_wrong_db() {
+        let mgr = CatalogManager::new();
+        let table = make_table(1, "users");
+        assert!(mgr.create_table("no_db", table).is_err());
+    }
+
+    #[test]
+    fn test_drop_table() {
+        let mgr = CatalogManager::new();
+        mgr.create_database("mydb").unwrap();
+        let table = make_table(1, "users");
+        mgr.create_table("mydb", table).unwrap();
+        assert!(mgr.drop_table("mydb", "users").is_ok());
+        assert!(mgr.get_table("mydb", "users").is_none());
+    }
+
+    #[test]
+    fn test_list_tables() {
+        let mgr = CatalogManager::new();
+        mgr.create_database("mydb").unwrap();
+        mgr.create_table("mydb", make_table(1, "t1")).unwrap();
+        mgr.create_table("mydb", make_table(2, "t2")).unwrap();
+        let tables = mgr.list_tables("mydb").unwrap();
+        assert_eq!(tables.len(), 2);
+        assert!(tables.contains(&"t1".to_string()));
+        assert!(tables.contains(&"t2".to_string()));
+    }
+
+    #[test]
+    fn test_information_schema_exists() {
+        let mgr = CatalogManager::new();
+        assert!(mgr.list_databases().contains(&"information_schema".to_string()));
+    }
+
+    #[test]
+    fn test_catalog_save_and_load() {
+        let dir = format!("/tmp/rovisdb_test_catalog_{}", std::process::id());
+        let mgr = CatalogManager::with_path(&dir);
+        mgr.create_database("saved_db").unwrap();
+        mgr.create_table("saved_db", make_table(1, "saved_table")).unwrap();
+        mgr.save().unwrap();
+
+        let mut mgr2 = CatalogManager::with_path(&dir);
+        mgr2.load().unwrap();
+        assert!(mgr2.get_database("saved_db").is_some());
+        assert!(mgr2.get_table("saved_db", "saved_table").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
