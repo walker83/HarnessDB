@@ -76,6 +76,12 @@ impl Planner {
             Statement::ShowCreateTable(..) => Err(DrorisError::Plan(
                 "SHOW CREATE TABLE is not yet supported".into(),
             )),
+            Statement::Describe(_, _) => Err(DrorisError::Plan(
+                "DESCRIBE is not yet supported".into(),
+            )),
+            Statement::ShowColumns(_, _) => Err(DrorisError::Plan(
+                "SHOW COLUMNS is not yet supported".into(),
+            )),
         }
     }
 
@@ -158,22 +164,29 @@ impl Planner {
     // ---- DML ----
 
     fn plan_insert(&self, stmt: InsertStmt) -> Result<PlanNode, DrorisError> {
-        let database = if stmt.table.contains('.') {
+        // Parse qualified table name (db.table) into (database, table_name).
+        let (database, table_name) = if stmt.table.contains('.') {
             let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
-            // If qualified name is used, split it.
-            // But InsertStmt only has a single `table` field, so we keep it simple.
-            None
+            (Some(parts[0].to_string()), parts[1].to_string())
         } else {
-            None
+            (None, stmt.table.clone())
+        };
+
+        let children = if let Some(query) = stmt.query {
+            vec![self.plan_query(query)?]
+        } else if !stmt.values.is_empty() {
+            return Err(DrorisError::Plan("INSERT VALUES not yet implemented".into()));
+        } else {
+            return Err(DrorisError::Plan("INSERT must have VALUES or SELECT".into()));
         };
 
         Ok(self.make_node(
             PlanNodeType::Insert(InsertNode {
-                table_name: stmt.table,
+                table_name,
                 database,
                 columns: stmt.columns,
             }),
-            vec![],
+            children,
         ))
     }
 

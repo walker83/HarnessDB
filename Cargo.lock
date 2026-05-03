@@ -545,6 +545,7 @@ dependencies = [
 name = "fe-expression"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "common",
  "thiserror",
  "tracing",

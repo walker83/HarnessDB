@@ -23,14 +23,118 @@ fn convert_statement(
             let query_stmt = convert_query(*query)?;
             Ok(Statement::Query(query_stmt))
         }
-        sqlparser::ast::Statement::Insert { .. } => {
-            todo!("convert INSERT")
+        sqlparser::ast::Statement::Insert(stmt) => {
+            let table_name = stmt.table_name.to_string();
+            let cols: Vec<String> = stmt.columns.iter().map(|c| c.value.clone()).collect();
+            let values_list: Vec<Vec<Expr>> = vec![];
+            Ok(Statement::Insert(InsertStmt {
+                table: table_name,
+                columns: cols,
+                values: values_list,
+                query: stmt.source.map(|q| convert_query(*q).ok().unwrap()),
+            }))
         }
-        sqlparser::ast::Statement::CreateTable { .. } => {
-            todo!("convert CREATE TABLE")
+        sqlparser::ast::Statement::CreateTable(stmt) => {
+            let name_str = stmt.name.to_string();
+            let parts: Vec<&str> = name_str.split('.').collect();
+            let (database, table_name) = if parts.len() == 2 {
+                (Some(parts[0].to_string()), parts[1].to_string())
+            } else {
+                (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
+            };
+            let col_defs: Vec<ColumnDef> = stmt.columns.iter().map(|c| ColumnDef {
+                name: c.name.value.clone(),
+                data_type: c.data_type.to_string(),
+                nullable: true,
+                default_value: None,
+                agg_type: None,
+                comment: None,
+            }).collect();
+            Ok(Statement::CreateTable(CreateTableStmt {
+                database,
+                name: table_name,
+                if_not_exists: stmt.if_not_exists,
+                columns: col_defs,
+                keys_type: KeysType::Duplicate,
+                partition: None,
+                distribution: None,
+                properties: vec![],
+            }))
         }
-        sqlparser::ast::Statement::Drop { .. } => {
-            todo!("convert DROP")
+        sqlparser::ast::Statement::Drop {
+            names, if_exists, ..
+        } => {
+            let name = names.first().map(|n| n.to_string()).unwrap_or_default();
+            if name.contains('.') {
+                let parts: Vec<&str> = name.splitn(2, '.').collect();
+                Ok(Statement::DropTable(DropTableStmt {
+                    database: Some(parts[0].to_string()),
+                    name: parts[1].to_string(),
+                    if_exists,
+                }))
+            } else {
+                Ok(Statement::DropTable(DropTableStmt {
+                    database: None,
+                    name,
+                    if_exists,
+                }))
+            }
+        }
+        sqlparser::ast::Statement::ExplainTable {
+            table_name, ..
+        } => {
+            let name_str = table_name.to_string();
+            let parts: Vec<&str> = name_str.split('.').collect();
+            let (db, tbl) = if parts.len() == 2 {
+                (parts[0].to_string(), parts[1].to_string())
+            } else {
+                (String::new(), parts[0].to_string())
+            };
+            Ok(Statement::Describe(db, tbl))
+        }
+        sqlparser::ast::Statement::ShowCreate {
+            obj_name, ..
+        } => {
+            let name_str = obj_name.to_string();
+            let parts: Vec<&str> = name_str.split('.').collect();
+            let (db, tbl) = if parts.len() == 2 {
+                (parts[0].to_string(), parts[1].to_string())
+            } else {
+                (String::new(), parts[0].to_string())
+            };
+            Ok(Statement::ShowCreateTable(db, tbl))
+        }
+        sqlparser::ast::Statement::ShowColumns {
+            show_options, ..
+        } => {
+            // SHOW COLUMNS FROM table - table name is in the filter
+            Ok(Statement::ShowColumns(None, None))
+        }
+        sqlparser::ast::Statement::Use(db) => {
+            Ok(Statement::UseDatabase(db.to_string()))
+        }
+        sqlparser::ast::Statement::SetVariable {
+            variables, value, ..
+        } => {
+            let var_name = match variables {
+                sqlparser::ast::OneOrManyWithParens::One(o) => o.to_string(),
+                sqlparser::ast::OneOrManyWithParens::Many(v) => v.first().map(|s: &sqlparser::ast::ObjectName| s.to_string()).unwrap_or_default(),
+            };
+            let value_expr = value.first().map(|e: &sqlparser::ast::Expr| convert_expr(e.clone())).unwrap_or(Expr::Literal(LiteralValue::Null));
+            Ok(Statement::SetVariable(SetVariableStmt {
+                variable: var_name,
+                value: value_expr,
+                is_global: false,
+            }))
+        }
+        sqlparser::ast::Statement::Explain {
+            statement, verbose, ..
+        } => {
+            let inner = convert_statement(*statement)?;
+            Ok(Statement::Explain(ExplainStmt {
+                statement: Box::new(inner),
+                verbose,
+            }))
         }
         _ => Err(ParseError::Unsupported(format!(
             "statement type: {:?}",

@@ -10,6 +10,8 @@ pub enum Statement {
     ShowDatabases,
     ShowTables(Option<String>),
     ShowCreateTable(String, String),
+    Describe(String, String),  // (database, table)
+    ShowColumns(Option<String>, Option<String>),  // (database, table)
     Explain(ExplainStmt),
     UseDatabase(String),
     SetVariable(SetVariableStmt),
