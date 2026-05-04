@@ -2,6 +2,7 @@ use types::{
     vector::{
         Int32Vector, Int64Vector, Float64Vector, BooleanVector, DateVector,
         StringVector, Int8Vector, Int16Vector, Int128Vector, Float32Vector,
+        StringViewVector,
     },
     Bitmap, Block, DataType, Field, Schema, ScalarValue, Vector,
 };
@@ -917,4 +918,218 @@ fn test_float64_vector_filter_with_nulls() {
     assert_eq!(filtered.get(0), Some(1.0));
     assert_eq!(filtered.get(1), None);
     assert_eq!(filtered.get(2), Some(4.0));
+}
+
+// ===========================================================================
+// P1 Optimization: Batch Aggregation Tests
+// ===========================================================================
+
+#[test]
+fn test_int64_vector_sum_batch() {
+    let v = Int64Vector::from_vec(vec![1, 2, 3, 4, 5]);
+    assert_eq!(v.sum_batch(), Some(15));
+
+    let v_with_nulls = Int64Vector::from_nullable_vec(vec![Some(10), None, Some(20), Some(30)]);
+    assert_eq!(v_with_nulls.sum_batch(), Some(60));
+
+    let empty_v = Int64Vector::new();
+    assert_eq!(empty_v.sum_batch(), None);
+}
+
+#[test]
+fn test_int32_vector_count_batch() {
+    let v = Int32Vector::from_vec(vec![1, 2, 3, 4, 5]);
+    assert_eq!(v.count_batch(), 5);
+
+    let v_with_nulls = Int32Vector::from_nullable_vec(vec![Some(1), None, Some(3), None]);
+    assert_eq!(v_with_nulls.count_batch(), 2);
+}
+
+#[test]
+fn test_float64_vector_min_max_batch() {
+    let v = Float64Vector::from_vec(vec![1.5, 2.5, 0.5, 3.5]);
+    assert_eq!(v.min_batch(), Some(0.5));
+    assert_eq!(v.max_batch(), Some(3.5));
+
+    let v_with_nulls = Float64Vector::from_nullable_vec(vec![Some(10.0), None, Some(5.0), Some(15.0)]);
+    assert_eq!(v_with_nulls.min_batch(), Some(5.0));
+    assert_eq!(v_with_nulls.max_batch(), Some(15.0));
+}
+
+#[test]
+fn test_int64_vector_avg_batch() {
+    let v = Vector::Int64(Int64Vector::from_vec(vec![10, 20, 30]));
+    assert_eq!(v.avg_batch(), Some(ScalarValue::Float64(20.0)));
+
+    let v_with_nulls = Vector::Int64(Int64Vector::from_nullable_vec(vec![Some(10), None, Some(30)]));
+    assert_eq!(v_with_nulls.avg_batch(), Some(ScalarValue::Float64(20.0)));
+}
+
+#[test]
+fn test_boolean_vector_sum_batch() {
+    let v = BooleanVector::from_vec(vec![true, false, true, true]);
+    assert_eq!(v.sum_batch(), Some(3));
+
+    let v_all_false = BooleanVector::from_vec(vec![false, false, false]);
+    assert_eq!(v_all_false.sum_batch(), Some(0));
+}
+
+#[test]
+fn test_string_vector_min_max_batch() {
+    let v = Vector::String(StringVector::from_vec(vec!["delta", "alpha", "gamma", "beta"]));
+    assert_eq!(v.min_batch(), Some(ScalarValue::String("alpha".to_string())));
+    assert_eq!(v.max_batch(), Some(ScalarValue::String("gamma".to_string())));
+}
+
+#[test]
+fn test_vector_sum_batch_dispatch() {
+    let v = Vector::Int64(Int64Vector::from_vec(vec![1, 2, 3]));
+    assert_eq!(v.sum_batch(), Some(ScalarValue::Int64(6)));
+
+    let v2 = Vector::Float64(Float64Vector::from_vec(vec![1.0, 2.0, 3.0]));
+    assert_eq!(v2.sum_batch(), Some(ScalarValue::Float64(6.0)));
+}
+
+#[test]
+fn test_vector_count_batch_dispatch() {
+    let v = Vector::Int32(Int32Vector::from_nullable_vec(vec![Some(1), None, Some(3)]));
+    assert_eq!(v.count_batch(), 2);
+
+    let v2 = Vector::Boolean(BooleanVector::from_vec(vec![true, false, true]));
+    assert_eq!(v2.count_batch(), 3);
+}
+
+#[test]
+fn test_vector_avg_batch_dispatch() {
+    let v = Vector::Int64(Int64Vector::from_vec(vec![10, 20, 30]));
+    assert_eq!(v.avg_batch(), Some(ScalarValue::Float64(20.0)));
+
+    let v2 = Vector::Float32(Float32Vector::from_vec(vec![1.0, 2.0, 3.0]));
+    assert_eq!(v2.avg_batch(), Some(ScalarValue::Float64(2.0)));
+}
+
+// ===========================================================================
+// P1 Optimization: Batch Comparison Tests
+// ===========================================================================
+
+#[test]
+fn test_vector_compare_at_int64() {
+    let v = Vector::Int64(Int64Vector::from_vec(vec![10, 20, 30, 40, 50]));
+    assert_eq!(v.compare_at(0, 1), std::cmp::Ordering::Less);
+    assert_eq!(v.compare_at(2, 2), std::cmp::Ordering::Equal);
+    assert_eq!(v.compare_at(4, 0), std::cmp::Ordering::Greater);
+}
+
+#[test]
+fn test_vector_compare_at_float64() {
+    let v = Vector::Float64(Float64Vector::from_vec(vec![1.5, 2.5, 3.5]));
+    assert_eq!(v.compare_at(0, 1), std::cmp::Ordering::Less);
+    assert_eq!(v.compare_at(2, 0), std::cmp::Ordering::Greater);
+}
+
+#[test]
+fn test_vector_compare_at_string() {
+    let v = Vector::String(StringVector::from_vec(vec!["apple", "banana", "cherry"]));
+    assert_eq!(v.compare_at(0, 1), std::cmp::Ordering::Less);
+    assert_eq!(v.compare_at(2, 0), std::cmp::Ordering::Greater);
+}
+
+#[test]
+fn test_vector_compare_at_with_nulls() {
+    let v = Vector::Int64(Int64Vector::from_nullable_vec(vec![Some(10), None, Some(20)]));
+    // null should be less than non-null
+    assert_eq!(v.compare_at(0, 1), std::cmp::Ordering::Greater);
+    assert_eq!(v.compare_at(1, 0), std::cmp::Ordering::Less);
+    assert_eq!(v.compare_at(1, 1), std::cmp::Ordering::Equal);
+}
+
+#[test]
+fn test_vector_compare_at_dispatch() {
+    let v = Vector::Int32(Int32Vector::from_vec(vec![1, 2, 3]));
+    assert_eq!(v.compare_at(0, 1), std::cmp::Ordering::Less);
+    assert_eq!(v.compare_at(2, 0), std::cmp::Ordering::Greater);
+
+    let v2 = Vector::String(StringVector::from_vec(vec!["a", "b", "c"]));
+    assert_eq!(v2.compare_at(0, 1), std::cmp::Ordering::Less);
+}
+
+// ===========================================================================
+// P1 Optimization: StringViewVector Zero-Copy Tests
+// ===========================================================================
+
+#[test]
+fn test_string_view_vector_from_vec() {
+    let v = StringViewVector::from_vec(vec!["hello", "world", "test"]);
+    assert_eq!(v.len(), 3);
+    assert_eq!(v.get(0), Some("hello"));
+    assert_eq!(v.get(1), Some("world"));
+    assert_eq!(v.get(2), Some("test"));
+}
+
+#[test]
+fn test_string_view_vector_from_string_vector() {
+    let sv = StringVector::from_vec(vec!["alpha", "beta", "gamma"]);
+    let view = StringViewVector::from_string_vector(&sv);
+    assert_eq!(view.len(), 3);
+    assert_eq!(view.get(0), Some("alpha"));
+    assert_eq!(view.get(1), Some("beta"));
+    assert_eq!(view.get(2), Some("gamma"));
+}
+
+#[test]
+fn test_string_view_vector_filter_zero_copy() {
+    let v = StringViewVector::from_vec(vec!["a", "b", "c", "d", "e"]);
+    let sel = Bitmap::from_bools(&[true, false, true, false, true]);
+    let filtered = v.filter_zero_copy(&sel);
+
+    assert_eq!(filtered.len(), 3);
+    assert_eq!(filtered.get(0), Some("a"));
+    assert_eq!(filtered.get(1), Some("c"));
+    assert_eq!(filtered.get(2), Some("e"));
+}
+
+#[test]
+fn test_string_view_vector_slice_zero_copy() {
+    let v = StringViewVector::from_vec(vec!["alpha", "beta", "gamma", "delta", "epsilon"]);
+    let sliced = v.slice_zero_copy(1, 3);
+
+    assert_eq!(sliced.len(), 3);
+    assert_eq!(sliced.get(0), Some("beta"));
+    assert_eq!(sliced.get(1), Some("gamma"));
+    assert_eq!(sliced.get(2), Some("delta"));
+}
+
+#[test]
+fn test_string_view_vector_to_owned() {
+    let v = StringViewVector::from_vec(vec!["test1", "test2"]);
+    let mut v2 = v.clone();
+    v2.to_owned();
+
+    assert_eq!(v2.len(), 2);
+    assert_eq!(v2.get(0), Some("test1"));
+}
+
+#[test]
+fn test_string_view_vector_into_owned() {
+    let v = StringViewVector::from_vec(vec!["a", "b", "c"]);
+    let v_owned = v.into_owned();
+
+    assert_eq!(v_owned.len(), 3);
+    assert_eq!(v_owned.get(0), Some("a"));
+}
+
+#[test]
+fn test_string_view_vector_null_handling() {
+    let sv = StringVector::from_option_vec(vec![
+        Some("valid".to_string()),
+        None,
+        Some("also_valid".to_string()),
+    ]);
+    let view = StringViewVector::from_string_vector(&sv);
+
+    assert_eq!(view.len(), 3);
+    assert_eq!(view.get(0), Some("valid"));
+    assert_eq!(view.get(1), None);
+    assert_eq!(view.get(2), Some("also_valid"));
+    assert_eq!(view.null_count(), 1);
 }

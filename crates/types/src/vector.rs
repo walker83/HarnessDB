@@ -348,6 +348,7 @@ pub struct StringViewVector {
     offsets: Vec<u32>,
     data_ref: Arc<Vec<u8>>,
     validity: Bitmap,
+    indices: Option<Vec<usize>>,
     owned_data: Option<Vec<u8>>,
 }
 
@@ -357,6 +358,7 @@ impl StringViewVector {
             offsets: vec![0],
             data_ref: Arc::new(Vec::new()),
             validity: Bitmap::new(),
+            indices: None,
             owned_data: None,
         }
     }
@@ -366,6 +368,7 @@ impl StringViewVector {
             offsets: vec.offsets.clone(),
             data_ref: Arc::new(vec.data.clone()),
             validity: vec.validity.clone(),
+            indices: None,
             owned_data: None,
         }
     }
@@ -383,23 +386,41 @@ impl StringViewVector {
             offsets,
             data_ref: Arc::new(data),
             validity,
+            indices: None,
             owned_data: None,
         }
     }
 
     pub fn get(&self, idx: usize) -> Option<&str> {
-        if self.validity.is_valid(idx) && idx + 1 < self.offsets.len() {
-            let start = self.offsets[idx] as usize;
-            let end = self.offsets[idx + 1] as usize;
-            let data = self.owned_data.as_ref().unwrap_or(&*self.data_ref);
-            Some(std::str::from_utf8(&data[start..end]).unwrap_or(""))
-        } else {
-            None
+        if !self.validity.is_valid(idx) {
+            return None;
         }
+
+        let actual_idx = if let Some(indices) = &self.indices {
+            if idx >= indices.len() {
+                return None;
+            }
+            indices[idx]
+        } else {
+            idx
+        };
+
+        if actual_idx + 1 >= self.offsets.len() {
+            return None;
+        }
+
+        let start = self.offsets[actual_idx] as usize;
+        let end = self.offsets[actual_idx + 1] as usize;
+        let data = self.owned_data.as_ref().unwrap_or(&*self.data_ref);
+        Some(std::str::from_utf8(&data[start..end]).unwrap_or(""))
     }
 
     pub fn len(&self) -> usize {
-        self.offsets.len().saturating_sub(1)
+        if let Some(indices) = &self.indices {
+            indices.len()
+        } else {
+            self.offsets.len().saturating_sub(1)
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -415,47 +436,41 @@ impl StringViewVector {
     }
 
     pub fn filter_zero_copy(&self, selection: &Bitmap) -> Self {
-        let num_selected = selection.set_count();
-        let mut offsets = Vec::with_capacity(num_selected + 1);
-        offsets.push(0);
-        let mut validity = Bitmap::with_capacity(num_selected);
-
-        for idx in selection.iter_set_bits() {
-            if idx + 1 < self.offsets.len() {
-                let start = self.offsets[idx];
-                let end = self.offsets[idx + 1];
-                offsets.push(end - start);
-                validity.push(self.validity.is_valid(idx));
-            } else {
-                offsets.push(0);
-                validity.push(false);
-            }
-        }
-
-        let mut adjusted_offsets = vec![0u32];
-        for i in 1..offsets.len() {
-            adjusted_offsets.push(adjusted_offsets[i - 1] + offsets[i]);
+        let indices: Vec<usize> = selection.iter_set_bits().collect();
+        let mut validity = Bitmap::with_capacity(indices.len());
+        
+        for &idx in &indices {
+            validity.push(self.validity.is_valid(idx));
         }
 
         Self {
-            offsets: adjusted_offsets,
+            offsets: self.offsets.clone(),
             data_ref: self.data_ref.clone(),
             validity,
+            indices: Some(indices),
             owned_data: None,
         }
     }
 
     pub fn slice_zero_copy(&self, start: usize, len: usize) -> Self {
         let end = (start + len).min(self.len());
-        let slice_offsets = self.offsets[start..end + 1].to_vec();
+        
+        let new_indices = if let Some(indices) = &self.indices {
+            indices[start..end].to_vec()
+        } else {
+            (start..end).collect()
+        };
+
         let mut validity = Bitmap::with_capacity(len);
-        for i in start..end {
-            validity.push(self.validity.is_valid(i));
+        for &idx in &new_indices {
+            validity.push(self.validity.is_valid(idx));
         }
+
         Self {
-            offsets: slice_offsets,
+            offsets: self.offsets.clone(),
             data_ref: self.data_ref.clone(),
             validity,
+            indices: Some(new_indices),
             owned_data: None,
         }
     }
@@ -472,6 +487,7 @@ impl StringViewVector {
                 offsets: self.offsets,
                 data_ref: Arc::new(Vec::new()),
                 validity: self.validity,
+                indices: self.indices,
                 owned_data: Some((*self.data_ref).clone()),
             }
         } else {

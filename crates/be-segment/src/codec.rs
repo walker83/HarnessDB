@@ -1,3 +1,4 @@
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum CodecType {
     None,
     Lz4,
@@ -30,7 +31,7 @@ pub fn encode(data: &[u8], codec: CodecType) -> Vec<u8> {
     match codec {
         CodecType::None => data.to_vec(),
         CodecType::Lz4 => {
-            lz4::block::compress(data, Some(lz4::block::CompressionMode::DEFAULT))
+            lz4::block::compress(data, Some(lz4::block::CompressionMode::DEFAULT), true)
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Zstd => {
@@ -54,7 +55,7 @@ pub fn encode_with_level(data: &[u8], codec: CodecType, level: i32) -> Vec<u8> {
             } else {
                 lz4::block::CompressionMode::FAST(level.abs().min(16))
             };
-            lz4::block::compress(data, Some(mode))
+            lz4::block::compress(data, Some(mode), true)
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Zstd => {
@@ -73,7 +74,7 @@ pub fn decode(data: &[u8], codec: CodecType) -> Vec<u8> {
     match codec {
         CodecType::None => data.to_vec(),
         CodecType::Lz4 => {
-            lz4::block::decompress(data, Some(data.len() * 4))
+            lz4::block::decompress(data, None)
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Zstd => {
@@ -92,7 +93,7 @@ pub fn decode_with_size(data: &[u8], codec: CodecType, uncompressed_size: usize)
     match codec {
         CodecType::None => data.to_vec(),
         CodecType::Lz4 => {
-            lz4::block::decompress(data, Some(uncompressed_size))
+            lz4::block::decompress(data, Some(uncompressed_size as i32))
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Zstd => {
