@@ -13,3 +13,4 @@ bytes = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }
 chrono = { workspace = true }
+parquet = "58"

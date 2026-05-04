@@ -118,3 +118,6 @@ fe-expression = { path = "crates/fe-expression" }
 fe-monitor = { path = "crates/fe-monitor" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 data-io = { path = "crates/data-io" }
+
+# Parquet support
+parquet = "58"
