@@ -84,6 +84,7 @@ impl<R: Read + BufRead> CsvReader<R> {
         fields
     }
 
+    #[allow(dead_code)]
     fn parse_quoted_field(&self, field: &str) -> String {
         let mut result = String::new();
         let mut chars = field.chars().peekable();
