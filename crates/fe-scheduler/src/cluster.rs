@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
+use dashmap::DashMap;
 use tracing::{info, warn};
 
 /// Helper to get the current time as milliseconds since Unix epoch.
@@ -138,8 +138,8 @@ impl Default for ClusterConfig {
 pub struct ClusterManager {
     config: ClusterConfig,
     next_node_id: AtomicU64,
-    /// Interior-mutable node registry.
-    nodes: RwLock<HashMap<NodeId, BeNode>>,
+    /// Interior-mutable node registry using DashMap for better concurrency.
+    nodes: DashMap<NodeId, BeNode>,
 }
 
 impl ClusterManager {
@@ -147,7 +147,7 @@ impl ClusterManager {
         Self {
             config,
             next_node_id: AtomicU64::new(1),
-            nodes: RwLock::new(HashMap::new()),
+            nodes: DashMap::new(),
         }
     }
 
@@ -164,13 +164,13 @@ impl ClusterManager {
             registered_at: now_millis(),
         };
         info!("BE node registered: {} at {}", id, node.address);
-        self.nodes.write().await.insert(id.clone(), node);
+        self.nodes.insert(id.clone(), node);
         id
     }
 
     /// Deregister a BE node. Returns true if the node was found and removed.
     pub async fn deregister(&self, id: &NodeId) -> bool {
-        let removed = self.nodes.write().await.remove(id).is_some();
+        let removed = self.nodes.remove(id).is_some();
         if removed {
             info!("BE node deregistered: {}", id);
         } else {
@@ -181,13 +181,12 @@ impl ClusterManager {
 
     /// Process an incoming heartbeat from a BE node, updating its load stats.
     pub async fn heartbeat(&self, id: &NodeId, load: NodeLoad) -> Result<(), String> {
-        let mut nodes = self.nodes.write().await;
-        if let Some(node) = nodes.get_mut(id) {
-            node.last_heartbeat = Some(now_millis());
-            node.load = load;
+        if let Some(mut node_ref) = self.nodes.get_mut(id) {
+            node_ref.last_heartbeat = Some(now_millis());
+            node_ref.load = load;
             // Promote suspect nodes back to healthy on heartbeat.
-            if node.health == NodeHealth::Suspect {
-                node.health = NodeHealth::Healthy;
+            if node_ref.health == NodeHealth::Suspect {
+                node_ref.health = NodeHealth::Healthy;
             }
             Ok(())
         } else {
@@ -203,22 +202,21 @@ impl ClusterManager {
         let suspect_cutoff_ms = self.config.suspect_threshold as u64 * self.config.heartbeat_interval.as_millis() as u64;
         let dead_cutoff_ms = self.config.dead_threshold as u64 * self.config.heartbeat_interval.as_millis() as u64;
 
-        let mut nodes = self.nodes.write().await;
-        for node in nodes.values_mut() {
-            let last = match node.last_heartbeat {
+        for mut node_ref in self.nodes.iter_mut() {
+            let last = match node_ref.last_heartbeat {
                 Some(t) => t,
                 None => continue,
             };
             let elapsed_ms = now.saturating_sub(last);
             let elapsed_secs = elapsed_ms / 1000;
 
-            if elapsed_ms > dead_cutoff_ms && node.health != NodeHealth::Dead {
-                warn!("BE node {} marked Dead (no heartbeat for {}s)", node.id, elapsed_secs);
-                node.health = NodeHealth::Dead;
-                newly_dead.push(node.id.clone());
-            } else if elapsed_ms > suspect_cutoff_ms && node.health == NodeHealth::Healthy {
-                warn!("BE node {} marked Suspect (no heartbeat for {}s)", node.id, elapsed_secs);
-                node.health = NodeHealth::Suspect;
+            if elapsed_ms > dead_cutoff_ms && node_ref.health != NodeHealth::Dead {
+                warn!("BE node {} marked Dead (no heartbeat for {}s)", node_ref.id, elapsed_secs);
+                node_ref.health = NodeHealth::Dead;
+                newly_dead.push(node_ref.id.clone());
+            } else if elapsed_ms > suspect_cutoff_ms && node_ref.health == NodeHealth::Healthy {
+                warn!("BE node {} marked Suspect (no heartbeat for {}s)", node_ref.id, elapsed_secs);
+                node_ref.health = NodeHealth::Suspect;
             }
         }
         newly_dead
@@ -226,17 +224,15 @@ impl ClusterManager {
 
     /// Get a snapshot of all registered nodes.
     pub async fn all_nodes(&self) -> Vec<BeNode> {
-        self.nodes.read().await.values().cloned().collect()
+        self.nodes.iter().map(|r| r.value().clone()).collect()
     }
 
     /// Get a snapshot of all healthy, available nodes.
     pub async fn available_nodes(&self) -> Vec<BeNode> {
         self.nodes
-            .read()
-            .await
-            .values()
-            .filter(|n| n.is_available())
-            .cloned()
+            .iter()
+            .filter(|r| r.value().is_available())
+            .map(|r| r.value().clone())
             .collect()
     }
 
@@ -270,13 +266,13 @@ impl ClusterManager {
 
     /// Look up a single node by ID.
     pub async fn get_node(&self, id: &NodeId) -> Option<BeNode> {
-        self.nodes.read().await.get(id).cloned()
+        self.nodes.get(id).map(|r| r.value().clone())
     }
 
     /// Mark a BE as dead
     pub async fn mark_dead(&mut self, node_id: NodeId) {
-        if let Some(node) = self.nodes.write().await.get_mut(&node_id) {
-            node.health = NodeHealth::Dead;
+        if let Some(mut node_ref) = self.nodes.get_mut(&node_id) {
+            node_ref.health = NodeHealth::Dead;
             warn!("BE node {} marked dead manually", node_id);
         }
     }
@@ -284,37 +280,31 @@ impl ClusterManager {
     /// Check if a BE is alive (Healthy status)
     pub async fn is_alive(&self, node_id: NodeId) -> bool {
         self.nodes
-            .read()
-            .await
             .get(&node_id)
-            .map(|n| n.health == NodeHealth::Healthy)
+            .map(|r| r.value().health == NodeHealth::Healthy)
             .unwrap_or(false)
     }
 
     /// Get only alive (Healthy) nodes
     pub async fn get_alive_nodes(&self) -> Vec<BeNode> {
         self.nodes
-            .read()
-            .await
-            .values()
-            .filter(|n| n.health == NodeHealth::Healthy)
-            .cloned()
+            .iter()
+            .filter(|r| r.value().health == NodeHealth::Healthy)
+            .map(|r| r.value().clone())
             .collect()
     }
 
     /// Get composite load score for a node (lower is better)
     pub async fn node_load_score(&self, node_id: NodeId) -> f64 {
         self.nodes
-            .read()
-            .await
             .get(&node_id)
-            .map(|n| n.load.score())
+            .map(|r| r.value().load.score())
             .unwrap_or(f64::MAX)
     }
 
     /// Number of registered nodes (regardless of health).
     pub async fn node_count(&self) -> usize {
-        self.nodes.read().await.len()
+        self.nodes.len()
     }
 }
 
