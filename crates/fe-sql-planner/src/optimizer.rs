@@ -202,7 +202,7 @@ impl Default for Optimizer { fn default() -> Self { Self::new() } }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan_node::*;
+    
 
     fn next_id() -> PlanNodeId { PlanNodeId(0) }
 
@@ -457,7 +457,7 @@ mod tests {
     fn test_simplify_not_not() {
         use crate::expression::simplify;
         use fe_sql_parser::ast::*;
-        let col = Expr::ColumnRef { table: None, column: "a".to_string() };
+        let _col = Expr::ColumnRef { table: None, column: "a".to_string() };
         let expr = Expr::UnaryOp {
             op: UnaryOp::Not,
             expr: Box::new(Expr::UnaryOp {

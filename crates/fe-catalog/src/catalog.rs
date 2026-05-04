@@ -15,6 +15,7 @@ pub struct CatalogManager {
     catalog_path: String,
 }
 
+#[allow(large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum CatalogOp {
     CreateDatabase(String),

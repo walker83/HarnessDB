@@ -751,7 +751,7 @@ impl ExecNode for HashJoinExecNode {
             }
         }
 
-        self.join_type == "LEFT" && !self.matched_build_keys.is_empty();
+        if self.join_type == "LEFT" { self.matched_build_keys.is_empty(); }
 
         Ok(None)
     }
@@ -1071,6 +1071,7 @@ impl WindowExecNode {
         key_parts.join("|")
     }
 
+    #[allow(dead_code)]
     fn compute_window_over_block(&self, block: &Block) -> Result<Vector> {
         let num_rows = block.num_rows();
 

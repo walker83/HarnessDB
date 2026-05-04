@@ -109,11 +109,10 @@ fn test_json_array() {
     let result = registry.call("json_array", &args);
 
     assert!(matches!(result, Vector::Json(_)));
-    if let Vector::Json(v) = result {
-        if let Some(ScalarValue::Json(JsonValue::Array(items))) = v.get(0) {
+    if let Vector::Json(v) = result
+        && let Some(ScalarValue::Json(JsonValue::Array(items))) = v.get(0) {
             assert_eq!(items.len(), 6);
         }
-    }
 }
 
 #[test]

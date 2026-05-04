@@ -144,7 +144,7 @@ fn scalar_value_to_string(value: &ScalarValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use types::{Schema, Field, DataType};
+    
 
     #[test]
     fn test_write_csv_field_no_escape() {

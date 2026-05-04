@@ -208,7 +208,7 @@ impl Default for ExprEvaluator { fn default() -> Self { Self::new() } }
 mod tests {
     use super::*;
     use types::{Field, Schema};
-    use crate::expr::{ColumnRef, FunctionCall};
+    
 
     fn make_block() -> Block {
         let schema = Schema::new(vec![

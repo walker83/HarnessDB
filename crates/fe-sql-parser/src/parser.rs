@@ -402,12 +402,7 @@ fn convert_function_args(args: sqlparser::ast::FunctionArguments) -> Vec<Expr> {
         sqlparser::ast::FunctionArguments::List(list) => {
             list.args.into_iter().map(|arg| {
                 match arg {
-                    sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
-                        match arg_expr {
-                            sqlparser::ast::FunctionArgExpr::Expr(expr) => convert_expr(expr),
-                            _ => Expr::Wildcard,
-                        }
-                    }
+                    sqlparser::ast::FunctionArg::Unnamed(arg_expr) |
                     sqlparser::ast::FunctionArg::Named { arg: arg_expr, .. } => {
                         match arg_expr {
                             sqlparser::ast::FunctionArgExpr::Expr(expr) => convert_expr(expr),

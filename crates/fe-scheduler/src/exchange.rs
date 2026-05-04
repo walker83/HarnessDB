@@ -315,7 +315,7 @@ mod tests {
                 partition: 0,
             },
         };
-        let mut sink = ExchangeSink::new(ExchangeKind::Gather, vec![dest]);
+        let sink = ExchangeSink::new(ExchangeKind::Gather, vec![dest]);
         assert_eq!(sink.buffered_rows(), 0);
     }
 }

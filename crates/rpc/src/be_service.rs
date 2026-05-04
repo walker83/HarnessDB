@@ -13,6 +13,7 @@ struct FragmentState {
 enum ExecutionStatus {
     Running,
     Completed,
+    #[allow(dead_code)]
     Failed,
     Cancelled,
 }

@@ -7,6 +7,7 @@ pub enum CodecType {
 }
 
 impl CodecType {
+    #[allow(should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "lz4" => CodecType::Lz4,

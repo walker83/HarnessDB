@@ -14,6 +14,7 @@ use crate::server::{QueryHandler, QueryResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Phase {
     Handshake,
+    #[allow(dead_code)]
     Auth,
     Command,
     Closed,
@@ -116,6 +117,7 @@ impl Connection {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn send_auth_switch_request(&mut self) -> std::io::Result<()> {
         // Build AuthSwitchRequest packet
         // Format: 0xFE (status) + plugin name + null + auth plugin data

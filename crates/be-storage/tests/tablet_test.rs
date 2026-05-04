@@ -173,9 +173,9 @@ fn test_memtable_should_flush() {
 
 #[test]
 fn test_columnar_row_memory_size() {
-    let block = create_test_block();
+    let _block = create_test_block();
     
-    let row_values: Vec<ScalarValue> = vec![
+    let _row_values: Vec<ScalarValue> = vec![
         ScalarValue::Int64(1),
         ScalarValue::String("test".to_string()),
         ScalarValue::Int64(100),

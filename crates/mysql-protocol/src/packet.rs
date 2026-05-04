@@ -65,6 +65,7 @@ pub mod column_type {
 // Capability flags
 // ---------------------------------------------------------------------------
 
+#[allow(non_snake_case)]
 pub mod CapabilityFlags {
     pub const LONG_PASSWORD: u32 = 0x00000001;
     pub const FOUND_ROWS: u32 = 0x00000002;

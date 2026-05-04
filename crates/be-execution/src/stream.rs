@@ -14,6 +14,7 @@ impl RowBatchStream {
         self.index < self.blocks.len()
     }
 
+    #[allow(should_implement_trait)]
     pub fn next(&mut self) -> Option<&Block> {
         if self.index < self.blocks.len() {
             let block = &self.blocks[self.index];

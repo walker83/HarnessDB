@@ -60,6 +60,7 @@ pub struct MemTable {
     rows: BTreeMap<MemTableKey, ColumnarRow>,
     memory_size: u64,
     capacity: u64,
+    #[allow(dead_code)]
     schema: TabletSchema,
 }
 
@@ -536,6 +537,7 @@ impl Tablet {
 }
 
 /// Estimate the memory size of a block.
+#[allow(dead_code)]
 fn estimate_block_size(block: &Block) -> u64 {
     let mut size = 0u64;
     for col in block.columns() {
