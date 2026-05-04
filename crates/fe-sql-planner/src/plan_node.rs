@@ -612,8 +612,7 @@ impl PlanNode {
             | PlanNodeType::DropDatabase(_)
             | PlanNodeType::TruncateTable(_)
             | PlanNodeType::ShowCreateTable(_)
-            | PlanNodeType::Values(_)
-            | PlanNodeType::Update(_) => vec![],
+            | PlanNodeType::Values(_) => vec![],
         }
     }
 }
