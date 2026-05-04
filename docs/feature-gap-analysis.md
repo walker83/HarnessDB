@@ -19,7 +19,7 @@
 | CREATE TABLE | ✅ | ✅ | 已完成 |
 | DROP TABLE | ✅ | ✅ | 已完成 |
 | TRUNCATE TABLE | ✅ | ✅ | 已完成 |
-| ALTER TABLE | ✅ | ❌ | 缺失 |
+| ALTER TABLE | ✅ | ✅ | 已完成 |
 | CREATE INDEX | ✅ | ❌ | 缺失 |
 | DROP INDEX | ✅ | ❌ | 缺失 |
 | CREATE MATERIALIZED VIEW | ✅ | 🚧 | 进行中 |
@@ -38,9 +38,9 @@
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
 | INSERT | ✅ | ✅ | 已完成 |
-| INSERT OVERWRITE | ✅ | ❌ | 缺失 |
-| UPDATE | ✅ | ❌ | 缺失 |
-| DELETE | ✅ | ❌ | 缺失 |
+| INSERT OVERWRITE | ✅ | ✅ | 已完成 |
+| UPDATE | ✅ | ✅ | 已完成 |
+| DELETE | ✅ | ✅ | 已完成 |
 | Stream Load | ✅ | ✅ | 已完成 |
 | Broker Load | ✅ | ❌ | 缺失 |
 | Routine Load | ✅ | ❌ | 缺失 |
