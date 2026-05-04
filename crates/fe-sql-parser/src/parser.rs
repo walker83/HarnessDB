@@ -15,7 +15,9 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
 
     let dialect = sqlparser::dialect::MySqlDialect {};
-    let statements = sqlparser::parser::Parser::parse_sql(&dialect, sql)
+
+    let (clean_sql, partition_override, distribution_override) = strip_clauses(sql);
+    let statements = sqlparser::parser::Parser::parse_sql(&dialect, &clean_sql)
         .map_err(|e| ParseError::SyntaxError {
             position: 0,
             message: e.to_string(),
@@ -23,7 +25,8 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     statements
         .into_iter()
-        .map(convert_statement)
+        .enumerate()
+        .map(|(i, stmt)| convert_statement(stmt, &clean_sql, &partition_override, &distribution_override, i))
         .collect()
 }
 
@@ -77,8 +80,76 @@ fn parse_show_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
 }
 
+fn strip_clauses(sql: &str) -> (String, Option<String>, Option<String>) {
+    let upper = sql.to_uppercase();
+
+    let pos_pby = upper.find(" PARTITION BY ");
+    let pos_dby = upper.find(" DISTRIBUTED BY ");
+
+    let pby = pos_pby.map(|p| {
+        let part_str = &sql[p..];
+        let part_end = find_clause_end(part_str);
+        part_str[..part_end].to_string()
+    });
+    let dby = pos_dby.map(|p| {
+        let dist_str = &sql[p..];
+        let dist_end = find_clause_end(dist_str);
+        dist_str[..dist_end].to_string()
+    });
+
+    let mut clean = sql.to_string();
+    if let Some(ref p) = pby {
+        if let Some(pos) = clean.find(p.as_str()) {
+            clean.replace_range(pos..pos + p.len(), "");
+            clean = clean.trim().to_string();
+        }
+    }
+    if let Some(ref d) = dby {
+        if let Some(pos) = clean.find(d.as_str()) {
+            clean.replace_range(pos..pos + d.len(), "");
+            clean = clean.trim().to_string();
+        }
+    }
+
+    (clean, pby, dby)
+}
+
+fn find_clause_end(s: &str) -> usize {
+    let trimmed = s.trim();
+    let leading_ws = s.len() - trimmed.len();
+    let upper = trimmed.to_uppercase();
+    let is_dist = upper.starts_with("DISTRIBUTED BY");
+    if !upper.starts_with("PARTITION BY") && !is_dist {
+        return s.len();
+    }
+
+    let props_pos = upper.find(" PROPERTIES ");
+    let search_end = props_pos.unwrap_or(trimmed.len());
+
+    if is_dist {
+        leading_ws + search_end
+    } else {
+        let partitions_pos = upper[..search_end].find(" PARTITIONS ");
+        if let Some(p) = partitions_pos {
+            let num_len = trimmed[p + " PARTITIONS ".len()..]
+                .split_whitespace()
+                .next()
+                .map(|num| num.len())
+                .unwrap_or(0);
+            return leading_ws + p + " PARTITIONS ".len() + num_len;
+        }
+        leading_ws + search_end
+    }
+}
+    }
+}
+
 fn convert_statement(
     stmt: sqlparser::ast::Statement,
+    _clean_sql: &str,
+    partition_sql: &Option<String>,
+    distribution_sql: &Option<String>,
+    _stmt_index: usize,
 ) -> Result<Statement, ParseError> {
     match stmt {
         sqlparser::ast::Statement::Query(query) => {
@@ -129,14 +200,20 @@ fn convert_statement(
                 agg_type: None,
                 comment: None,
             }).collect();
+
+            let partition = partition_sql.as_ref().and_then(|s| extract_partition_def(s))
+                .or_else(|| extract_partition_def(&stmt.to_string()));
+
+            let distribution = distribution_sql.as_ref().and_then(|s| extract_distribution_def(s));
+
             Ok(Statement::CreateTable(CreateTableStmt {
                 database,
                 name: table_name,
                 if_not_exists: stmt.if_not_exists,
                 columns: col_defs,
                 keys_type: KeysType::Duplicate,
-                partition: None,
-                distribution: None,
+                partition,
+                distribution,
                 properties: vec![],
             }))
         }
@@ -209,7 +286,7 @@ fn convert_statement(
         sqlparser::ast::Statement::Explain {
             statement, verbose, ..
         } => {
-            let inner = convert_statement(*statement)?;
+            let inner = convert_statement(*statement, _clean_sql, partition_sql, distribution_sql, _stmt_index)?;
             Ok(Statement::Explain(ExplainStmt {
                 statement: Box::new(inner),
                 verbose,
@@ -591,4 +668,214 @@ fn convert_binary_op(op: sqlparser::ast::BinaryOperator) -> BinaryOp {
         BinaryOperator::Modulo => BinaryOp::Modulo,
         _ => BinaryOp::Eq,
     }
+}
+
+fn extract_partition_def(sql: &str) -> Option<PartitionDef> {
+    let upper = sql.to_uppercase();
+    let pby_pos = upper.find("PARTITION BY ")?;
+    let after_pby = &sql[pby_pos + "PARTITION BY ".len()..].trim();
+
+    if after_pby.to_uppercase().starts_with("RANGE") {
+        let rest = &after_pby["RANGE".len()..].trim();
+        let (columns, rest) = extract_parenthesized(rest)?;
+
+        let range_partitions: Vec<RangePartition> = extract_range_partitions(rest.trim());
+        if range_partitions.is_empty() {
+            return None;
+        }
+        Some(PartitionDef::Range(RangePartitionDef {
+            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
+            partitions: range_partitions,
+        }))
+    } else if after_pby.to_uppercase().starts_with("LIST") {
+        let rest = &after_pby["LIST".len()..].trim();
+        let (columns, rest) = extract_parenthesized(rest)?;
+
+        let list_partitions: Vec<ListPartition> = extract_list_partitions(rest.trim());
+        if list_partitions.is_empty() {
+            return None;
+        }
+        Some(PartitionDef::List(ListPartitionDef {
+            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
+            partitions: list_partitions,
+        }))
+    } else if after_pby.to_uppercase().starts_with("HASH") {
+        let rest = &after_pby["HASH".len()..].trim();
+        let (columns, rest) = extract_parenthesized(rest)?;
+
+        let num = extract_partitions_count(rest.trim()).unwrap_or(4);
+        Some(PartitionDef::Hash(HashPartitionDef {
+            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
+            num_partitions: num,
+        }))
+    } else {
+        None
+    }
+}
+
+fn extract_parenthesized(s: &str) -> Option<(String, &str)> {
+    let s = s.trim();
+    let start = s.find('(')?;
+    let mut depth = 0;
+    for (i, ch) in s[start..].char_indices() {
+        if ch == '(' {
+            depth += 1;
+        } else if ch == ')' {
+            depth -= 1;
+            if depth == 0 {
+                return Some((s[start + 1..start + i].to_string(), &s[start + i + 1..]));
+            }
+        }
+    }
+    None
+}
+
+fn split_columns(s: &str) -> Vec<&str> {
+    s.split(',')
+        .map(|col| col.trim().trim_matches(|c| c == '\'' || c == '"' || c == '`'))
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+fn extract_distribution_def(sql: &str) -> Option<DistributionDef> {
+    let upper = sql.to_uppercase();
+    let dby_pos = upper.find("DISTRIBUTED BY ")?;
+    let after_dby = &sql[dby_pos + "DISTRIBUTED BY ".len()..].trim();
+
+    if after_dby.to_uppercase().starts_with("HASH") {
+        let rest = &after_dby["HASH".len()..].trim();
+        let (columns, rest) = extract_parenthesized(rest)?;
+
+        let buckets = extract_buckets_count(rest.trim()).unwrap_or(10);
+        Some(DistributionDef {
+            dist_type: "HASH".to_string(),
+            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
+            buckets,
+        })
+    } else if after_dby.to_uppercase().starts_with("RANDOM") {
+        let buckets = extract_buckets_count(after_dby.trim()).unwrap_or(10);
+        Some(DistributionDef {
+            dist_type: "RANDOM".to_string(),
+            columns: vec![],
+            buckets,
+        })
+    } else {
+        None
+    }
+}
+
+fn extract_range_partitions(s: &str) -> Vec<RangePartition> {
+    let s = s.trim();
+    let inner = s
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .unwrap_or(s);
+    let mut partitions = Vec::new();
+    let mut rest = inner.trim();
+    while !rest.is_empty() {
+        let upper = rest.to_uppercase();
+        if let Some(part_pos) = upper.find("PARTITION ") {
+            let after_part = &rest[part_pos + "PARTITION ".len()..].trim();
+            let name_end = after_part
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(after_part.len());
+            let part_name = after_part[..name_end].to_string();
+
+            let after_name = after_part[name_end..].trim();
+            let after_name_upper = after_name.to_uppercase();
+            if let Some(vlt_pos) = after_name_upper.find("VALUES LESS THAN") {
+                let after_vlt = &after_name[vlt_pos + "VALUES LESS THAN".len()..].trim();
+                if let Some((less_than, _)) = extract_parenthesized(after_vlt) {
+                    let lt_val = less_than.trim().trim_matches(|c: char| c == '\'' || c == '"').to_string();
+                    partitions.push(RangePartition {
+                        name: part_name.clone(),
+                        less_than: lt_val,
+                    });
+                    rest = advance_to_next_partition(rest);
+                    continue;
+                }
+            }
+            break;
+        } else {
+            break;
+        }
+    }
+    partitions
+}
+
+fn extract_list_partitions(s: &str) -> Vec<ListPartition> {
+    let s = s.trim();
+    let inner = s
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .unwrap_or(s);
+    let mut partitions = Vec::new();
+    let mut rest = inner.trim();
+    while !rest.is_empty() {
+        let upper = rest.to_uppercase();
+        if let Some(part_pos) = upper.find("PARTITION ") {
+            let after_part = &rest[part_pos + "PARTITION ".len()..].trim();
+            let name_end = after_part
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(after_part.len());
+            let part_name = after_part[..name_end].to_string();
+
+            let after_name = after_part[name_end..].trim();
+            let after_name_upper = after_name.to_uppercase();
+            if let Some(vi_pos) = after_name_upper.find("VALUES IN") {
+                let after_vi = &after_name[vi_pos + "VALUES IN".len()..].trim();
+                if let Some((values_str, _)) = extract_parenthesized(after_vi) {
+                    let values: Vec<String> = values_str
+                        .split(',')
+                        .map(|v| v.trim().trim_matches(|c: char| c == '\'' || c == '"').to_string())
+                        .filter(|v| !v.is_empty())
+                        .collect();
+                    partitions.push(ListPartition {
+                        name: part_name.clone(),
+                        values,
+                    });
+                    rest = advance_to_next_partition(rest);
+                    continue;
+                }
+            }
+            break;
+        } else {
+            break;
+        }
+    }
+    partitions
+}
+
+fn advance_to_next_partition(s: &str) -> &str {
+    let upper = s.to_uppercase();
+    let skip = "PARTITION ".len();
+    if let Some(pos) = upper[skip..].find("PARTITION ") {
+        s[pos + skip..].trim()
+    } else {
+        ""
+    }
+}
+
+fn extract_partitions_count(s: &str) -> Option<usize> {
+    let upper = s.to_uppercase();
+    let pos = upper.find("PARTITIONS ")?;
+    let after = &s[pos + "PARTITIONS ".len()..].trim();
+    after
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(|c: char| !c.is_ascii_digit())
+        .parse()
+        .ok()
+}
+
+fn extract_buckets_count(s: &str) -> Option<usize> {
+    let upper = s.to_uppercase();
+    let pos = upper.find("BUCKETS ")?;
+    let after = &s[pos + "BUCKETS ".len()..].trim();
+    after
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(|c: char| !c.is_ascii_digit())
+        .parse()
+        .ok()
 }

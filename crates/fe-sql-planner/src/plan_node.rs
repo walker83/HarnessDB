@@ -59,6 +59,10 @@ pub struct ScanNode {
     pub predicates: Vec<String>,
     /// Limit pushed into the scan (early termination).
     pub limit: Option<usize>,
+    /// Optional partition info for partition pruning.
+    pub partition_info: Option<String>,
+    /// Partition IDs to scan (empty = all partitions).
+    pub partition_ids: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]

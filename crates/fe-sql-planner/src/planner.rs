@@ -106,6 +106,8 @@ impl Planner {
                     format!("table_name = '{}'", table),
                 ],
                 limit: None,
+                partition_info: None,
+                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -128,6 +130,8 @@ impl Planner {
                     table_pred,
                 ],
                 limit: None,
+                partition_info: None,
+                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -158,8 +162,8 @@ impl Planner {
         let partition_info = stmt.partition.map(|p| {
             format!(
                 "{}({})",
-                p.partition_type,
-                p.columns.join(", ")
+                p.partition_type(),
+                p.columns().join(", ")
             )
         });
 
@@ -360,6 +364,8 @@ impl Planner {
                 columns: vec![],
                 predicates: vec![],
                 limit: None,
+                partition_info: None,
+                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -373,6 +379,8 @@ impl Planner {
                 columns: vec!["schema_name".into()],
                 predicates: vec![],
                 limit: None,
+                partition_info: None,
+                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -387,6 +395,8 @@ impl Planner {
                 columns: vec!["table_name".into()],
                 predicates: vec![format!("table_schema = '{}'", target_db)],
                 limit: None,
+                partition_info: None,
+                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -441,12 +451,19 @@ impl Planner {
                     columns: vec![],
                     predicates: vec![],
                     limit: None,
+                    partition_info: None,
+                    partition_ids: vec![],
                 }),
                 vec![],
             )
         };
 
-        // 2. WHERE clause - handle subqueries (IN/EXISTS)
+        // 2. Apply partition pruning based on WHERE conditions
+        if let Some(where_expr) = &query.r#where {
+            plan = self.apply_partition_pruning(plan, where_expr);
+        }
+
+        // 3. WHERE clause - handle subqueries (IN/EXISTS)
         if let Some(where_expr) = &query.r#where {
             plan = self.plan_where_clause(where_expr, plan)?;
         }
@@ -630,6 +647,50 @@ impl Planner {
         self.plan_table_ref_with_cte(table_ref, None)
     }
 
+    fn apply_partition_pruning(&self, plan: PlanNode, where_expr: &fe_sql_parser::ast::Expr) -> PlanNode {
+        let PlanNode { id, node_type, children, stats } = plan;
+        let PlanNodeType::Scan(mut scan) = node_type else {
+            return PlanNode { id, node_type, children, stats };
+        };
+
+        let (database, table_name) = scan
+            .database
+            .as_deref()
+            .map(|d| (d, scan.table_name.as_str()))
+            .unwrap_or_else(|| ("", scan.table_name.as_str()));
+
+        let Some(table) = self.catalog.get_table(database, table_name) else {
+            return PlanNode { id, node_type: PlanNodeType::Scan(scan), children, stats };
+        };
+        let Some(partition_info) = &table.partition_info else {
+            return PlanNode { id, node_type: PlanNodeType::Scan(scan), children, stats };
+        };
+
+        let partition_cols: Vec<&str> = partition_info.columns.iter().map(|c| c.as_str()).collect();
+        let partition_conditions: Vec<String> = extract_partition_conditions(where_expr, &partition_cols);
+
+        if partition_conditions.is_empty() {
+            return PlanNode { id, node_type: PlanNodeType::Scan(scan), children, stats };
+        }
+
+        let pruned_ids: Vec<u64> = match partition_info.partition_type.to_uppercase().as_str() {
+            "RANGE" => prune_range_partitions(&partition_info.partitions, &partition_conditions),
+            "LIST" => prune_list_partitions(&partition_info.partitions, &partition_conditions),
+            _ => vec![],
+        };
+
+        if !pruned_ids.is_empty() {
+            scan.partition_ids = pruned_ids;
+        }
+
+        PlanNode {
+            id,
+            node_type: PlanNodeType::Scan(scan),
+            children,
+            stats,
+        }
+    }
+
     fn plan_table_ref_with_cte(&self, table_ref: &TableRef, _cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
         match table_ref {
             TableRef::Table { name, alias: _ } => {
@@ -638,6 +699,9 @@ impl Planner {
 
                 let (database, table_name) = self.resolve_table_name(name);
                 let columns = self.resolve_table_columns(&database, &table_name);
+                let partition_info = self.catalog
+                    .get_table(&database, &table_name)
+                    .and_then(|t| t.partition_info.as_ref().map(|p| format!("{}({})", p.partition_type, p.columns.join(", "))));
 
                 Ok(self.make_node(
                     PlanNodeType::Scan(ScanNode {
@@ -646,6 +710,8 @@ impl Planner {
                         columns,
                         predicates: vec![],
                         limit: None,
+                        partition_info,
+                        partition_ids: vec![],
                     }),
                     vec![],
                 ))
@@ -826,4 +892,96 @@ fn is_aggregate_function(name: &str) -> bool {
             | "PERCENTILE_UNION"
             | "GROUP_CONCAT"
     )
+}
+
+fn extract_partition_conditions(
+    expr: &fe_sql_parser::ast::Expr,
+    partition_cols: &[&str],
+) -> Vec<String> {
+    match expr {
+        fe_sql_parser::ast::Expr::BinaryOp { left, op, right } => {
+            match op {
+                fe_sql_parser::ast::BinaryOp::And => {
+                    let mut conds = extract_partition_conditions(left, partition_cols);
+                    conds.extend(extract_partition_conditions(right, partition_cols));
+                    conds
+                }
+                fe_sql_parser::ast::BinaryOp::Or => {
+                    let mut conds = extract_partition_conditions(left, partition_cols);
+                    conds.extend(extract_partition_conditions(right, partition_cols));
+                    conds
+                }
+                _ => {
+                    let col = match (&**left, &**right) {
+                        (fe_sql_parser::ast::Expr::ColumnRef { column, .. }, _)
+                            if partition_cols.iter().any(|c| *c == column) =>
+                        {
+                            Some((column.clone(), right))
+                        }
+                        (_, fe_sql_parser::ast::Expr::ColumnRef { column, .. })
+                            if partition_cols.iter().any(|c| *c == column) =>
+                        {
+                            Some((column.clone(), left))
+                        }
+                        _ => None,
+                    };
+                    if let Some((col_name, val_expr)) = col {
+                        let val = expression::expr_to_string(val_expr);
+                        vec![format!("{} = {}", col_name, val)]
+                    } else {
+                        vec![]
+                    }
+                }
+            }
+        }
+        _ => vec![],
+    }
+}
+
+fn prune_range_partitions(
+    partitions: &[fe_catalog::table::Partition],
+    _conditions: &[String],
+) -> Vec<u64> {
+    let mut pruned: Vec<u64> = Vec::new();
+    let mut selected = false;
+    for p in partitions {
+        if !selected {
+            pruned.push(p.id);
+        }
+        if let Some(end) = &p.range_end {
+            for cond in _conditions {
+                if cond.contains(end) {
+                    selected = true;
+                }
+            }
+        }
+    }
+    if pruned.is_empty() {
+        partitions.iter().map(|p| p.id).collect()
+    } else {
+        pruned
+    }
+}
+
+fn prune_list_partitions(
+    partitions: &[fe_catalog::table::Partition],
+    conditions: &[String],
+) -> Vec<u64> {
+    let mut pruned: Vec<u64> = Vec::new();
+    for p in partitions {
+        for cond in conditions {
+            if cond.contains(&p.name)
+                || p.range_start.as_ref().map_or(false, |s| cond.contains(s))
+                || p.range_end.as_ref().map_or(false, |e| cond.contains(e))
+            {
+                pruned.push(p.id);
+                break;
+            }
+        }
+    }
+    if pruned.is_empty() {
+        partitions.iter().map(|p| p.id).collect()
+    } else {
+        pruned
+    }
 }

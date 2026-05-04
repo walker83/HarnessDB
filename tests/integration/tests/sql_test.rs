@@ -681,7 +681,6 @@ fn test_csv_create_table_and_query() {
     use std::fs::File;
     use std::io::BufReader;
     use data_io::csv_reader::CsvReader;
-    use types::DataType;
 
     let file = File::open("/tmp/ZClawBench/zclawbench_simple.csv").unwrap();
     let reader = BufReader::new(file);
@@ -733,4 +732,188 @@ fn test_parquet_reader_zclawbench() {
 
     println!("Parquet import test passed: {} rows, {} columns, {} total rows",
         batch.num_rows(), batch.num_columns(), reader.num_rows());
+}
+
+// ===========================================================================
+// Partition tests
+// ===========================================================================
+
+#[test]
+fn test_parse_hash_partition() {
+    let sql = "CREATE TABLE t1 (id INT, name VARCHAR(50)) PARTITION BY HASH(id) PARTITIONS 8";
+    let stmts = fe_sql_parser::parse_sql(sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    if let fe_sql_parser::ast::Statement::CreateTable(ct) = &stmts[0] {
+        assert_eq!(ct.name, "t1");
+        assert!(ct.partition.is_some());
+        match ct.partition.as_ref().unwrap() {
+            fe_sql_parser::ast::PartitionDef::Hash(h) => {
+                assert_eq!(h.columns, vec!["id"]);
+                assert_eq!(h.num_partitions, 8);
+            }
+            other => panic!("Expected Hash partition, got {:?}", other.partition_type()),
+        }
+    } else {
+        panic!("Expected CreateTable statement");
+    }
+}
+
+#[test]
+fn test_parse_range_partition() {
+    let sql = "CREATE TABLE t1 (id INT, dt DATE) PARTITION BY RANGE(YEAR(dt)) (PARTITION p0 VALUES LESS THAN (1990), PARTITION p1 VALUES LESS THAN (2000))";
+    let stmts = fe_sql_parser::parse_sql(sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    if let fe_sql_parser::ast::Statement::CreateTable(ct) = &stmts[0] {
+        assert!(ct.partition.is_some());
+        match ct.partition.as_ref().unwrap() {
+            fe_sql_parser::ast::PartitionDef::Range(r) => {
+                assert_eq!(r.partitions.len(), 2);
+                assert_eq!(r.partitions[0].name, "p0");
+                assert_eq!(r.partitions[0].less_than, "1990");
+                assert_eq!(r.partitions[1].name, "p1");
+                assert_eq!(r.partitions[1].less_than, "2000");
+            }
+            other => panic!("Expected Range partition, got {:?}", other.partition_type()),
+        }
+    } else {
+        panic!("Expected CreateTable statement");
+    }
+}
+
+#[test]
+fn test_parse_list_partition() {
+    let sql = "CREATE TABLE t1 (id INT, city VARCHAR(50)) PARTITION BY LIST(city) (PARTITION p1 VALUES IN (\"北京\", \"上海\"), PARTITION p2 VALUES IN (\"广州\", \"深圳\"))";
+    let stmts = fe_sql_parser::parse_sql(sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    if let fe_sql_parser::ast::Statement::CreateTable(ct) = &stmts[0] {
+        assert!(ct.partition.is_some());
+        match ct.partition.as_ref().unwrap() {
+            fe_sql_parser::ast::PartitionDef::List(l) => {
+                assert_eq!(l.partitions.len(), 2);
+                assert_eq!(l.partitions[0].name, "p1");
+                assert_eq!(l.partitions[0].values, vec!["北京", "上海"]);
+                assert_eq!(l.partitions[1].name, "p2");
+                assert_eq!(l.partitions[1].values, vec!["广州", "深圳"]);
+            }
+            other => panic!("Expected List partition, got {:?}", other.partition_type()),
+        }
+    } else {
+        panic!("Expected CreateTable statement");
+    }
+}
+
+#[test]
+fn test_parse_distribution() {
+    let sql = "CREATE TABLE t1 (id INT) DISTRIBUTED BY HASH(id) BUCKETS 8";
+    let stmts = fe_sql_parser::parse_sql(sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    if let fe_sql_parser::ast::Statement::CreateTable(ct) = &stmts[0] {
+        assert!(ct.distribution.is_some());
+        let dist = ct.distribution.as_ref().unwrap();
+        assert_eq!(dist.dist_type, "HASH");
+        assert_eq!(dist.columns, vec!["id"]);
+        assert_eq!(dist.buckets, 8);
+    } else {
+        panic!("Expected CreateTable statement");
+    }
+}
+
+#[test]
+fn test_partition_pruning_range() {
+    use std::sync::Arc;
+    use fe_catalog::table::{Table, TableColumn, PartitionInfo, Partition, KeysType};
+    use fe_catalog::CatalogManager;
+    use fe_sql_planner::Planner;
+
+    let catalog = Arc::new(CatalogManager::new());
+    catalog.create_database("test_prune").unwrap();
+
+    let table = Table {
+        id: 1,
+        name: "orders".to_string(),
+        database: "test_prune".to_string(),
+        columns: vec![
+            TableColumn {
+                name: "id".into(),
+                data_type: types::DataType::Int32,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "dt".into(),
+                data_type: types::DataType::Date,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+        ],
+        keys_type: KeysType::Duplicate,
+        partition_info: Some(PartitionInfo {
+            partition_type: "RANGE".to_string(),
+            columns: vec!["dt".to_string()],
+            partitions: vec![
+                Partition { id: 0, name: "p0".into(), range_start: None, range_end: Some("2024-01-01".into()) },
+                Partition { id: 1, name: "p1".into(), range_start: Some("2024-01-01".into()), range_end: Some("2024-06-01".into()) },
+                Partition { id: 2, name: "p2".into(), range_start: Some("2024-06-01".into()), range_end: None },
+            ],
+        }),
+        distribution_info: None,
+        replication_num: 3,
+        properties: std::collections::HashMap::new(),
+        row_count: 0,
+        data_size: 0,
+    };
+    catalog.create_table("test_prune", table).unwrap();
+
+    let planner = Planner::new(catalog.clone());
+
+    let sql = "SELECT * FROM test_prune.orders WHERE dt = '2024-03-15'";
+    let stmts = fe_sql_parser::parse_sql(sql).unwrap();
+    let plan = planner.plan(stmts[0].clone()).unwrap();
+
+    let plan_str = format!("{}", plan);
+    assert!(plan_str.contains("ScanNode"), "Expected ScanNode in plan: {}", plan_str);
+    assert!(plan_str.contains("orders"), "Expected orders in plan: {}", plan_str);
+}
+
+#[test]
+fn test_partition_metadata_model() {
+    use fe_catalog::partition::{PartitionType, PartitionSpec, PartitionEntry, PartitionMeta, PartitionState};
+
+    let spec = PartitionSpec::new_hash(vec!["id".to_string()], 4);
+    assert_eq!(spec.partition_type, PartitionType::Hash);
+    assert_eq!(spec.columns, vec!["id"]);
+    assert_eq!(spec.partitions.len(), 4);
+
+    let range_entries = vec![
+        PartitionEntry {
+            id: 0, name: "p0".into(),
+            range_start: None, range_end: Some("2024-01-01".into()),
+            list_values: vec![],
+        },
+        PartitionEntry {
+            id: 1, name: "p1".into(),
+            range_start: Some("2024-01-01".into()), range_end: Some("2024-06-01".into()),
+            list_values: vec![],
+        },
+    ];
+    let range_spec = PartitionSpec::new_range(vec!["dt".to_string()], range_entries);
+    assert_eq!(range_spec.partition_type, PartitionType::Range);
+    assert_eq!(range_spec.partition_names(), vec!["p0", "p1"]);
+
+    let meta = PartitionMeta::new(0, "p0");
+    assert_eq!(meta.name, "p0");
+    assert_eq!(meta.state, PartitionState::Normal);
+
+    let info = range_spec.to_partition_info();
+    assert_eq!(info.partition_type, "RANGE");
+    assert_eq!(info.columns, vec!["dt"]);
+    assert_eq!(info.partitions.len(), 2);
 }

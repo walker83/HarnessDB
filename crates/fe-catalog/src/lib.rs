@@ -8,5 +8,6 @@ pub mod stats;
 pub use catalog::CatalogManager;
 pub use database::Database;
 pub use table::Table;
+pub use partition::{PartitionType, PartitionSpec, PartitionEntry, PartitionMeta, PartitionState};
 pub use stats::{TableStats, ColumnStats, Histogram, HistogramBucket, StatisticsProvider, InMemoryStatsProvider};
 pub use catalog::CatalogStatsProvider;
