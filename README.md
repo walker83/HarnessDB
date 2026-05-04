@@ -5,12 +5,19 @@
 [![MIT/Apache-2.0 License](https://img.shields.io/badge/License-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![Status](https://img.shields.io/badge/Status-Proof--of--Concept-yellow.svg)]()
+[![Documentation](https://img.shields.io/badge/Docs-English-blue)](docs/en/)
+[![中文文档](https://img.shields.io/badge/Docs-中文-green)](docs/zh/)
 
 ## Naming
 
 **RorisDB** = **R**ust + (D)**oris** + **DB**
 
 GitHub topics: `rust`, `olap`, `analytical-database`, `columnar-storage`, `mpp`, `data-warehouse`, `real-time-analytics`, `doris-inspired`
+
+## Documentation / 文档
+
+- **English Documentation**: [docs/en/](docs/en/)
+- **中文文档**: [docs/zh/](docs/zh/)
 
 ## Why RorisDB?
 
@@ -88,6 +95,13 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **CLI Client** | ✅ | REPL with SQL parsing and plan visualization |
 | **Data Import** | ✅ | CSV reader/writer, JSON Lines parser, Stream Load framework |
 | **Data Export** | ✅ | CSV writer from query results |
+| **Pipeline Execution** | ✅ | Async Pipeline execution engine with non-blocking operators |
+| **Memory Tracker** | ✅ | Fine-grained resource tracking and memory limit enforcement |
+| **Error Handling** | ✅ | Refined error types with context and source tracing |
+| **Concurrent Optimization** | ✅ | DashMap, Arc<Mutex>, and lock-free data structures |
+| **Vector Type System** | ✅ | Refactored type system with better extensibility |
+| **ExecNode Static Dispatch** | ✅ | Static dispatch for better performance |
+| **Bitmap Optimization** | ✅ | SetBitIter with trailing_zeros for fast bitmap operations |
 
 ### In Progress
 
@@ -152,31 +166,41 @@ SELECT * FROM user WHERE age > 20;
 ## Project Structure
 
 ```
-rovisdb/
+RorisDB/
 ├── roris-server/          # FE and BE binary entry points
-├── crates/
-│   ├── fe-sql-parser/    # SQL parsing → AST
-│   ├── fe-sql-planner/   # AST → Logical/Physical Plan → Optimization
+│   └── src/
+│       ├── fe_main.rs    # Frontend Server entry
+│       └── be_main.rs    # Backend Server entry
+├── crates/                # Core modules (16 crates)
+│   ├── fe-sql-parser/   # SQL parsing → AST
+│   ├── fe-sql-planner/  # AST → Logical/Physical Plan → Optimization
 │   ├── fe-catalog/      # Database/Table/Partition metadata
-│   ├── fe-scheduler/     # Fragment planning, distributed scheduling
-│   ├── fe-expression/    # Vectorized expression evaluation
-│   ├── fe-common/        # FE shared (EditLog, MetaService)
+│   ├── fe-scheduler/    # Fragment planning, distributed scheduling
+│   ├── fe-expression/   # Vectorized expression evaluation
+│   ├── fe-common/       # FE shared (EditLog, MetaService)
 │   ├── mysql-protocol/   # MySQL wire protocol server
-│   ├── be-storage/       # Tablet, Rowset, Segment, Compaction
-│   ├── be-execution/     # Pipeline execution engine
-│   ├── be-segment/       # Columnar segment format
-│   ├── be-common/        # BE shared (config, metrics)
-│   ├── data-io/          # CSV/JSON import, Stream Load
-│   ├── types/            # Vector, Bitmap, Block, DataType, Schema
-│   ├── common/           # Error handling, config, utilities
-│   ├── proto/            # RPC protocol definitions
-│   └── rpc/              # gRPC service implementations
-├── tools/
-│   └── roris-cli/        # Command-line client
-├── benches/
-│   └── tpch/             # TPC-H benchmark suite
-└── tests/
-    └── integration/      # SQL and protocol integration tests
+│   ├── be-storage/      # Tablet, Rowset, Segment, Compaction
+│   ├── be-execution/    # Pipeline execution engine (async)
+│   ├── be-segment/      # Columnar segment format (codec)
+│   ├── be-common/       # BE shared (config, metrics, memory)
+│   ├── data-io/         # CSV/JSON import, Stream Load
+│   ├── types/           # Vector, Bitmap, Block, DataType, Schema
+│   ├── common/          # Error handling, config, utilities
+│   ├── proto/           # gRPC protocol definitions (protobuf)
+│   └── rpc/             # gRPC service implementations
+├── tools/                # Tools and utilities
+│   ├── roris-cli/       # Command-line client (REPL)
+│   ├── tpch_test/       # TPC-H benchmark tool
+│   └── mysql_server/    # MySQL server tool
+├── benches/              # Benchmarks
+│   └── tpch/            # TPC-H benchmark suite
+├── tests/                # Tests
+│   ├── integration/     # SQL and protocol integration tests
+│   └── common/          # Test utilities
+└── docs/                 # Documentation (bilingual)
+    ├── README.md         # Bilingual index
+    ├── en/              # English documentation
+    └── zh/              # 中文文档
 ```
 
 ## Performance
