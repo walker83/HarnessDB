@@ -7,3 +7,4 @@ pub mod replica;
 pub use catalog::CatalogManager;
 pub use database::Database;
 pub use table::Table;
+pub use partition::{PartitionType, PartitionSpec, PartitionEntry, PartitionMeta, PartitionState};

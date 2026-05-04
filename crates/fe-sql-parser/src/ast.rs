@@ -145,17 +145,58 @@ pub enum KeysType {
 }
 
 #[derive(Debug, Clone)]
-pub struct PartitionDef {
-    pub partition_type: String,
-    pub columns: Vec<String>,
-    pub ranges: Vec<PartitionRange>,
+pub enum PartitionDef {
+    Range(RangePartitionDef),
+    List(ListPartitionDef),
+    Hash(HashPartitionDef),
 }
 
 #[derive(Debug, Clone)]
-pub struct PartitionRange {
+pub struct RangePartitionDef {
+    pub columns: Vec<String>,
+    pub partitions: Vec<RangePartition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RangePartition {
     pub name: String,
-    pub start: String,
-    pub end: String,
+    pub less_than: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListPartitionDef {
+    pub columns: Vec<String>,
+    pub partitions: Vec<ListPartition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListPartition {
+    pub name: String,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HashPartitionDef {
+    pub columns: Vec<String>,
+    pub num_partitions: usize,
+}
+
+impl PartitionDef {
+    pub fn partition_type(&self) -> &str {
+        match self {
+            PartitionDef::Range(_) => "RANGE",
+            PartitionDef::List(_) => "LIST",
+            PartitionDef::Hash(_) => "HASH",
+        }
+    }
+
+    pub fn columns(&self) -> &[String] {
+        match self {
+            PartitionDef::Range(d) => &d.columns,
+            PartitionDef::List(d) => &d.columns,
+            PartitionDef::Hash(d) => &d.columns,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

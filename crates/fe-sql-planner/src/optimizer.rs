@@ -216,6 +216,8 @@ mod tests {
                 columns: cols.iter().map(|c| c.to_string()).collect(),
                 predicates: vec![],
                 limit: None,
+                partition_info: None,
+                partition_ids: vec![],
             }),
             children: vec![],
             stats: PlanStats::default(),
@@ -383,13 +385,13 @@ mod tests {
         let opt = Optimizer::new();
         let left = PlanNode {
             id: PlanNodeId(0),
-            node_type: PlanNodeType::Scan(ScanNode { table_name: "big".into(), database: None, columns: vec!["*".into()], predicates: vec![], limit: None }),
+            node_type: PlanNodeType::Scan(ScanNode { table_name: "big".into(), database: None, columns: vec!["*".into()], predicates: vec![], limit: None, partition_info: None, partition_ids: vec![] }),
             children: vec![],
             stats: PlanStats::with_row_count(10000.0),
         };
         let right = PlanNode {
             id: PlanNodeId(1),
-            node_type: PlanNodeType::Scan(ScanNode { table_name: "small".into(), database: None, columns: vec!["*".into()], predicates: vec![], limit: None }),
+            node_type: PlanNodeType::Scan(ScanNode { table_name: "small".into(), database: None, columns: vec!["*".into()], predicates: vec![], limit: None, partition_info: None, partition_ids: vec![] }),
             children: vec![],
             stats: PlanStats::with_row_count(100.0),
         };
