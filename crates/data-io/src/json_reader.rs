@@ -207,11 +207,17 @@ fn infer_type_from_json_value(value: &Value) -> DataType {
 }
 
 fn json_value_to_scalar(value: Option<&Value>, data_type: &DataType) -> types::ScalarValue {
-    use types::ScalarValue;
+    use types::{ScalarValue, JsonValue};
 
     match value {
         None | Some(Value::Null) => ScalarValue::Null,
-        Some(Value::Bool(b)) => ScalarValue::Boolean(*b),
+        Some(Value::Bool(b)) => {
+            if matches!(data_type, DataType::Json) {
+                ScalarValue::Json(JsonValue::Bool(*b))
+            } else {
+                ScalarValue::Boolean(*b)
+            }
+        }
         Some(Value::Number(n)) => {
             match data_type {
                 DataType::Int64 | DataType::Int32 | DataType::Int16 | DataType::Int8 => {
@@ -219,6 +225,10 @@ fn json_value_to_scalar(value: Option<&Value>, data_type: &DataType) -> types::S
                 }
                 DataType::Float64 | DataType::Float32 => {
                     n.as_f64().map(ScalarValue::Float64).unwrap_or(ScalarValue::Null)
+                }
+                DataType::Json => {
+                    n.as_f64().map(JsonValue::Number).map(ScalarValue::Json)
+                        .unwrap_or(ScalarValue::Null)
                 }
                 _ => {
                     n.to_string().parse::<i64>()
@@ -232,11 +242,41 @@ fn json_value_to_scalar(value: Option<&Value>, data_type: &DataType) -> types::S
             match data_type {
                 DataType::Date => parse_date_scalar(s).map(ScalarValue::Date).unwrap_or(ScalarValue::String(s.clone())),
                 DataType::DateTime => parse_datetime_scalar(s).map(ScalarValue::DateTime).unwrap_or(ScalarValue::String(s.clone())),
+                DataType::Json => ScalarValue::Json(JsonValue::String(s.clone())),
                 _ => ScalarValue::String(s.clone()),
             }
         }
-        Some(Value::Array(_)) | Some(Value::Object(_)) => {
-            ScalarValue::String(serde_json::to_string(value.unwrap()).unwrap_or_default())
+        Some(Value::Array(arr)) => {
+            if matches!(data_type, DataType::Json) {
+                let items: Vec<JsonValue> = arr.iter().map(|v| value_to_json(v)).collect();
+                ScalarValue::Json(JsonValue::Array(items))
+            } else {
+                ScalarValue::String(serde_json::to_string(value.unwrap()).unwrap_or_default())
+            }
+        }
+        Some(Value::Object(obj)) => {
+            if matches!(data_type, DataType::Json) {
+                let pairs: Vec<(String, JsonValue)> = obj.iter()
+                    .map(|(k, v)| (k.clone(), value_to_json(v)))
+                    .collect();
+                ScalarValue::Json(JsonValue::Object(pairs))
+            } else {
+                ScalarValue::String(serde_json::to_string(value.unwrap()).unwrap_or_default())
+            }
+        }
+    }
+}
+
+fn value_to_json(value: &serde_json::Value) -> types::JsonValue {
+    use types::JsonValue;
+    match value {
+        serde_json::Value::Null => JsonValue::Null,
+        serde_json::Value::Bool(b) => JsonValue::Bool(*b),
+        serde_json::Value::Number(n) => JsonValue::Number(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(s) => JsonValue::String(s.clone()),
+        serde_json::Value::Array(arr) => JsonValue::Array(arr.iter().map(value_to_json).collect()),
+        serde_json::Value::Object(obj) => {
+            JsonValue::Object(obj.iter().map(|(k, v)| (k.clone(), value_to_json(v))).collect())
         }
     }
 }
@@ -253,6 +293,7 @@ fn create_vector_for_type(data_type: &DataType) -> Vector {
         DataType::Float64 => Vector::Float64(Float64Vector::new()),
         DataType::Date => Vector::Date(DateVector::new()),
         DataType::DateTime => Vector::DateTime(DateTimeVector::new()),
+        DataType::Json => Vector::Json(types::JsonVector::new()),
         _ => Vector::String(StringVector::new()),
     }
 }
@@ -316,6 +357,11 @@ fn push_scalar_to_vector(vector: &mut Vector, scalar: &types::ScalarValue) {
                 v.push(Some(s.as_str()));
             }
         }
+        ScalarValue::Json(j) => {
+            if let Vector::Json(v) = vector {
+                v.push(Some(ScalarValue::Json(j.clone())));
+            }
+        }
         ScalarValue::Null | ScalarValue::Binary(_) | ScalarValue::Array(_) => {
             push_null_to_vector(vector);
         }
@@ -335,6 +381,7 @@ fn push_null_to_vector(vector: &mut Vector) {
         Vector::Date(v) => v.push(None),
         Vector::DateTime(v) => v.push(None),
         Vector::String(v) => v.push(None),
+        Vector::Json(v) => v.push(None),
         Vector::Null(_) => {}
     }
 }

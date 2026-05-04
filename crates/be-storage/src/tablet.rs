@@ -374,6 +374,7 @@ fn estimate_block_size(block: &Block) -> u64 {
             }
             types::Vector::Date(v) => v.len() as u64 * 4,
             types::Vector::DateTime(v) => v.len() as u64 * 8,
+            types::Vector::Json(v) => v.len() as u64 * 64,
             types::Vector::Null(v) => v.len() as u64,
         };
     }

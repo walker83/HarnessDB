@@ -8,8 +8,8 @@ pub mod schema;
 pub mod block;
 
 pub use data_type::DataType;
-pub use scalar::ScalarValue;
-pub use vector::Vector;
+pub use scalar::{ScalarValue, JsonValue};
+pub use vector::{Vector, JsonVector};
 pub use bitmap::Bitmap;
 pub use field::Field;
 pub use schema::Schema;

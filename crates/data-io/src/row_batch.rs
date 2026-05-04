@@ -118,6 +118,11 @@ fn push_scalar_to_column(column: &mut Vector, value: &ScalarValue) {
                 v.push(Some(s.as_str()));
             }
         }
+        Json(j) => {
+            if let Vector::Json(v) = column {
+                v.push(Some(ScalarValue::Json(j.clone())));
+            }
+        }
         Null | Binary(_) | Array(_) => {
             push_null_to_column(column);
         }
@@ -137,6 +142,7 @@ fn push_null_to_column(column: &mut Vector) {
         Vector::Date(v) => v.push(None),
         Vector::DateTime(v) => v.push(None),
         Vector::String(v) => v.push(None),
+        Vector::Json(v) => v.push(None),
         Vector::Null(_) => {}
     }
 }

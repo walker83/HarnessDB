@@ -135,6 +135,9 @@ fn scalar_value_to_string(value: &ScalarValue) -> String {
             let items: Vec<String> = arr.iter().map(scalar_value_to_string).collect();
             format!("[{}]", items.join(","))
         }
+        ScalarValue::Json(j) => {
+            serde_json::to_string(j).unwrap_or_else(|_| "null".to_string())
+        }
     }
 }
 

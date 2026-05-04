@@ -1,5 +1,5 @@
 use chrono::{NaiveDate, NaiveDateTime, Datelike, Timelike, Duration, Utc, TimeZone};
-use types::{ScalarValue, Vector};
+use types::{ScalarValue, Vector, JsonValue};
 
 pub struct FunctionRegistry;
 
@@ -67,6 +67,57 @@ impl FunctionRegistry {
             "dense_rank" => self.dense_rank(args),
             "lag" => self.lag(args),
             "lead" => self.lead(args),
+            // JSON functions
+            "json_parse" | "parse_json" => self.json_parse(args),
+            "json_query" | "json_extract" => self.json_query(args),
+            "json_get" => self.json_get(args),
+            "json_contains" => self.json_contains(args),
+            "json_array" => self.json_array(args),
+            "json_object" => self.json_object(args),
+            "json_length" => self.json_length(args),
+            "json_keys" => self.json_keys(args),
+            "json_valid" => self.json_valid(args),
+            // Bitwise functions
+            "bitand" | "&" => self.bitand(args),
+            "bitor" | "|" => self.bitor(args),
+            "bitxor" | "^" => self.bitxor(args),
+            "bitnot" | "~" => self.bitnot(args),
+            "bitshiftleft" | "<<" => self.bitshiftleft(args),
+            "bitshiftright" | ">>" => self.bitshiftright(args),
+            // Additional math functions
+            "sign" => self.sign(args),
+            "degrees" => self.degrees(args),
+            "radians" => self.radians(args),
+            "truncate" | "trunc" => self.truncate(args),
+            "greatest" => self.greatest(args),
+            "least" => self.least(args),
+            "modulo" | "mod" => self.modulo(args),
+            "cot" => self.cot(args),
+            "sinh" => self.sinh(args),
+            "cosh" => self.cosh(args),
+            "tanh" => self.tanh(args),
+            // Additional string functions
+            "ltrim" => self.ltrim(args),
+            "rtrim" => self.rtrim(args),
+            "replace" => self.replace(args),
+            "left" => self.left(args),
+            "right" => self.right(args),
+            "locate" | "position" => self.locate(args),
+            "repeat" => self.repeat(args),
+            "space" => self.space(args),
+            "reverse" => self.reverse(args),
+            "ascii" => self.ascii(args),
+            "char" | "chr" => self.char_func(args),
+            "octet_length" => self.octet_length(args),
+            "bit_length" => self.bit_length_func(args),
+            "concat_ws" => self.concat_ws(args),
+            "find_in_set" => self.find_in_set(args),
+            "instr" => self.instr(args),
+            "lpad" => self.lpad(args),
+            "rpad" => self.rpad(args),
+            "format" => self.format(args),
+            "md5" => self.md5(args),
+            "sha1" => self.sha1(args),
             _ => {
                 tracing::warn!("unknown function: {}", name);
                 args.first().cloned().unwrap_or_else(|| bool_vec(vec![]))
@@ -897,6 +948,1034 @@ impl FunctionRegistry {
                         *default
                     }
                 }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // JSON functions
+    fn json_parse(&self, args: &[Vector]) -> Vector {
+        use types::{Vector as TypesVector, JsonVector, JsonValue};
+
+        match args.first() {
+            Some(Vector::String(v)) => {
+                let json_values: Vec<types::ScalarValue> = (0..v.len()).map(|i| {
+                    if let Some(s) = v.get(i) {
+                        self.parse_json_string(s)
+                    } else {
+                        types::ScalarValue::Json(JsonValue::Null)
+                    }
+                }).collect();
+                TypesVector::Json(JsonVector::from_vec(json_values))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn parse_json_string(&self, s: &str) -> types::ScalarValue {
+        use types::JsonValue;
+
+        // Simple JSON parser - handles basic cases
+        let trimmed = s.trim();
+        if trimmed == "null" {
+            return types::ScalarValue::Json(JsonValue::Null);
+        }
+        if trimmed == "true" {
+            return types::ScalarValue::Json(JsonValue::Bool(true));
+        }
+        if trimmed == "false" {
+            return types::ScalarValue::Json(JsonValue::Bool(false));
+        }
+        if let Some(num_str) = trimmed.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+            return types::ScalarValue::Json(JsonValue::String(num_str.to_string()));
+        }
+        if let Ok(n) = trimmed.parse::<f64>() {
+            return types::ScalarValue::Json(JsonValue::Number(n));
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            // Array
+            let inner = &trimmed[1..trimmed.len()-1];
+            let items: Vec<JsonValue> = if inner.is_empty() {
+                vec![]
+            } else {
+                inner.split(',').filter_map(|item| {
+                    if let types::ScalarValue::Json(j) = self.parse_json_string(item.trim()) {
+                        Some(j)
+                    } else {
+                        None
+                    }
+                }).collect()
+            };
+            return types::ScalarValue::Json(JsonValue::Array(items));
+        }
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            // Object
+            let inner = &trimmed[1..trimmed.len()-1];
+            let pairs: Vec<(String, JsonValue)> = if inner.is_empty() {
+                vec![]
+            } else {
+                inner.split(',').filter_map(|pair| {
+                    let parts: Vec<&str> = pair.split(':').collect();
+                    if parts.len() == 2 {
+                        let key = parts[0].trim().trim_matches('"');
+                        if let types::ScalarValue::Json(val) = self.parse_json_string(parts[1].trim()) {
+                            Some((key.to_string(), val))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }).collect()
+            };
+            return types::ScalarValue::Json(JsonValue::Object(pairs));
+        }
+
+        // Fallback for invalid JSON
+        types::ScalarValue::Null
+    }
+
+    fn json_query(&self, args: &[Vector]) -> Vector {
+        use types::{Vector as TypesVector, JsonVector};
+
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Json(json_vec)), Some(Vector::String(path_vec))) => {
+                let results: Vec<types::ScalarValue> = (0..json_vec.len()).map(|i| {
+                    if let (Some(json), Some(path)) = (json_vec.get(i), path_vec.get(i)) {
+                        self.json_extract(&json, path)
+                    } else {
+                        types::ScalarValue::Null
+                    }
+                }).collect();
+                TypesVector::Json(JsonVector::from_vec(results))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn json_extract(&self, json: &types::ScalarValue, path: &str) -> types::ScalarValue {
+        use types::JsonValue;
+
+        let json_val = match json {
+            types::ScalarValue::Json(j) => j,
+            _ => return types::ScalarValue::Null,
+        };
+
+        // Simple JSONPath-like extraction: $.key, $.array[index], $."key with spaces"
+        let path_parts: Vec<&str> = path.split('.').skip(1).collect();
+        let mut current = json_val;
+
+        for part in path_parts {
+            current = match current {
+                JsonValue::Object(pairs) => {
+                    let key = part.trim_matches('"');
+                    pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v).unwrap_or(&JsonValue::Null)
+                }
+                JsonValue::Array(items) => {
+                    if let Ok(idx) = part.parse::<usize>() {
+                        items.get(idx).unwrap_or(&JsonValue::Null)
+                    } else {
+                        &JsonValue::Null
+                    }
+                }
+                _ => &JsonValue::Null,
+            };
+        }
+
+        types::ScalarValue::Json(current.clone())
+    }
+
+    fn json_get(&self, args: &[Vector]) -> Vector {
+        // Alias for json_query with simpler key access
+        self.json_query(args)
+    }
+
+    fn json_contains(&self, args: &[Vector]) -> Vector {
+        use types::JsonValue;
+
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Json(json_vec)), Some(target)) => {
+                let target_val = match target.scalar_at(0) {
+                    types::ScalarValue::Json(JsonValue::String(s)) => s,
+                    types::ScalarValue::String(s) => s,
+                    types::ScalarValue::Json(JsonValue::Number(n)) => n.to_string(),
+                    types::ScalarValue::Json(JsonValue::Bool(b)) => b.to_string(),
+                    types::ScalarValue::Int64(n) => n.to_string(),
+                    types::ScalarValue::Float64(n) => n.to_string(),
+                    _ => return bool_vec(vec![]),
+                };
+
+                let results: Vec<bool> = (0..json_vec.len()).map(|i| {
+                    match json_vec.get(i) {
+                        Some(types::ScalarValue::Json(json)) => {
+                            self.json_value_contains(&json, &target_val)
+                        }
+                        _ => false,
+                    }
+                }).collect();
+                bool_vec(results)
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn json_value_contains(&self, json: &JsonValue, target: &str) -> bool {
+        match json {
+            JsonValue::String(s) => s.contains(target),
+            JsonValue::Array(items) => items.iter().any(|item| self.json_value_contains(item, target)),
+            JsonValue::Object(pairs) => pairs.iter().any(|(_, v)| self.json_value_contains(v, target)),
+            JsonValue::Number(n) => target == n.to_string(),
+            JsonValue::Bool(b) => target == b.to_string(),
+            JsonValue::Null => false,
+        }
+    }
+
+    fn json_array(&self, args: &[Vector]) -> Vector {
+        use types::{Vector as TypesVector, JsonVector, JsonValue};
+
+        let items: Vec<JsonValue> = args.iter().flat_map(|arg| (0..arg.len()).map(|i| {
+            match arg.scalar_at(i) {
+                types::ScalarValue::Null => JsonValue::Null,
+                types::ScalarValue::String(s) => JsonValue::String(s),
+                types::ScalarValue::Int64(n) => JsonValue::Number(n as f64),
+                types::ScalarValue::Float64(n) => JsonValue::Number(n),
+                types::ScalarValue::Boolean(b) => JsonValue::Bool(b),
+                types::ScalarValue::Json(j) => j.clone(),
+                _ => JsonValue::Null,
+            }
+        })).collect();
+
+        TypesVector::Json(JsonVector::from_vec(vec![types::ScalarValue::Json(JsonValue::Array(items))]))
+    }
+
+    fn json_object(&self, args: &[Vector]) -> Vector {
+        use types::{Vector as TypesVector, JsonVector, JsonValue};
+
+        if args.len() % 2 != 0 {
+            return bool_vec(vec![]);
+        }
+
+        let len = args.first().map(|v| v.len()).unwrap_or(1);
+        let result = types::ScalarValue::Json(JsonValue::Array((0..len).map(|i| {
+            let mut pairs = vec![];
+
+            for chunk in args.chunks(2) {
+                if let (Some(key_vec), Some(val_vec)) = (chunk.first(), chunk.get(1)) {
+                    if let (types::ScalarValue::String(key), val) = (key_vec.scalar_at(i), val_vec.scalar_at(i)) {
+                        let json_val = match val {
+                            types::ScalarValue::Null => JsonValue::Null,
+                            types::ScalarValue::String(s) => JsonValue::String(s.clone()),
+                            types::ScalarValue::Int64(n) => JsonValue::Number(n as f64),
+                            types::ScalarValue::Float64(n) => JsonValue::Number(n),
+                            types::ScalarValue::Boolean(b) => JsonValue::Bool(b),
+                            types::ScalarValue::Json(j) => j.clone(),
+                            _ => JsonValue::Null,
+                        };
+                        pairs.push((key.clone(), json_val));
+                    }
+                }
+            }
+
+            JsonValue::Object(pairs)
+        }).collect()));
+
+        TypesVector::Json(JsonVector::from_vec(vec![result]))
+    }
+
+    fn json_length(&self, args: &[Vector]) -> Vector {
+        use types::JsonValue;
+
+        match args.first() {
+            Some(Vector::Json(v)) => {
+                let lengths: Vec<i64> = (0..v.len()).map(|i| {
+                    match v.get(i) {
+                        Some(types::ScalarValue::Json(json)) => self.json_value_length(&json) as i64,
+                        _ => 0,
+                    }
+                }).collect();
+                int64_vec(lengths)
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn json_value_length(&self, json: &JsonValue) -> usize {
+        match json {
+            JsonValue::Null => 1,
+            JsonValue::Bool(_) => 1,
+            JsonValue::Number(_) => 1,
+            JsonValue::String(s) => s.len(),
+            JsonValue::Array(items) => items.len(),
+            JsonValue::Object(pairs) => pairs.len(),
+        }
+    }
+
+    fn json_keys(&self, args: &[Vector]) -> Vector {
+        use types::{Vector as TypesVector, JsonVector, JsonValue};
+
+        match args.first() {
+            Some(Vector::Json(v)) => {
+                let key_arrays: Vec<types::ScalarValue> = (0..v.len()).map(|i| {
+                    match v.get(i) {
+                        Some(types::ScalarValue::Json(JsonValue::Object(pairs))) => {
+                            let keys: Vec<JsonValue> = pairs.iter().map(|(k, _)| JsonValue::String(k.clone())).collect();
+                            types::ScalarValue::Json(JsonValue::Array(keys))
+                        }
+                        _ => types::ScalarValue::Json(JsonValue::Array(vec![])),
+                    }
+                }).collect();
+                TypesVector::Json(JsonVector::from_vec(key_arrays))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn json_valid(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                let results: Vec<bool> = (0..v.len()).map(|i| {
+                    v.get(i).map(|s| self.is_valid_json(s)).unwrap_or(false)
+                }).collect();
+                bool_vec(results)
+            }
+            Some(Vector::Json(v)) => {
+                // Already parsed JSON is valid
+                bool_vec((0..v.len()).map(|_| true).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn is_valid_json(&self, s: &str) -> bool {
+        let trimmed = s.trim();
+
+        if trimmed == "null" || trimmed == "true" || trimmed == "false" {
+            return true;
+        }
+
+        // Check for string
+        if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+            return true;
+        }
+
+        // Check for number
+        if trimmed.parse::<f64>().is_ok() {
+            return true;
+        }
+
+        // Check for array
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            return true; // Simple check, could validate contents
+        }
+
+        // Check for object
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            return true; // Simple check, could validate contents
+        }
+
+        false
+    }
+
+    // Bitwise functions
+    fn bitand(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Int64(a)), Some(Vector::Int64(b))) => {
+                let len = a.len().min(b.len());
+                int64_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) & b.get(i).unwrap_or(0)
+                }).collect())
+            }
+            (Some(Vector::Int32(a)), Some(Vector::Int32(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int32(types::vector::Int32Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) & b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            (Some(Vector::Int16(a)), Some(Vector::Int16(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int16(types::vector::Int16Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) & b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            (Some(Vector::Int8(a)), Some(Vector::Int8(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int8(types::vector::Int8Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) & b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn bitor(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Int64(a)), Some(Vector::Int64(b))) => {
+                let len = a.len().min(b.len());
+                int64_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) | b.get(i).unwrap_or(0)
+                }).collect())
+            }
+            (Some(Vector::Int32(a)), Some(Vector::Int32(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int32(types::vector::Int32Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) | b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            (Some(Vector::Int16(a)), Some(Vector::Int16(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int16(types::vector::Int16Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) | b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            (Some(Vector::Int8(a)), Some(Vector::Int8(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int8(types::vector::Int8Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) | b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn bitxor(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Int64(a)), Some(Vector::Int64(b))) => {
+                let len = a.len().min(b.len());
+                int64_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) ^ b.get(i).unwrap_or(0)
+                }).collect())
+            }
+            (Some(Vector::Int32(a)), Some(Vector::Int32(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int32(types::vector::Int32Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) ^ b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            (Some(Vector::Int16(a)), Some(Vector::Int16(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int16(types::vector::Int16Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) ^ b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            (Some(Vector::Int8(a)), Some(Vector::Int8(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int8(types::vector::Int8Vector::from_vec((0..len).map(|i| {
+                    a.get(i).unwrap_or(0) ^ b.get(i).unwrap_or(0)
+                }).collect()))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn bitnot(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Int64(v)) => int64_vec(v.data().iter().map(|n| !n).collect()),
+            Some(Vector::Int32(v)) => Vector::Int32(types::vector::Int32Vector::from_vec(v.data().iter().map(|n| !n).collect())),
+            Some(Vector::Int16(v)) => Vector::Int16(types::vector::Int16Vector::from_vec(v.data().iter().map(|n| !n).collect())),
+            Some(Vector::Int8(v)) => Vector::Int8(types::vector::Int8Vector::from_vec(v.data().iter().map(|n| !n).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn bitshiftleft(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Int64(a)), Some(Vector::Int64(b))) => {
+                let len = a.len().min(b.len());
+                int64_vec((0..len).map(|i| {
+                    let shift = b.get(i).unwrap_or(0);
+                    a.get(i).unwrap_or(0) << shift
+                }).collect())
+            }
+            (Some(Vector::Int32(a)), Some(Vector::Int32(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int32(types::vector::Int32Vector::from_vec((0..len).map(|i| {
+                    let shift = b.get(i).unwrap_or(0);
+                    a.get(i).unwrap_or(0) << shift
+                }).collect()))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn bitshiftright(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Int64(a)), Some(Vector::Int64(b))) => {
+                let len = a.len().min(b.len());
+                int64_vec((0..len).map(|i| {
+                    let shift = b.get(i).unwrap_or(0);
+                    a.get(i).unwrap_or(0) >> shift
+                }).collect())
+            }
+            (Some(Vector::Int32(a)), Some(Vector::Int32(b))) => {
+                let len = a.len().min(b.len());
+                Vector::Int32(types::vector::Int32Vector::from_vec((0..len).map(|i| {
+                    let shift = b.get(i).unwrap_or(0);
+                    a.get(i).unwrap_or(0) >> shift
+                }).collect()))
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // Additional math functions
+    fn sign(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => int64_vec(v.data().iter().map(|n| {
+                if n > &0.0 { 1 } else if n < &0.0 { -1 } else { 0 }
+            }).collect()),
+            Some(Vector::Float32(v)) => Vector::Int32(types::vector::Int32Vector::from_vec(v.data().iter().map(|n| {
+                if n > &0.0 { 1 } else if n < &0.0 { -1 } else { 0 }
+            }).collect())),
+            Some(Vector::Int64(v)) => int64_vec(v.data().iter().map(|n| {
+                if n > &0 { 1 } else if n < &0 { -1 } else { 0 }
+            }).collect()),
+            Some(Vector::Int32(v)) => Vector::Int32(types::vector::Int32Vector::from_vec(v.data().iter().map(|n| {
+                if n > &0 { 1 } else if n < &0 { -1 } else { 0 }
+            }).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn degrees(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.to_degrees()).collect()),
+            Some(Vector::Float32(v)) => Vector::Float32(types::vector::Float32Vector::from_vec(v.data().iter().map(|n| n.to_degrees()).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn radians(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.to_radians()).collect()),
+            Some(Vector::Float32(v)) => Vector::Float32(types::vector::Float32Vector::from_vec(v.data().iter().map(|n| n.to_radians()).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn truncate(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Float64(v)), Some(Vector::Int64(d))) => {
+                let len = v.len().min(d.len());
+                float64_vec((0..len).map(|i| {
+                    let n = v.get(i).unwrap_or(0.0);
+                    let decimals = d.get(i).unwrap_or(0) as i32;
+                    let multiplier = 10_f64.powi(decimals);
+                    let sign = if n >= 0.0 { 1.0 } else { -1.0 };
+                    sign * (n.abs() * multiplier).floor() / multiplier
+                }).collect())
+            }
+            (Some(Vector::Float64(v)), None) => float64_vec(v.data().iter().map(|n| n.trunc()).collect()),
+            (Some(Vector::Int64(v)), _) => int64_vec(v.data().to_vec()),
+            (Some(Vector::Int32(v)), _) => Vector::Int32(types::vector::Int32Vector::from_vec(v.data().to_vec())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn greatest(&self, args: &[Vector]) -> Vector {
+        if args.is_empty() {
+            return bool_vec(vec![]);
+        }
+
+        let len = args[0].len();
+        let mut result = vec![];
+
+        for i in 0..len {
+            let mut max_val = args[0].scalar_at(i);
+
+            for arg in &args[1..] {
+                let current = arg.scalar_at(i);
+                match (&max_val, &current) {
+                    (ScalarValue::Null, _) => max_val = current,
+                    (ScalarValue::Int64(a), ScalarValue::Int64(b)) if b > a => max_val = ScalarValue::Int64(*b),
+                    (ScalarValue::Float64(a), ScalarValue::Float64(b)) if b > a => max_val = ScalarValue::Float64(*b),
+                    (ScalarValue::String(a), ScalarValue::String(b)) if b.as_str() > a.as_str() => max_val = ScalarValue::String(b.clone()),
+                    _ => {}
+                }
+            }
+
+            result.push(max_val);
+        }
+
+        Vector::from_scalar(&result.first().unwrap_or(&ScalarValue::Null), 0)
+            .slice(0, 0)
+            .filter(&types::Bitmap::with_capacity(len));
+
+        match result.first() {
+            Some(ScalarValue::Int64(_)) => {
+                let vals: Vec<i64> = result.into_iter().filter_map(|v| match v {
+                    ScalarValue::Int64(n) => Some(n),
+                    _ => None
+                }).collect();
+                int64_vec(vals)
+            }
+            Some(ScalarValue::Float64(_)) => {
+                let vals: Vec<f64> = result.into_iter().filter_map(|v| match v {
+                    ScalarValue::Float64(n) => Some(n),
+                    _ => None
+                }).collect();
+                float64_vec(vals)
+            }
+            Some(ScalarValue::String(_)) => {
+                let vals: Vec<String> = result.into_iter().filter_map(|v| match v {
+                    ScalarValue::String(s) => Some(s),
+                    _ => None
+                }).collect();
+                string_vec(vals.into_iter().map(Some).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn least(&self, args: &[Vector]) -> Vector {
+        if args.is_empty() {
+            return bool_vec(vec![]);
+        }
+
+        let len = args[0].len();
+        let mut result = vec![];
+
+        for i in 0..len {
+            let mut min_val = args[0].scalar_at(i);
+
+            for arg in &args[1..] {
+                let current = arg.scalar_at(i);
+                match (&min_val, &current) {
+                    (ScalarValue::Null, _) => min_val = current,
+                    (ScalarValue::Int64(a), ScalarValue::Int64(b)) if b < a => min_val = ScalarValue::Int64(*b),
+                    (ScalarValue::Float64(a), ScalarValue::Float64(b)) if b < a => min_val = ScalarValue::Float64(*b),
+                    (ScalarValue::String(a), ScalarValue::String(b)) if b.as_str() < a.as_str() => min_val = ScalarValue::String(b.clone()),
+                    _ => {}
+                }
+            }
+
+            result.push(min_val);
+        }
+
+        match result.first() {
+            Some(ScalarValue::Int64(_)) => {
+                let vals: Vec<i64> = result.into_iter().filter_map(|v| match v {
+                    ScalarValue::Int64(n) => Some(n),
+                    _ => None
+                }).collect();
+                int64_vec(vals)
+            }
+            Some(ScalarValue::Float64(_)) => {
+                let vals: Vec<f64> = result.into_iter().filter_map(|v| match v {
+                    ScalarValue::Float64(n) => Some(n),
+                    _ => None
+                }).collect();
+                float64_vec(vals)
+            }
+            Some(ScalarValue::String(_)) => {
+                let vals: Vec<String> = result.into_iter().filter_map(|v| match v {
+                    ScalarValue::String(s) => Some(s),
+                    _ => None
+                }).collect();
+                string_vec(vals.into_iter().map(Some).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn modulo(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Int64(a)), Some(Vector::Int64(b))) => {
+                let len = a.len().min(b.len());
+                int64_vec((0..len).map(|i| {
+                    let dividend = a.get(i).unwrap_or(0);
+                    let divisor = b.get(i).unwrap_or(1);
+                    if divisor == 0 { 0 } else { dividend % divisor }
+                }).collect())
+            }
+            (Some(Vector::Float64(a)), Some(Vector::Float64(b))) => {
+                let len = a.len().min(b.len());
+                float64_vec((0..len).map(|i| {
+                    let dividend = a.get(i).unwrap_or(0.0);
+                    let divisor = b.get(i).unwrap_or(1.0);
+                    if divisor == 0.0 { 0.0 } else { dividend % divisor }
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn cot(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| {
+                1.0 / n.tan()
+            }).collect()),
+            Some(Vector::Float32(v)) => Vector::Float32(types::vector::Float32Vector::from_vec(v.data().iter().map(|n| {
+                1.0 / n.tan()
+            }).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn sinh(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.sinh()).collect()),
+            Some(Vector::Float32(v)) => Vector::Float32(types::vector::Float32Vector::from_vec(v.data().iter().map(|n| n.sinh()).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn cosh(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.cosh()).collect()),
+            Some(Vector::Float32(v)) => Vector::Float32(types::vector::Float32Vector::from_vec(v.data().iter().map(|n| n.cosh()).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn tanh(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.tanh()).collect()),
+            Some(Vector::Float32(v)) => Vector::Float32(types::vector::Float32Vector::from_vec(v.data().iter().map(|n| n.tanh()).collect())),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // Additional string functions
+    fn ltrim(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                let results: Vec<String> = (0..v.len()).map(|i| {
+                    v.get(i).unwrap_or("").trim_start().to_string()
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn rtrim(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                let results: Vec<String> = (0..v.len()).map(|i| {
+                    v.get(i).unwrap_or("").trim_end().to_string()
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn replace(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1), args.get(2)) {
+            (Some(Vector::String(v)), Some(Vector::String(from)), Some(Vector::String(to))) => {
+                let len = v.len().min(from.len()).min(to.len());
+                let results: Vec<String> = (0..len).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let from_str = from.get(i).unwrap_or("");
+                    let to_str = to.get(i).unwrap_or("");
+                    s.replace(from_str, to_str)
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn left(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::String(v)), Some(Vector::Int64(len_vec))) => {
+                let results: Vec<String> = (0..v.len().min(len_vec.len())).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let len = len_vec.get(i).unwrap_or(0) as usize;
+                    s.chars().take(len).collect()
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn right(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::String(v)), Some(Vector::Int64(len_vec))) => {
+                let results: Vec<String> = (0..v.len().min(len_vec.len())).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let len = len_vec.get(i).unwrap_or(0) as usize;
+                    s.chars().rev().take(len).collect::<String>().chars().rev().collect()
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn locate(&self, args: &[Vector]) -> Vector {
+        // locate(substring, string, [start_position])
+        match (args.get(1), args.first(), args.get(2)) {
+            (Some(Vector::String(v)), Some(Vector::String(sub)), None) => {
+                let len = v.len().min(sub.len());
+                int64_vec((0..len).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let sub_str = sub.get(i).unwrap_or("");
+                    s.find(sub_str).map(|pos| pos as i64 + 1).unwrap_or(0)
+                }).collect())
+            }
+            (Some(Vector::String(v)), Some(Vector::String(sub)), Some(Vector::Int64(start))) => {
+                let len = v.len().min(sub.len()).min(start.len());
+                int64_vec((0..len).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let sub_str = sub.get(i).unwrap_or("");
+                    let start_pos = start.get(i).unwrap_or(1) as usize;
+                    if start_pos > 0 && start_pos <= s.len() {
+                        s[start_pos - 1..].find(sub_str).map(|pos| pos as i64 + start_pos as i64).unwrap_or(0)
+                    } else {
+                        0
+                    }
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn repeat(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::String(v)), Some(Vector::Int64(count))) => {
+                let len = v.len().min(count.len());
+                let results: Vec<String> = (0..len).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let n = count.get(i).unwrap_or(1).max(0) as usize;
+                    s.repeat(n)
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn space(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Int64(v)) => {
+                let results: Vec<String> = v.data().iter().map(|n| {
+                    " ".repeat((*n.max(&0)) as usize)
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn reverse(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                let results: Vec<String> = (0..v.len()).map(|i| {
+                    v.get(i).unwrap_or("").chars().rev().collect()
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn ascii(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                int64_vec((0..v.len()).map(|i| {
+                    v.get(i).unwrap_or("").chars().next().map(|c| c as i64).unwrap_or(0)
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn char_func(&self, args: &[Vector]) -> Vector {
+        if args.is_empty() {
+            return string_vec(vec![]);
+        }
+
+        let len = args[0].len();
+        let results: Vec<String> = (0..len).map(|i| {
+            args.iter().filter_map(|v| {
+                if let Vector::Int64(sv) = v {
+                    sv.get(i).map(|n| {
+                        let ch = (n.max(0).min(255) as u8) as char;
+                        if ch.is_ascii() { Some(ch) } else { Some('�') }
+                    }).flatten()
+                } else {
+                    None
+                }
+            }).collect()
+        }).collect();
+        string_vec(results.iter().map(|s| Some(s.clone())).collect())
+    }
+
+    fn octet_length(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                int64_vec((0..v.len()).map(|i| {
+                    v.get(i).unwrap_or("").len() as i64
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn bit_length_func(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                int64_vec((0..v.len()).map(|i| {
+                    v.get(i).unwrap_or("").len() as i64 * 8
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn concat_ws(&self, args: &[Vector]) -> Vector {
+        if args.len() < 2 {
+            return bool_vec(vec![]);
+        }
+
+        let sep_vec = &args[0];
+        let str_vecs = &args[1..];
+
+        let len = sep_vec.len();
+
+        let results: Vec<String> = (0..len).map(|i| {
+            let parts: Vec<&str> = str_vecs.iter().filter_map(|v| {
+                if let Vector::String(sv) = v {
+                    sv.get(i)
+                } else {
+                    None
+                }
+            }).collect();
+
+            if let Vector::String(sep) = sep_vec {
+                let sep_str = sep.get(i).unwrap_or("");
+                parts.join(sep_str)
+            } else {
+                parts.join("")
+            }
+        }).collect();
+
+        string_vec(results.iter().map(|s| Some(s.clone())).collect())
+    }
+
+    fn find_in_set(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::String(str)), Some(Vector::String(strlist))) => {
+                let len = str.len().min(strlist.len());
+                int64_vec((0..len).map(|i| {
+                    let s = str.get(i).unwrap_or("");
+                    let list = strlist.get(i).unwrap_or("");
+                    list.split(',').position(|part| part.trim() == s).map(|pos| pos as i64 + 1).unwrap_or(0)
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn instr(&self, args: &[Vector]) -> Vector {
+        // instr(str, substr) - returns 1-based position
+        match (args.first(), args.get(1)) {
+            (Some(Vector::String(v)), Some(Vector::String(sub))) => {
+                let len = v.len().min(sub.len());
+                int64_vec((0..len).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let sub_str = sub.get(i).unwrap_or("");
+                    s.find(sub_str).map(|pos| pos as i64 + 1).unwrap_or(0)
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn lpad(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1), args.get(2)) {
+            (Some(Vector::String(v)), Some(Vector::Int64(len)), Some(Vector::String(pad))) => {
+                let results_len = v.len().min(len.len()).min(pad.len());
+                let results: Vec<String> = (0..results_len).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let target_len = len.get(i).unwrap_or(0) as usize;
+                    let pad_str = pad.get(i).unwrap_or(" ");
+                    if s.len() >= target_len {
+                        s.chars().take(target_len).collect()
+                    } else {
+                        let needed = target_len - s.len();
+                        let padding: String = std::iter::repeat(pad_str).flat_map(|s| s.chars()).take(needed).collect();
+                        format!("{}{}", padding, s)
+                    }
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn rpad(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1), args.get(2)) {
+            (Some(Vector::String(v)), Some(Vector::Int64(len)), Some(Vector::String(pad))) => {
+                let results_len = v.len().min(len.len()).min(pad.len());
+                let results: Vec<String> = (0..results_len).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let target_len = len.get(i).unwrap_or(0) as usize;
+                    let pad_str = pad.get(i).unwrap_or(" ");
+                    if s.len() >= target_len {
+                        s.chars().take(target_len).collect()
+                    } else {
+                        let needed = target_len - s.len();
+                        let padding: String = std::iter::repeat(pad_str).flat_map(|s| s.chars()).take(needed).collect();
+                        format!("{}{}", s, padding)
+                    }
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn format(&self, args: &[Vector]) -> Vector {
+        match (args.first(), args.get(1)) {
+            (Some(Vector::Float64(v)), Some(Vector::Int64(decimals))) => {
+                let len = v.len().min(decimals.len());
+                let results: Vec<String> = (0..len).map(|i| {
+                    let n = v.get(i).unwrap_or(0.0);
+                    let d = decimals.get(i).unwrap_or(0) as usize;
+                    format!("{:.*}", d, n)
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            (Some(Vector::Int64(v)), Some(Vector::Int64(decimals))) => {
+                let len = v.len().min(decimals.len());
+                let results: Vec<String> = (0..len).map(|i| {
+                    let n = v.get(i).unwrap_or(0) as f64;
+                    let d = decimals.get(i).unwrap_or(0) as usize;
+                    format!("{:.*}", d, n)
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn md5(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::String(v)) => {
+                let results: Vec<String> = (0..v.len()).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    format!("{:x}", md5::compute(s))
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn sha1(&self, args: &[Vector]) -> Vector {
+        use sha1::{Sha1, Digest};
+        match args.first() {
+            Some(Vector::String(v)) => {
+                let results: Vec<String> = (0..v.len()).map(|i| {
+                    let s = v.get(i).unwrap_or("");
+                    let mut hasher = Sha1::new();
+                    hasher.update(s.as_bytes());
+                    format!("{:x}", hasher.finalize())
+                }).collect();
+                string_vec(results.iter().map(|s| Some(s.clone())).collect())
             }
             _ => bool_vec(vec![]),
         }

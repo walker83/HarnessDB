@@ -1,4 +1,5 @@
 use crate::{Bitmap, DataType, ScalarValue};
+use crate::scalar::JsonValue;
 use std::fmt;
 
 #[derive(Clone)]
@@ -14,6 +15,7 @@ pub enum Vector {
     String(StringVector),
     Date(DateVector),
     DateTime(DateTimeVector),
+    Json(JsonVector),
     Null(NullVector),
 }
 
@@ -263,6 +265,103 @@ impl StringVector {
 }
 
 #[derive(Clone)]
+pub struct JsonVector {
+    data: Vec<ScalarValue>,
+    validity: Bitmap,
+}
+
+impl JsonVector {
+    pub fn new() -> Self {
+        Self { data: Vec::new(), validity: Bitmap::new() }
+    }
+
+    pub fn from_vec(vals: Vec<ScalarValue>) -> Self {
+        let mut validity = Bitmap::with_capacity(vals.len());
+        for v in &vals {
+            validity.push(!matches!(v, ScalarValue::Null));
+        }
+        Self { data: vals, validity }
+    }
+
+    pub fn from_option_vec(vals: Vec<Option<ScalarValue>>) -> Self {
+        let mut validity = Bitmap::with_capacity(vals.len());
+        let data: Vec<ScalarValue> = vals.into_iter().map(|v| {
+            let is_valid = v.is_some();
+            if let Some(val) = v {
+                validity.push(true);
+                val
+            } else {
+                validity.push(false);
+                ScalarValue::Json(JsonValue::Null)
+            }
+        }).collect();
+        Self { data, validity }
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    pub fn get(&self, idx: usize) -> Option<ScalarValue> {
+        if self.validity.is_valid(idx) {
+            Some(self.data[idx].clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn validity(&self) -> &Bitmap {
+        &self.validity
+    }
+
+    pub fn null_count(&self) -> usize {
+        self.validity.null_count()
+    }
+
+    pub fn push(&mut self, val: Option<ScalarValue>) {
+        match val {
+            Some(v) => {
+                self.data.push(v);
+                self.validity.push(true);
+            }
+            None => {
+                self.data.push(ScalarValue::Json(JsonValue::Null));
+                self.validity.push(false);
+            }
+        }
+    }
+
+    pub fn filter(&self, selection: &crate::Bitmap) -> Self {
+        let mut data = Vec::new();
+        let mut validity = Bitmap::new();
+        for idx in selection.iter_set_bits() {
+            if let Some(v) = self.get(idx) {
+                data.push(v);
+                validity.push(true);
+            } else {
+                data.push(ScalarValue::Json(JsonValue::Null));
+                validity.push(false);
+            }
+        }
+        Self { data, validity }
+    }
+
+    pub fn slice(&self, start: usize, len: usize) -> Self {
+        let end = (start + len).min(self.len());
+        let data: Vec<ScalarValue> = (start..end).filter_map(|i| self.get(i)).collect();
+        let mut validity = Bitmap::with_capacity(len);
+        for i in start..end {
+            validity.push(self.validity.is_valid(i));
+        }
+        Self { data, validity }
+    }
+}
+
+#[derive(Clone)]
 pub struct NullVector {
     len: usize,
 }
@@ -296,6 +395,7 @@ impl Vector {
             Self::String(_) => DataType::String,
             Self::Date(_) => DataType::Date,
             Self::DateTime(_) => DataType::DateTime,
+            Self::Json(_) => DataType::Json,
             Self::Null(_) => DataType::Null,
         }
     }
@@ -313,6 +413,7 @@ impl Vector {
             Self::String(v) => v.len(),
             Self::Date(v) => v.len(),
             Self::DateTime(v) => v.len(),
+            Self::Json(v) => v.len(),
             Self::Null(v) => v.len(),
         }
     }
@@ -367,6 +468,10 @@ impl Vector {
                 Some(n) => ScalarValue::DateTime(n),
                 None => ScalarValue::Null,
             },
+            Self::Json(v) => match v.get(idx) {
+            Some(j) => j,
+            None => ScalarValue::Null,
+        },
             Self::Null(_) => ScalarValue::Null,
         }
     }
@@ -384,6 +489,7 @@ impl Vector {
             Self::String(v) => Self::String(v.filter(selection)),
             Self::Date(v) => Self::Date(v.filter(selection)),
             Self::DateTime(v) => Self::DateTime(v.filter(selection)),
+            Self::Json(v) => Self::Json(v.filter(selection)),
             Self::Null(v) => Self::Null(NullVector::new(
                 (0..v.len()).filter(|&i| selection.get(i)).count()
             )),
@@ -403,6 +509,7 @@ impl Vector {
             Self::String(v) => Self::String(v.slice(start, len)),
             Self::Date(v) => Self::Date(v.slice(start, len)),
             Self::DateTime(v) => Self::DateTime(v.slice(start, len)),
+            Self::Json(v) => Self::Json(v.slice(start, len)),
             Self::Null(v) => Self::Null(NullVector::new(len.min(v.len().saturating_sub(start)))),
         }
     }
@@ -420,6 +527,7 @@ impl Vector {
             Self::String(v) => v.validity().null_count(),
             Self::Date(v) => v.null_count(),
             Self::DateTime(v) => v.null_count(),
+            Self::Json(v) => v.null_count(),
             Self::Null(v) => v.len(),
         }
     }
@@ -454,6 +562,7 @@ impl Vector {
                 let v: Vec<&str> = (0..len).map(|_| s.as_str()).collect();
                 Self::String(StringVector::from_vec(v))
             }
+            ScalarValue::Json(j) => Self::Json(JsonVector::from_vec(vec![ScalarValue::Json(j.clone()); len])),
             _ => Self::Null(NullVector::new(len)),
         }
     }

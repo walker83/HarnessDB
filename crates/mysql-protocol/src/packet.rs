@@ -625,6 +625,7 @@ pub fn scalar_to_column_type(val: &ScalarValue) -> u8 {
         ScalarValue::String(_) => column_type::VAR_STRING,
         ScalarValue::Binary(_) => column_type::BLOB,
         ScalarValue::Array(_) => column_type::BLOB,
+        ScalarValue::Json(_) => column_type::VAR_STRING,
     }
 }
 
@@ -647,6 +648,7 @@ pub fn data_type_to_column_type(dt: &types::DataType) -> u8 {
             column_type::VAR_STRING
         }
         types::DataType::Binary => column_type::BLOB,
+        types::DataType::Json => column_type::VAR_STRING,
         _ => column_type::BLOB,
     }
 }
@@ -696,6 +698,7 @@ pub fn scalar_to_text_bytes(val: &ScalarValue) -> Option<Vec<u8>> {
         ScalarValue::String(s) => Some(s.clone().into_bytes()),
         ScalarValue::Binary(b) => Some(b.clone()),
         ScalarValue::Array(_) => Some(b"[]".to_vec()),
+        ScalarValue::Json(j) => Some(serde_json::to_string(j).unwrap_or_else(|_| "null".to_string()).into_bytes()),
     }
 }
 

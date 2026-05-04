@@ -288,6 +288,26 @@ impl SegmentWriter {
                 }
                 buf
             }
+            Vector::Json(v) => {
+                // Encode JSON as serialized string
+                let len = v.len();
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&(len as u32).to_le_bytes());
+                for i in 0..len {
+                    match v.get(i) {
+                        Some(val) => {
+                            let json_str = serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string());
+                            let bytes = json_str.as_bytes();
+                            buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                            buf.extend_from_slice(bytes);
+                        }
+                        None => {
+                            buf.extend_from_slice(&0u32.to_le_bytes());
+                        }
+                    }
+                }
+                buf
+            }
             Vector::Null(v) => {
                 vec![0u8; v.len()]
             }
@@ -312,6 +332,7 @@ impl SegmentWriter {
                 Vector::Date(v) => v.validity().is_valid(i),
                 Vector::DateTime(v) => v.validity().is_valid(i),
                 Vector::String(v) => v.validity().is_valid(i),
+                Vector::Json(v) => v.validity().is_valid(i),
                 Vector::Null(_) => false,
             };
             if is_valid {

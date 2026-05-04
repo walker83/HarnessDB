@@ -240,6 +240,14 @@ pub fn serialize_scalar(val: &ScalarValue) -> Vec<u8> {
             }
             out
         }
+        ScalarValue::Json(j) => {
+            let json_str = serde_json::to_string(j).unwrap_or_else(|_| "null".to_string());
+            let bytes = json_str.as_bytes();
+            let len = bytes.len() as u32;
+            let mut out = len.to_le_bytes().to_vec();
+            out.extend_from_slice(bytes);
+            out
+        }
     }
 }
 

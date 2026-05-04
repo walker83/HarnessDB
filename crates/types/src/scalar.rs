@@ -1,6 +1,7 @@
 use crate::DataType;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ScalarValue {
     Null,
     Boolean(bool),
@@ -16,6 +17,17 @@ pub enum ScalarValue {
     String(String),
     Binary(Vec<u8>),
     Array(Vec<ScalarValue>),
+    Json(JsonValue),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum JsonValue {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<JsonValue>),
+    Object(Vec<(String, JsonValue)>),
 }
 
 impl ScalarValue {
@@ -38,6 +50,7 @@ impl ScalarValue {
                 let inner = v.first().map(|s| s.data_type()).unwrap_or(DataType::Null);
                 DataType::Array(Box::new(inner))
             }
+            Self::Json(_) => DataType::Json,
         }
     }
 
