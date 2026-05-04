@@ -7,7 +7,8 @@ use tokio::time::{interval, Duration};
 use fe_common::edit_log::EditLog;
 use fe_catalog::CatalogManager;
 use fe_scheduler::ClusterManager;
-use fe_monitor::{MonitoringManager, MonitoringHttpServer};
+use fe_monitor::{MonitoringManager};
+use fe_monitor::http_server::MonitoringHttpServer;
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]

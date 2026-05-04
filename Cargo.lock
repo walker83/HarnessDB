@@ -312,6 +312,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -1669,6 +1670,7 @@ dependencies = [
  "common",
  "fe-catalog",
  "fe-common",
+ "fe-monitor",
  "fe-scheduler",
  "fe-sql-parser",
  "fe-sql-planner",
