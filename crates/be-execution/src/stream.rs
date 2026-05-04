@@ -1,4 +1,3 @@
-use common::Result;
 use types::Block;
 
 pub struct RowBatchStream {

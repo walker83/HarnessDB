@@ -146,32 +146,28 @@ impl CatalogManager {
         for entry in log.entries() {
             match entry.op_type {
                 OpType::CreateDatabase => {
-                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data) {
-                        if let CatalogOp::CreateDatabase(name) = op {
+                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
+                        && let CatalogOp::CreateDatabase(name) = op {
                             self.create_database(&name)?;
                         }
-                    }
                 }
                 OpType::DropDatabase => {
-                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data) {
-                        if let CatalogOp::DropDatabase(name) = op {
+                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
+                        && let CatalogOp::DropDatabase(name) = op {
                             self.drop_database(&name)?;
                         }
-                    }
                 }
                 OpType::CreateTable => {
-                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data) {
-                        if let CatalogOp::CreateTable { db, table } = op {
+                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
+                        && let CatalogOp::CreateTable { db, table } = op {
                             self.create_table(&db, table)?;
                         }
-                    }
                 }
                 OpType::DropTable => {
-                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data) {
-                        if let CatalogOp::DropTable { db, table } = op {
+                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
+                        && let CatalogOp::DropTable { db, table } = op {
                             self.drop_table(&db, &table)?;
                         }
-                    }
                 }
                 _ => { /* ignore other op types for now */ }
             }

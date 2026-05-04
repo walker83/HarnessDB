@@ -149,12 +149,11 @@ impl<R: Read + BufRead> JsonReader<R> {
             let fields: Vec<Field> = all_keys.iter().map(|name| {
                 let mut data_type = DataType::String;
                 for json_map in &json_maps {
-                    if let Some(value) = json_map.get(name) {
-                        if !value.is_null() {
+                    if let Some(value) = json_map.get(name)
+                        && !value.is_null() {
                             data_type = infer_type_from_json_value(value);
                             break;
                         }
-                    }
                 }
                 Field {
                     name: name.clone(),
@@ -248,7 +247,7 @@ fn json_value_to_scalar(value: Option<&Value>, data_type: &DataType) -> types::S
         }
         Some(Value::Array(arr)) => {
             if matches!(data_type, DataType::Json) {
-                let items: Vec<JsonValue> = arr.iter().map(|v| value_to_json(v)).collect();
+                let items: Vec<JsonValue> = arr.iter().map(value_to_json).collect();
                 ScalarValue::Json(JsonValue::Array(items))
             } else {
                 ScalarValue::String(serde_json::to_string(value.unwrap()).unwrap_or_default())

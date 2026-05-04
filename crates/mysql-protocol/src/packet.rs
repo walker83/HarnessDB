@@ -1,5 +1,4 @@
-use bytes::{Buf, BufMut, BytesMut};
-use std::io::Cursor;
+use bytes::{BufMut, BytesMut};
 use types::ScalarValue;
 
 use crate::charset::{self, DEFAULT_CHARSET};

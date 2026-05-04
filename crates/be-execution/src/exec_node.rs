@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use common::Result;
 use types::{Block, Bitmap, Vector, Schema, ScalarValue};
-use std::sync::{Arc, Mutex};
-use be_storage::tablet::{Tablet, TabletSchema, truncate_tablet};
 
 #[async_trait]
 pub trait ExecNode: Send + Sync {
@@ -338,8 +336,8 @@ impl ExecNode for AggregateExecNode {
             let mut result_schema_fields: Vec<types::Field> = Vec::new();
 
             for (func, col_idx) in &self.aggregates {
-                if *col_idx < block.num_columns() {
-                    if let Some(col) = block.column(*col_idx) {
+                if *col_idx < block.num_columns()
+                    && let Some(col) = block.column(*col_idx) {
                         let agg_value = Self::compute_aggregate_batch(col, func);
                         let vector = match agg_value {
                             ScalarValue::Int64(v) => Vector::Int64(types::vector::Int64Vector::from_vec(vec![v])),
@@ -350,7 +348,6 @@ impl ExecNode for AggregateExecNode {
                         result_columns.push(vector);
                         result_schema_fields.push(types::Field::new("", types::DataType::Null, true));
                     }
-                }
             }
 
             self.returned = true;
@@ -362,11 +359,10 @@ impl ExecNode for AggregateExecNode {
         for row_idx in 0..block.num_rows() {
             let mut key_parts = Vec::new();
             for &col_idx in &self.group_by {
-                if col_idx < block.num_columns() {
-                    if let Some(col) = block.column(col_idx) {
+                if col_idx < block.num_columns()
+                    && let Some(col) = block.column(col_idx) {
                         key_parts.push(format!("{:?}", col.scalar_at(row_idx)));
                     }
-                }
             }
             let group_key = key_parts.join("|");
 
@@ -380,11 +376,11 @@ impl ExecNode for AggregateExecNode {
                 })
                 .collect();
 
-            groups.entry(group_key).or_insert_with(Vec::new).push(row_values);
+            groups.entry(group_key).or_default().push(row_values);
         }
 
         let mut result_rows: Vec<Vec<ScalarValue>> = Vec::new();
-        for (_group_key, group_rows) in &groups {
+        for group_rows in groups.values() {
             let mut result_row = Vec::new();
 
             if !group_rows.is_empty() {
@@ -502,7 +498,7 @@ impl ExecNode for SortExecNode {
         if combined.is_none() {
             return Ok(None);
         }
-        let mut block = combined.unwrap();
+        let block = combined.unwrap();
 
         if self.order_by.is_empty() {
             self.returned = true;
@@ -689,12 +685,11 @@ impl HashJoinExecNode {
         (0..block.num_rows()).map(|row_idx| {
             let mut key_parts = Vec::new();
             for &idx in key_indices {
-                if idx < block.num_columns() {
-                    if let Some(col) = block.column(idx) {
+                if idx < block.num_columns()
+                    && let Some(col) = block.column(idx) {
                         let scalar = col.scalar_at(row_idx);
                         key_parts.push(format!("{:?}", scalar));
                     }
-                }
             }
             key_parts.join("|")
         }).collect()
@@ -727,7 +722,7 @@ impl ExecNode for HashJoinExecNode {
                 let keys = Self::extract_keys_from_block(block, &self.build_keys);
                 for (row_idx, key) in keys.iter().enumerate() {
                     let row_block = block.slice(row_idx, 1);
-                    self.hash_table.entry(key.clone()).or_insert_with(Vec::new).push(row_block);
+                    self.hash_table.entry(key.clone()).or_default().push(row_block);
                 }
             }
 
@@ -752,12 +747,11 @@ impl ExecNode for HashJoinExecNode {
             }
 
             if !result_blocks.is_empty() {
-                return Ok(Some(Block::concat(&result_blocks).unwrap_or_else(|| block)));
+                return Ok(Some(Block::concat(&result_blocks).unwrap_or(block)));
             }
         }
 
-        if self.join_type == "LEFT" && !self.matched_build_keys.is_empty() {
-        }
+        self.join_type == "LEFT" && !self.matched_build_keys.is_empty();
 
         Ok(None)
     }
@@ -953,7 +947,7 @@ impl ExecNode for WindowExecNode {
             self.returned = true;
             return Ok(None);
         }
-        let mut block = combined.unwrap();
+        let block = combined.unwrap();
 
         let num_rows = block.num_rows();
         let mut partition_ranges: Vec<(usize, usize)> = Vec::new();
@@ -1069,11 +1063,10 @@ impl WindowExecNode {
     fn get_partition_key(&self, block: &Block, row_idx: usize) -> String {
         let mut key_parts = Vec::new();
         for &col_idx in &self.partition_by {
-            if col_idx < block.num_columns() {
-                if let Some(col) = block.column(col_idx) {
+            if col_idx < block.num_columns()
+                && let Some(col) = block.column(col_idx) {
                     key_parts.push(format!("{:?}", col.scalar_at(row_idx)));
                 }
-            }
         }
         key_parts.join("|")
     }
@@ -1092,8 +1085,8 @@ impl WindowExecNode {
             }
             "lead" | "lag" => {
                 let mut data: Vec<i64> = Vec::new();
-                if self.window_func_col < block.num_columns() {
-                    if let Some(col) = block.column(self.window_func_col) {
+                if self.window_func_col < block.num_columns()
+                    && let Some(col) = block.column(self.window_func_col) {
                         for i in 0..num_rows {
                             let target_idx = if self.window_func == "lead" {
                                 i + self.offset as usize
@@ -1107,22 +1100,19 @@ impl WindowExecNode {
                                 } else {
                                     data.push(0);
                                 }
+                            } else if let ScalarValue::Int64(v) = self.default_val {
+                                data.push(v);
                             } else {
-                                if let ScalarValue::Int64(v) = self.default_val {
-                                    data.push(v);
-                                } else {
-                                    data.push(0);
-                                }
+                                data.push(0);
                             }
                         }
                     }
-                }
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
             "first_value" | "last_value" => {
                 let mut data: Vec<i64> = Vec::new();
-                if self.window_func_col < block.num_columns() {
-                    if let Some(col) = block.column(self.window_func_col) {
+                if self.window_func_col < block.num_columns()
+                    && let Some(col) = block.column(self.window_func_col) {
                         let first_val = col.scalar_at(0);
                         let last_val = col.scalar_at(num_rows.saturating_sub(1));
                         let val = if self.window_func == "first_value" { first_val } else { last_val };
@@ -1130,7 +1120,6 @@ impl WindowExecNode {
                             data = vec![v; num_rows];
                         }
                     }
-                }
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
             "count" | "sum" | "avg" | "min" | "max" => {
@@ -1156,8 +1145,8 @@ impl WindowExecNode {
             }
             "lead" | "lag" => {
                 let mut data: Vec<i64> = Vec::new();
-                if self.window_func_col < block.num_columns() {
-                    if let Some(col) = block.column(self.window_func_col) {
+                if self.window_func_col < block.num_columns()
+                    && let Some(col) = block.column(self.window_func_col) {
                         for i in 0..size {
                             let global_idx = start + i;
                             let target_idx = if self.window_func == "lead" {
@@ -1172,22 +1161,19 @@ impl WindowExecNode {
                                 } else {
                                     data.push(0);
                                 }
+                            } else if let ScalarValue::Int64(v) = self.default_val {
+                                data.push(v);
                             } else {
-                                if let ScalarValue::Int64(v) = self.default_val {
-                                    data.push(v);
-                                } else {
-                                    data.push(0);
-                                }
+                                data.push(0);
                             }
                         }
                     }
-                }
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
             "first_value" | "last_value" => {
                 let mut data: Vec<i64> = Vec::new();
-                if self.window_func_col < block.num_columns() {
-                    if let Some(col) = block.column(self.window_func_col) {
+                if self.window_func_col < block.num_columns()
+                    && let Some(col) = block.column(self.window_func_col) {
                         let first_val = col.scalar_at(start);
                         let last_val = col.scalar_at(start + size.saturating_sub(1));
                         let val = if self.window_func == "first_value" { first_val } else { last_val };
@@ -1195,7 +1181,6 @@ impl WindowExecNode {
                             data = vec![v; size];
                         }
                     }
-                }
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
             _ => {

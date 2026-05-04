@@ -90,7 +90,7 @@ impl TpchBenchmark {
         let plan = match statements.into_iter().next() {
             Some(stmt) => match planner.plan(stmt) {
                 Ok(plan) => {
-                    let elapsed = parse_start.elapsed().as_micros() as u64;
+                    let _elapsed = parse_start.elapsed().as_micros() as u64;
                     Some(plan)
                 }
                 Err(e) => {

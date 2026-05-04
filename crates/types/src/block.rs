@@ -1,4 +1,4 @@
-use crate::{Schema, Vector, ScalarValue, Field};
+use crate::{Schema, Vector, ScalarValue};
 
 #[derive(Debug, Clone)]
 pub struct Block {
@@ -66,8 +66,8 @@ impl Block {
 
     pub fn filter(&self, selection: &crate::Bitmap) -> Self {
         // Pre-count selected rows for preallocation
-        let num_selected = selection.set_count();
-        let num_cols = self.columns.len();
+        let _num_selected = selection.set_count();
+        let _num_cols = self.columns.len();
 
         // Preallocate all columns
         let columns: Vec<Vector> = self.columns.iter()

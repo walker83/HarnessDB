@@ -59,7 +59,7 @@ pub fn encode_with_level(data: &[u8], codec: CodecType, level: i32) -> Vec<u8> {
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Zstd => {
-            zstd::encode_all(data, level.min(22).max(-22))
+            zstd::encode_all(data, level.clamp(-22, 22))
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Snappy => {

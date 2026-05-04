@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -148,9 +147,8 @@ impl Coordinator {
         self.scheduler.check_cluster_limits(running_count).await?;
 
         // Step 3: Plan.
-        let plan = self.plan(&stmt).map_err(|e| {
+        let plan = self.plan(&stmt).inspect_err(|e| {
             self.record_failure(&query_id, e.to_string());
-            e
         })?;
 
         // Step 4: Optimize.
@@ -166,9 +164,8 @@ impl Coordinator {
             .scheduler
             .schedule(optimized, &query_id.to_string(), &limits)
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 self.record_failure(&query_id, e.to_string());
-                e
             })?;
 
 // Step 6: Track the running query.

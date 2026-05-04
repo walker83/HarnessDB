@@ -100,10 +100,7 @@ impl StreamLoad {
         }
 
         // Parse and validate the data
-        let result = match format {
-            LoadFormat::Csv => self.load_csv(data).await,
-            LoadFormat::Json => self.load_json(data).await,
-        };
+        
 
         // In a real implementation, this would:
         // 1. Connect to the server via RPC
@@ -111,7 +108,10 @@ impl StreamLoad {
         // 3. Handle partial responses
         // 4. Retry on failures
 
-        result
+        match format {
+            LoadFormat::Csv => self.load_csv(data).await,
+            LoadFormat::Json => self.load_json(data).await,
+        }
     }
 
     async fn load_csv(&self, data: Vec<u8>) -> Result<LoadResult> {

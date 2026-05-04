@@ -138,11 +138,10 @@ impl ExchangeSink {
                 }
             }
             ExchangeKind::Gather => {
-                if let Some(blocks) = self.buffers.remove(&0) {
-                    if let Some(dest) = self.destinations.first().cloned() {
+                if let Some(blocks) = self.buffers.remove(&0)
+                    && let Some(dest) = self.destinations.first().cloned() {
                         results.push((dest, blocks));
                     }
-                }
             }
         }
 

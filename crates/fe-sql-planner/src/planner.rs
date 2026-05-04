@@ -319,7 +319,7 @@ impl Planner {
         }
     }
 
-    fn plan_query_body(&self, query: &QueryStmt, cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
+    fn plan_query_body(&self, query: &QueryStmt, _cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
         // 1. FROM clause (table references, joins, subqueries).
         let mut plan = if let Some(table_ref) = &query.from {
             self.plan_table_ref(table_ref)?
@@ -455,7 +455,7 @@ impl Planner {
     }
 
     /// Plan WHERE clause, handling subqueries (IN/EXISTS) by converting to semi-joins
-    fn plan_where_clause(&self, where_expr: &fe_sql_parser::ast::Expr, mut plan: PlanNode) -> Result<PlanNode, DrorisError> {
+    fn plan_where_clause(&self, where_expr: &fe_sql_parser::ast::Expr, plan: PlanNode) -> Result<PlanNode, DrorisError> {
         match where_expr {
             fe_sql_parser::ast::Expr::Exists(subquery) => {
                 // EXISTS subquery -> SemiJoin
@@ -598,7 +598,7 @@ impl Planner {
         let left_plan = self.plan_query(*union.left)?;
         let right_plan = self.plan_query(*union.right)?;
 
-        let union_type = match union.op {
+        let _union_type = match union.op {
             fe_sql_parser::ast::UnionOperator::Union => {
                 if union.all { "UNION ALL" } else { "UNION" }
             }

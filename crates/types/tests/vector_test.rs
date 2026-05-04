@@ -336,7 +336,7 @@ fn test_bitmap_all_set_non_word_aligned() {
 #[test]
 fn test_bitmap_set_and_get() {
     let mut bm = Bitmap::with_capacity(10);
-    for i in 0..10 {
+    for _i in 0..10 {
         bm.push(false);
     }
     assert_eq!(bm.set_count(), 0);
@@ -1102,7 +1102,7 @@ fn test_string_view_vector_slice_zero_copy() {
 #[test]
 fn test_string_view_vector_to_owned() {
     let v = StringViewVector::from_vec(vec!["test1", "test2"]);
-    let mut v2 = v.clone();
+    let v2 = v.clone();
     v2.to_owned();
 
     assert_eq!(v2.len(), 2);

@@ -596,7 +596,7 @@ impl FunctionRegistry {
 fn naive_date_from_ordinal(ordinal: i32) -> NaiveDate {
     NaiveDate::from_ymd_opt(1970, 1, 1)
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
-        .with_ordinal(ordinal.max(1).min(366) as u32)
+        .with_ordinal(ordinal.clamp(1, 366) as u32)
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
 }
 
@@ -1857,11 +1857,11 @@ impl FunctionRegistry {
 
         let len = args[0].len();
         let results: Vec<String> = (0..len).map(|i| {
-            args.iter().filter_map(|v| {
+args.iter().filter_map(|v| {
                 if let Vector::Int64(sv) = v {
                     sv.get(i).map(|n| {
-                        let ch = (n.max(0).min(255) as u8) as char;
-                        if ch.is_ascii() { Some(ch) } else { Some('�') }
+                        let ch = (n.clamp(0, 255) as u8) as char;
+                        if ch.is_ascii() { Some(ch) } else { Some('') }
                     }).flatten()
                 } else {
                     None

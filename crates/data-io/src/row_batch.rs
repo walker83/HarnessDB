@@ -1,4 +1,4 @@
-use types::{Block, Schema, ScalarValue, Field, DataType, vector::*};
+use types::{Block, Schema, ScalarValue, DataType, vector::*};
 
 pub struct RowBatchBuilder {
     schema: Schema,

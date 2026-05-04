@@ -11,7 +11,7 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     statements
         .into_iter()
-        .map(|stmt| convert_statement(stmt))
+        .map(convert_statement)
         .collect()
 }
 
@@ -105,7 +105,7 @@ fn convert_statement(
             Ok(Statement::ShowCreateTable(db, tbl))
         }
         sqlparser::ast::Statement::ShowColumns {
-            show_options, ..
+            show_options: _, ..
         } => {
             // SHOW COLUMNS FROM table - table name is in the filter
             Ok(Statement::ShowColumns(None, None))
@@ -193,7 +193,7 @@ fn convert_statement(
 fn convert_query(
     query: sqlparser::ast::Query,
 ) -> Result<QueryStmt, ParseError> {
-    let cte = query.with.as_ref().map(|w| {
+    let cte = query.with.as_ref().and_then(|w| {
         w.cte_tables.first().map(|c| Cte {
             name: c.alias.name.value.clone(),
             columns: vec![],
@@ -209,7 +209,7 @@ fn convert_query(
                 with: None,
             })),
         })
-    }).flatten();
+    });
 
     match *query.body {
         sqlparser::ast::SetExpr::Select(select) => {
@@ -291,7 +291,7 @@ fn convert_select(
         }
     }).collect();
 
-    let from = select.from.into_iter().next().map(|t| convert_table_ref(t));
+    let from = select.from.into_iter().next().map(convert_table_ref);
 
     let group_by = match select.group_by {
         sqlparser::ast::GroupByExpr::Expressions(exprs, _) => {
