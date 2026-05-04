@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use common::DrorisError;
+use common::{DrorisError, CatalogError, PlanError};
 use fe_catalog::CatalogManager;
 use fe_sql_parser::ast::*;
 
@@ -67,11 +67,11 @@ impl Planner {
                 // at the logical plan level.
                 self.plan(*explain.statement)
             }
-            Statement::AlterTable(_) => Err(DrorisError::Plan(
-                "ALTER TABLE is not yet supported".into(),
+            Statement::AlterTable(_) => Err(DrorisError::plan(PlanError::UnsupportedOperation,
+                "ALTER TABLE is not yet supported"
             )),
-            Statement::SetVariable(_) => Err(DrorisError::Plan(
-                "SET variable is not yet supported".into(),
+            Statement::SetVariable(_) => Err(DrorisError::plan(PlanError::UnsupportedOperation,
+                "SET variable is not yet supported"
             )),
             Statement::Describe(db, table) => self.plan_describe(db, table),
             Statement::ShowColumns(db, table) => self.plan_show_columns(db, table),
@@ -215,9 +215,9 @@ impl Planner {
         let children = if let Some(query) = stmt.query {
             vec![self.plan_query(query)?]
         } else if !stmt.values.is_empty() {
-            return Err(DrorisError::Plan("INSERT VALUES not yet implemented".into()));
+            return Err(DrorisError::plan(PlanError::UnsupportedOperation, "INSERT VALUES not yet implemented"));
         } else {
-            return Err(DrorisError::Plan("INSERT must have VALUES or SELECT".into()));
+            return Err(DrorisError::plan(PlanError::InvalidExpression, "INSERT must have VALUES or SELECT"));
         };
 
         Ok(self.make_node(
@@ -237,7 +237,7 @@ impl Planner {
         // that the executor uses to switch the session database.
         // For now we validate the database exists.
         if self.catalog.get_database(&db).is_none() {
-            return Err(DrorisError::Plan(format!(
+            return Err(DrorisError::catalog(CatalogError::DatabaseNotFound, format!(
                 "database '{}' does not exist",
                 db
             )));

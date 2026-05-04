@@ -163,7 +163,7 @@ impl Coordinator {
                 e
             })?;
 
-        // Step 6: Track the running query.
+// Step 6: Track the running query.
         self.running_queries.insert(
             query_id.clone(),
             RunningQuery {
@@ -175,9 +175,8 @@ impl Coordinator {
                 result_blocks: Vec::new(),
                 rows_scanned: 0,
                 bytes_processed: 0,
-                },
-            );
-        }
+            },
+        );
 
         // Step 7: Execute (dispatch to BE nodes).
         // In a real implementation this would send RPCs and await responses.

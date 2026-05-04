@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicU64;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
-use common::{DrorisError, Result};
+use common::{DrorisError, Result, StorageError};
 use types::Block;
 
 use crate::compaction::{CompactionExecutor, CompactionManager, CompactionTask, CompactionType};
@@ -27,7 +27,7 @@ impl StorageEngine {
     pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)
-            .map_err(|e| DrorisError::Storage(format!("Create data dir: {}", e)))?;
+            .map_err(|e| DrorisError::storage(StorageError::WriteFailed, format!("Create data dir: {}", e)))?;
 
         let engine = Self {
             tablets: DashMap::new(),
@@ -43,11 +43,11 @@ impl StorageEngine {
     /// Create a new tablet with the given schema.
     pub fn create_tablet(&self, tablet_id: u64, schema: TabletSchema) -> Result<()> {
         if self.tablets.contains_key(&tablet_id) {
-            return Err(DrorisError::Storage(format!("tablet {} already exists", tablet_id)));
+            return Err(DrorisError::storage_with_tablet(StorageError::TabletAlreadyExists, tablet_id, format!("tablet {} already exists", tablet_id)));
         }
         let tablet_dir = self.data_dir.join(format!("tablet_{}", tablet_id));
         std::fs::create_dir_all(&tablet_dir)
-            .map_err(|e| DrorisError::Storage(format!("Create tablet dir: {}", e)))?;
+            .map_err(|e| DrorisError::storage(StorageError::WriteFailed, format!("Create tablet dir: {}", e)))?;
         let tablet = Tablet::new(tablet_id, schema, self.data_dir.clone());
         self.tablets.insert(tablet_id, Arc::new(tablet));
         tracing::info!("Created tablet {}", tablet_id);
@@ -64,13 +64,13 @@ impl StorageEngine {
         let _tablet = self.tablets
             .remove(&tablet_id)
             .map(|(_, v)| v)
-            .ok_or_else(|| DrorisError::Storage(format!("tablet {} not found", tablet_id)))?;
+            .ok_or_else(|| DrorisError::storage_with_tablet(StorageError::TabletNotFound, tablet_id, format!("tablet {} not found", tablet_id)))?;
 
         // Remove tablet data directory
         let tablet_dir = self.data_dir.join(format!("tablet_{}", tablet_id));
         if tablet_dir.exists() {
             std::fs::remove_dir_all(&tablet_dir)
-                .map_err(|e| DrorisError::Storage(format!("Remove tablet dir: {}", e)))?;
+                .map_err(|e| DrorisError::storage(StorageError::WriteFailed, format!("Remove tablet dir: {}", e)))?;
         }
         tracing::info!("Dropped tablet {}", tablet_id);
         Ok(())
@@ -81,9 +81,9 @@ impl StorageEngine {
         let tablet = self.tablets
             .get(&tablet_id)
             .map(|v| v.clone())
-            .ok_or_else(|| DrorisError::Storage(format!("tablet {} not found", tablet_id)))?;
+            .ok_or_else(|| DrorisError::storage_with_tablet(StorageError::TabletNotFound, tablet_id, format!("tablet {} not found", tablet_id)))?;
         tablet.write(block)
-            .map_err(|e| DrorisError::Storage(e))
+            .map_err(|e| DrorisError::storage(StorageError::WriteFailed, e.to_string()))
     }
 
     /// Read data from a tablet with optional column projection and predicates.
@@ -96,9 +96,9 @@ impl StorageEngine {
         let tablet = self.tablets
             .get(&tablet_id)
             .map(|v| v.clone())
-            .ok_or_else(|| DrorisError::Storage(format!("tablet {} not found", tablet_id)))?;
+            .ok_or_else(|| DrorisError::storage_with_tablet(StorageError::TabletNotFound, tablet_id, format!("tablet {} not found", tablet_id)))?;
         tablet.read(projection, predicates)
-            .map_err(|e| DrorisError::Storage(e))
+            .map_err(|e| DrorisError::storage(StorageError::ReadFailed, e.to_string()))
     }
 
     /// Explicitly flush a tablet's memtable to disk.
@@ -106,9 +106,9 @@ impl StorageEngine {
         let tablet = self.tablets
             .get(&tablet_id)
             .map(|v| v.clone())
-            .ok_or_else(|| DrorisError::Storage(format!("tablet {} not found", tablet_id)))?;
+            .ok_or_else(|| DrorisError::storage_with_tablet(StorageError::TabletNotFound, tablet_id, format!("tablet {} not found", tablet_id)))?;
         tablet.flush()
-            .map_err(|e| DrorisError::Storage(e))
+            .map_err(|e| DrorisError::storage(StorageError::FlushFailed, e.to_string()))
     }
 
     /// Trigger compaction for a tablet.
@@ -116,7 +116,7 @@ impl StorageEngine {
         let tablet = self.tablets
             .get(&tablet_id)
             .map(|v| v.clone())
-            .ok_or_else(|| DrorisError::Storage(format!("tablet {} not found", tablet_id)))?;
+            .ok_or_else(|| DrorisError::storage_with_tablet(StorageError::TabletNotFound, tablet_id, format!("tablet {} not found", tablet_id)))?;
 
         let tablet_dir = self.data_dir.join(format!("tablet_{}", tablet_id));
         let new_rowset = match compaction_type {

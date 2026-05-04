@@ -7,7 +7,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::database::Database;
 use crate::table::Table;
-use common::{DrorisError, Result};
+use common::{DrorisError, Result, CatalogError};
 
 pub struct CatalogManager {
     databases: DashMap<String, Database>,
@@ -48,7 +48,7 @@ impl CatalogManager {
 
     pub fn create_database(&self, name: &str) -> Result<()> {
         if self.databases.contains_key(name) {
-            return Err(DrorisError::Catalog(format!("database '{}' already exists", name)));
+            return Err(DrorisError::catalog(CatalogError::DatabaseAlreadyExists, format!("database '{}' already exists", name)));
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.databases.insert(name.to_string(), Database::new(id, name));
@@ -57,7 +57,7 @@ impl CatalogManager {
 
     pub fn drop_database(&self, name: &str) -> Result<()> {
         self.databases.remove(name)
-            .ok_or_else(|| DrorisError::Catalog(format!("database '{}' not found", name)))?;
+            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", name)))?;
         Ok(())
     }
 
@@ -71,16 +71,16 @@ impl CatalogManager {
 
     pub fn create_table(&self, db_name: &str, table: Table) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name)
-            .ok_or_else(|| DrorisError::Catalog(format!("database '{}' not found", db_name)))?;
+            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
         db_ref.add_table(table);
         Ok(())
     }
 
     pub fn drop_table(&self, db_name: &str, table_name: &str) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name)
-            .ok_or_else(|| DrorisError::Catalog(format!("database '{}' not found", db_name)))?;
+            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
         db_ref.drop_table(table_name)
-            .ok_or_else(|| DrorisError::Catalog(format!("table '{}' not found", table_name)))?;
+            .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound, format!("table '{}' not found", table_name)))?;
         Ok(())
     }
 
