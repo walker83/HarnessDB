@@ -1138,6 +1138,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mysql_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mysql-protocol",
+ "tokio",
+ "tpch-bench",
+]
+
+[[package]]
 name = "nibble_vec"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

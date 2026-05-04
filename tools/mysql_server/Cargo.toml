@@ -1,0 +1,10 @@
+[package]
+name = "mysql_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mysql-protocol = { path = "../../crates/mysql-protocol" }
+tpch-bench = { path = "../../benches/tpch" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"

@@ -29,6 +29,7 @@ members = [
     # Tools & utilities
     "tools/roris-cli",
     "tools/tpch_test",
+    "tools/mysql_server",
 
     # Benchmarks
     "benches/tpch",
