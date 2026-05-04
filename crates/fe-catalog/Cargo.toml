@@ -14,3 +14,6 @@ common = { workspace = true }
 types = { workspace = true }
 fe-common = { workspace = true }
 dashmap = { workspace = true }
+reqwest = { version = "0.12", features = ["json"] }
+async-trait = { workspace = true }
+mysql-protocol = { workspace = true }
