@@ -329,82 +329,78 @@ impl HandshakeResponse {
     pub fn parse(payload: &[u8]) -> Result<Self, String> {
         let mut cur = Cursor::new(payload);
 
-        let capability_flags_lower = cur.get_u16_le() as u32;
-        let max_packet_size = cur.get_u32_le();
-        let charset = cur.get_u8();
+        // Read all 4 bytes of capability_flags at once (offset 0-3)
+        if payload.len() < 4 {
+            return Err("handshake response too short".to_string());
+        }
+        let capability_flags = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
 
-        // Skip 23 bytes of reserved data
-        let reserved_start = cur.position() as usize;
+        // Now set cursor position after the 4 capability bytes + 4 max_packet_size + 1 charset
+        let reserved_start = 9; // 4 capability + 4 max_packet + 1 charset
         if payload.len() < reserved_start + 23 {
             return Err("handshake response too short".to_string());
         }
         cur.set_position((reserved_start + 23) as u64);
 
-        // Username (null-terminated)
-        let username_start = cur.position() as usize;
+        let max_packet_size = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+        let charset = payload[8];
+
+        // Username (null-terminated) - starts right after the 23 reserved bytes at offset 32
+        let username_start = (reserved_start + 23) as usize;
         let username_end = payload[username_start..]
             .iter()
             .position(|&b| b == 0)
             .ok_or("username not null-terminated")?
             + username_start;
         let username = String::from_utf8_lossy(&payload[username_start..username_end]).to_string();
-        cur.set_position((username_end + 1) as u64);
 
-        // Combine capability flags: the client sends 4 bytes at the start.
-        // We read 2 bytes already; the next 2 are at offset 2-3 (overlapping with max_packet_size
-        // start in our cursor position). Actually, the wire format is:
-        //   capability_flags(4 bytes LE) max_packet_size(4) charset(1) reserved(23) username...
-        // We read 2 bytes with get_u16_le, but need all 4. Re-read from raw payload.
-        let capability_flags =
-            capability_flags_lower | ((payload[2] as u32) << 8) | ((payload[3] as u32) << 16);
-
-        // Auth response
-        let pos = cur.position() as usize;
+        // Auth response - starts right after username null terminator
+        let auth_start = username_end + 1;
         let auth_response = if (capability_flags & CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA) != 0 {
             // Length-encoded auth response
-            let (len, n) = read_lenenc_int(&payload[pos..])?;
-            cur.set_position((pos + n + len) as u64);
-            payload[pos + n..pos + n + len].to_vec()
+            let (len, n) = read_lenenc_int(&payload[auth_start..])?;
+            payload[auth_start + n..auth_start + n + len].to_vec()
         } else if (capability_flags & CapabilityFlags::SECURE_CONNECTION) != 0 {
-            let len = payload[pos] as usize;
-            cur.set_position((pos + 1 + len) as u64);
-            payload[pos + 1..pos + 1 + len].to_vec()
+            let len = payload[auth_start] as usize;
+            payload[auth_start + 1..auth_start + 1 + len].to_vec()
         } else {
             // Null-terminated
-            let end = payload[pos..]
+            let end = payload[auth_start..]
                 .iter()
                 .position(|&b| b == 0)
-                .unwrap_or(payload.len() - pos);
-            cur.set_position((pos + end + 1) as u64);
-            payload[pos..pos + end].to_vec()
+                .unwrap_or(payload.len() - auth_start);
+            payload[auth_start..auth_start + end].to_vec()
         };
 
-        // Database
-        let pos = cur.position() as usize;
+        // Database - starts after auth response
+        let db_start = auth_start + 1 + auth_response.len();
         let database = if (capability_flags & CapabilityFlags::CONNECT_WITH_DB) != 0
-            && pos < payload.len()
+            && db_start < payload.len()
         {
-            let end = payload[pos..]
+            let end = payload[db_start..]
                 .iter()
                 .position(|&b| b == 0)
-                .unwrap_or(payload.len() - pos);
-            let db = String::from_utf8_lossy(&payload[pos..pos + end]).to_string();
-            cur.set_position((pos + end + 1) as u64);
+                .unwrap_or(payload.len() - db_start);
+            let db = String::from_utf8_lossy(&payload[db_start..db_start + end]).to_string();
             Some(db)
         } else {
             None
         };
 
-        // Auth plugin name
-        let pos = cur.position() as usize;
+        // Auth plugin name - starts after database (if present)
+        let plugin_start = if database.is_some() {
+            db_start + database.as_ref().unwrap().len() + 1
+        } else {
+            db_start
+        };
         let auth_plugin_name = if (capability_flags & CapabilityFlags::PLUGIN_AUTH) != 0
-            && pos < payload.len()
+            && plugin_start < payload.len()
         {
-            let end = payload[pos..]
+            let end = payload[plugin_start..]
                 .iter()
                 .position(|&b| b == 0)
-                .unwrap_or(payload.len() - pos);
-            let name = String::from_utf8_lossy(&payload[pos..pos + end]).to_string();
+                .unwrap_or(payload.len() - plugin_start);
+            let name = String::from_utf8_lossy(&payload[plugin_start..plugin_start + end]).to_string();
             Some(name)
         } else {
             None

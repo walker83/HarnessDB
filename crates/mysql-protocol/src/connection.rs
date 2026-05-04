@@ -30,6 +30,8 @@ pub struct Connection {
     charset: u8,
     username: String,
     database: Option<String>,
+    /// The 20-byte auth salt sent in handshake (used for AuthSwitchRequest)
+    auth_salt: [u8; 20],
     /// Prepared statements: stmt_id -> (sql, num_params, num_columns)
     prepared_statements: Vec<(String, u16, u16)>,
     next_stmt_id: u32,
@@ -48,6 +50,7 @@ impl Connection {
             charset: 0,
             username: String::new(),
             database: None,
+            auth_salt: [0u8; 20],
             prepared_statements: Vec::new(),
             next_stmt_id: 1,
             read_buf: BytesMut::with_capacity(16 * 1024),
@@ -73,7 +76,8 @@ impl Connection {
     async fn send_handshake(&mut self) -> std::io::Result<()> {
         let mut salt = [0u8; 20];
         rand::thread_rng().fill_bytes(&mut salt);
-        let handshake = HandshakeV10::new(self.conn_id, salt);
+        self.auth_salt = salt; // Save for potential AuthSwitchRequest
+        let handshake = HandshakeV10::new(self.conn_id, self.auth_salt);
         let packet = handshake.encode(self.seq_id);
         self.seq_id = self.seq_id.wrapping_add(1);
         self.write_all(&packet).await
@@ -84,7 +88,11 @@ impl Connection {
     // -----------------------------------------------------------------------
 
     async fn handle_auth_response(&mut self) -> std::io::Result<()> {
+        let seq_before = self.seq_id;
+        debug!("handle_auth_response: reading auth packet, current seq_id={}", seq_before);
         let payload = self.read_packet().await?;
+        debug!("handle_auth_response: received {} bytes, seq_id now={}", payload.len(), self.seq_id);
+
         let response = HandshakeResponse::parse(&payload)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
@@ -94,15 +102,34 @@ impl Connection {
         self.database = response.database;
 
         debug!(
-            "Auth: user={}, db={:?}, charset={}",
+            "Auth: user={}, db={:?}, charset={}, our seq_id={}",
             self.username,
             self.database,
-            crate::charset::charset_name(self.charset)
+            crate::charset::charset_name(self.charset),
+            self.seq_id
         );
 
         // For now, accept any auth. Send OK.
         self.send_ok(0, 0).await?;
+        debug!("handle_auth_response: sent OK, seq_id now={}", self.seq_id);
         self.phase = Phase::Command;
+        Ok(())
+    }
+
+    async fn send_auth_switch_request(&mut self) -> std::io::Result<()> {
+        // Build AuthSwitchRequest packet
+        // Format: 0xFE (status) + plugin name + null + auth plugin data
+        let mut pb = packet::PacketBuilder::new(self.seq_id);
+        pb.put_u8(0xFE); // Status byte for auth switch
+        pb.put_slice(b"mysql_native_password");
+        pb.put_u8(0); // null terminator
+        // Auth plugin data (20 bytes auth salt)
+        pb.put_slice(&self.auth_salt);
+        pb.put_u8(0); // null terminator
+
+        let (pkt, next) = pb.finish();
+        self.write_all(&pkt).await?;
+        self.seq_id = next;
         Ok(())
     }
 
