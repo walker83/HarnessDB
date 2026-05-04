@@ -31,6 +31,27 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     if trimmed.starts_with("REFRESH MATERIALIZED VIEW") {
         return parse_refresh_materialized_view(sql);
     }
+    if trimmed.starts_with("CREATE USER") || trimmed.starts_with("CREATE USER IF NOT EXISTS") {
+        return parse_create_user(sql);
+    }
+    if trimmed.starts_with("DROP USER") {
+        return parse_drop_user(sql);
+    }
+    if trimmed.starts_with("SHOW USERS") || trimmed == "SHOW USERS" {
+        return Ok(vec![Statement::ShowUsers]);
+    }
+    if trimmed.starts_with("CREATE CATALOG") {
+        return parse_create_catalog(sql);
+    }
+    if trimmed.starts_with("DROP CATALOG") {
+        return parse_drop_catalog(sql);
+    }
+    if trimmed.starts_with("SHOW CATALOGS") {
+        return Ok(vec![Statement::ShowCatalogs]);
+    }
+    if trimmed.starts_with("REFRESH CATALOG") {
+        return parse_refresh_catalog(sql);
+    }
 
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, sql)
@@ -1003,4 +1024,200 @@ fn convert_binary_op(op: sqlparser::ast::BinaryOperator) -> BinaryOp {
         BinaryOperator::Modulo => BinaryOp::Modulo,
         _ => BinaryOp::Eq,
     }
+}
+
+fn parse_create_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    let if_not_exists = sql.to_uppercase().contains("IF NOT EXISTS");
+
+    let after_create = sql
+        .strip_prefix("CREATE USER")
+        .or_else(|| sql.strip_prefix("create user"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE USER".to_string(),
+        })?
+        .trim();
+
+    let (username, rest) = extract_username_hostname(after_create)?;
+
+    let mut auth_plugin = "mysql_native_password".to_string();
+    let mut password = None;
+    let mut identified_by_password = false;
+
+    let rest_upper = rest.to_uppercase();
+    if rest_upper.contains("IDENTIFIED BY") {
+        identified_by_password = true;
+        if let Some(pwd_part) = rest_upper.split("IDENTIFIED BY").nth(1) {
+            let pwd = pwd_part.trim().trim_end_matches('\'').trim_end_matches('"');
+            password = Some(pwd.to_string());
+        }
+        if rest_upper.contains("WITH") {
+            if let Some(with_part) = rest_upper.split("WITH").nth(1) {
+                let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
+                auth_plugin = plugin.to_string();
+            }
+        }
+    } else if rest_upper.contains("IDENTIFIED WITH") {
+        if let Some(with_part) = rest_upper.split("IDENTIFIED WITH").nth(1) {
+            let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
+            auth_plugin = plugin.to_string();
+        }
+    }
+
+    Ok(vec![Statement::CreateUser(CreateUserStmt {
+        username,
+        hostname: None,
+        auth_plugin,
+        password,
+        identified_by_password,
+        roles: vec![],
+    })])
+}
+
+fn parse_drop_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    let if_exists = sql.to_uppercase().contains("IF EXISTS");
+
+    let after_drop = sql
+        .strip_prefix("DROP USER")
+        .or_else(|| sql.strip_prefix("drop user"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP USER".to_string(),
+        })?
+        .trim();
+
+    let (username, _hostname) = extract_username_hostname(after_drop)?;
+
+    Ok(vec![Statement::DropUser(DropUserStmt {
+        username,
+        hostname: None,
+        if_exists,
+    })])
+}
+
+fn extract_username_hostname(s: &str) -> Result<(String, String), ParseError> {
+    let s = s.trim();
+
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.is_empty() {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "Expected username".to_string(),
+        });
+    }
+
+    let username_hostname = parts[0];
+    let remaining = if parts.len() > 1 { parts[1].to_string() } else { String::new() };
+
+    if username_hostname.contains('@') {
+        let uparts: Vec<&str> = username_hostname.split('@').collect();
+        let username = uparts[0].to_string();
+        let hostname = if uparts.len() > 1 { Some(uparts[1].to_string()) } else { None };
+        let hostname_str = hostname.unwrap_or_else(|| "%".to_string());
+        Ok((username, hostname_str))
+    } else {
+        Ok((username_hostname.to_string(), remaining))
+    }
+}
+
+fn parse_create_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql
+        .strip_prefix("CREATE CATALOG")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE CATALOG".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected catalog name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let mut catalog_type = "iceberg".to_string();
+    let mut properties = vec![];
+
+    if rest.starts_with("PROPERTIES") || rest.starts_with("WITH") {
+        let after_with = if rest.starts_with("PROPERTIES") {
+            rest.strip_prefix("PROPERTIES").unwrap().trim()
+        } else {
+            rest.strip_prefix("WITH").unwrap().trim()
+        };
+
+        if after_with.starts_with("TYPE") {
+            let type_part = after_with
+                .strip_prefix("TYPE")
+                .unwrap_or("")
+                .trim()
+                .trim_start_matches('=')
+                .trim();
+            let first_word = type_part.split_whitespace().next()
+                .unwrap_or(type_part)
+                .trim_matches(|c| c == ',' || c == ';');
+            catalog_type = first_word.to_lowercase();
+        }
+
+        if rest.contains('(') && rest.contains('=') {
+            properties = parse_properties(rest);
+        }
+    }
+
+    Ok(vec![Statement::CreateCatalog(CreateCatalogStmt {
+        name: name.to_string(),
+        catalog_type,
+        properties,
+    })])
+}
+
+fn parse_drop_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let if_exists = sql.to_uppercase().contains("IF EXISTS");
+
+    let after_drop = sql
+        .strip_prefix("DROP CATALOG")
+        .or_else(|| sql.strip_prefix("drop catalog"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP CATALOG".to_string(),
+        })?
+        .trim();
+
+    let (name, _) = extract_identifier(after_drop)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected catalog name".to_string(),
+        })?;
+
+    Ok(vec![Statement::DropCatalog(DropCatalogStmt {
+        name: name.to_string(),
+        if_exists,
+    })])
+}
+
+fn parse_refresh_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_refresh = sql
+        .strip_prefix("REFRESH CATALOG")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected REFRESH CATALOG".to_string(),
+        })?
+        .trim();
+
+    let (name, _) = extract_identifier(after_refresh)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected catalog name".to_string(),
+        })?;
+
+    Ok(vec![Statement::RefreshCatalog(RefreshCatalogStmt {
+        name: name.to_string(),
+    })])
 }

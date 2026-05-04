@@ -18,8 +18,8 @@ pub enum Statement {
     ShowDatabases,
     ShowTables(Option<String>),
     ShowCreateTable(String, String),
-    Describe(String, String),  // (database, table)
-    ShowColumns(Option<String>, Option<String>),  // (database, table)
+    Describe(String, String),
+    ShowColumns(Option<String>, Option<String>),
     Explain(ExplainStmt),
     UseDatabase(String),
     SetVariable(SetVariableStmt),
@@ -29,6 +29,13 @@ pub enum Statement {
     ShowRepositories,
     BackupDatabase(BackupDatabaseStmt),
     RestoreDatabase(RestoreDatabaseStmt),
+    ShowUsers,
+    CreateUser(CreateUserStmt),
+    DropUser(DropUserStmt),
+    CreateCatalog(CreateCatalogStmt),
+    DropCatalog(DropCatalogStmt),
+    ShowCatalogs,
+    RefreshCatalog(RefreshCatalogStmt),
 }
 
 #[derive(Debug, Clone)]
@@ -349,4 +356,39 @@ pub struct RefreshMaterializedViewStmt {
     pub database: Option<String>,
     pub name: String,
     pub refresh_type: RefreshType,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateUserStmt {
+    pub username: String,
+    pub hostname: Option<String>,
+    pub auth_plugin: String,
+    pub password: Option<String>,
+    pub identified_by_password: bool,
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropUserStmt {
+    pub username: String,
+    pub hostname: Option<String>,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateCatalogStmt {
+    pub name: String,
+    pub catalog_type: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropCatalogStmt {
+    pub name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshCatalogStmt {
+    pub name: String,
 }

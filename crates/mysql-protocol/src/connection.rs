@@ -5,6 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
 
+use crate::auth::{AuthPlugin, AuthError, AuthUser};
 use crate::packet::{
     self, command, column_type, CapabilityFlags, Column, HandshakeResponse, HandshakeV10,
 };
@@ -31,6 +32,7 @@ pub struct Connection {
     charset: u8,
     username: String,
     database: Option<String>,
+    auth_user: Option<AuthUser>,
     /// The 20-byte auth salt sent in handshake (used for AuthSwitchRequest)
     auth_salt: [u8; 20],
     /// Prepared statements: stmt_id -> (sql, num_params, num_columns)
@@ -51,6 +53,7 @@ impl Connection {
             charset: 0,
             username: String::new(),
             database: None,
+            auth_user: None,
             auth_salt: [0u8; 20],
             prepared_statements: Vec::new(),
             next_stmt_id: 1,
@@ -99,22 +102,80 @@ impl Connection {
 
         self.capability_flags = response.capability_flags;
         self.charset = response.charset;
-        self.username = response.username;
-        self.database = response.database;
+        self.username = response.username.clone();
+        self.database = response.database.clone();
 
         debug!(
-            "Auth: user={}, db={:?}, charset={}, our seq_id={}",
+            "Auth: user={}, db={:?}, charset={}, auth_plugin={:?}, our seq_id={}",
             self.username,
             self.database,
             crate::charset::charset_name(self.charset),
+            response.auth_plugin_name,
             self.seq_id
         );
 
-        // For now, accept any auth. Send OK.
-        self.send_ok(0, 0).await?;
-        debug!("handle_auth_response: sent OK, seq_id now={}", self.seq_id);
-        self.phase = Phase::Command;
-        Ok(())
+        let auth_result = self.authenticate_user(
+            &self.username,
+            &response.auth_response,
+            response.auth_plugin_name.as_deref(),
+        ).await;
+
+        match auth_result {
+            Ok(auth_user) => {
+                self.auth_user = Some(auth_user);
+                self.send_ok(0, 0).await?;
+                debug!("handle_auth_response: sent OK, seq_id now={}", self.seq_id);
+                self.phase = Phase::Command;
+                Ok(())
+            }
+            Err(auth_err) => {
+                let err_msg = auth_err.to_string();
+                debug!("Auth failed for user {}: {}", self.username, err_msg);
+                self.send_auth_failure(1045, &err_msg).await
+            }
+        }
+    }
+
+    async fn authenticate_user(
+        &self,
+        username: &str,
+        auth_response: &[u8],
+        auth_plugin_name: Option<&str>,
+    ) -> Result<AuthUser, AuthError> {
+        use crate::auth::{NativePasswordAuth, TokenAuth, TokenConfig, AuthPlugin};
+
+        if username.is_empty() {
+            return Err(AuthError::Failed("Empty username".to_string()));
+        }
+
+        let plugin_name = auth_plugin_name.unwrap_or("mysql_native_password");
+
+        match plugin_name {
+            "mysql_native_password" => {
+                let auth = NativePasswordAuth::new();
+                auth.authenticate(username, auth_response, &self.auth_salt).await
+            }
+            "auth_token" => {
+                let config = TokenConfig::new(
+                    "default_secret_key".to_string(),
+                    3600,
+                    "rorisdb".to_string(),
+                );
+                let auth = TokenAuth::new(config);
+                auth.authenticate(username, auth_response, &self.auth_salt).await
+            }
+            _ => Err(AuthError::PluginNotSupported(plugin_name.to_string())),
+        }
+    }
+
+    async fn send_auth_failure(&mut self, error_code: u16, message: &str) -> std::io::Result<()> {
+        let pkt = packet::make_general_err(self.seq_id, error_code, message);
+        self.write_all(&pkt).await?;
+        self.seq_id = self.seq_id.wrapping_add(1);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            message,
+        ))
     }
 
     #[allow(dead_code)]

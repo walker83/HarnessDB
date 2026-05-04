@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info, info_span, Instrument};
 
+use crate::auth::{AuthPluginType, AuthUser};
 use crate::connection::Connection;
 use crate::packet::Column;
 
@@ -11,6 +12,7 @@ use crate::packet::Column;
 pub struct ServerConfig {
     pub bind_addr: String,
     pub port: u16,
+    pub default_auth_plugin: AuthPluginType,
 }
 
 impl Default for ServerConfig {
@@ -18,6 +20,7 @@ impl Default for ServerConfig {
         Self {
             bind_addr: "127.0.0.1".to_string(),
             port: 9030,
+            default_auth_plugin: AuthPluginType::NativePassword,
         }
     }
 }

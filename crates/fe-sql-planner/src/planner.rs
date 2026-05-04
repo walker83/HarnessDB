@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use common::{DrorisError, CatalogError, PlanError};
-use fe_catalog::CatalogManager;
+use fe_catalog::{CatalogManager, Catalog};
 use fe_sql_parser::ast::*;
 
 use crate::expression;
@@ -11,6 +11,7 @@ use crate::plan_node::*;
 /// The SQL planner converts parsed AST statements into logical plan trees.
 pub struct Planner {
     catalog: Arc<CatalogManager>,
+    external_catalogs: std::collections::HashMap<String, Arc<dyn Catalog>>,
     next_id: AtomicUsize,
     current_database: String,
 }
@@ -19,6 +20,7 @@ impl Planner {
     pub fn new(catalog: Arc<CatalogManager>) -> Self {
         Self {
             catalog,
+            external_catalogs: std::collections::HashMap::new(),
             next_id: AtomicUsize::new(0),
             current_database: "information_schema".to_string(),
         }
@@ -26,6 +28,14 @@ impl Planner {
 
     pub fn set_database(&mut self, db: &str) {
         self.current_database = db.to_string();
+    }
+
+    pub fn register_external_catalog(&mut self, name: &str, catalog: Arc<dyn Catalog>) {
+        self.external_catalogs.insert(name.to_string(), catalog);
+    }
+
+    pub fn unregister_external_catalog(&mut self, name: &str) {
+        self.external_catalogs.remove(name);
     }
 
     pub fn database(&self) -> &str {
@@ -90,7 +100,24 @@ impl Planner {
             Statement::DropMaterializedView(stmt) => self.plan_drop_materialized_view(stmt),
             Statement::AlterMaterializedView(stmt) => self.plan_alter_materialized_view(stmt),
             Statement::RefreshMaterializedView(stmt) => self.plan_refresh_materialized_view(stmt),
+            Statement::CreateUser(stmt) => self.plan_create_user(stmt),
+            Statement::DropUser(stmt) => self.plan_drop_user(stmt),
+            Statement::ShowUsers => self.plan_show_users(),
         }
+    }
+
+    // ---- User Management ----
+
+    fn plan_create_user(&self, _stmt: fe_sql_parser::ast::CreateUserStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("CREATE USER not yet implemented in planner".to_string()))
+    }
+
+    fn plan_drop_user(&self, _stmt: fe_sql_parser::ast::DropUserStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("DROP USER not yet implemented in planner".to_string()))
+    }
+
+    fn plan_show_users(&self) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("SHOW USERS not yet implemented in planner".to_string()))
     }
 
     // ---- DDL ----
@@ -634,14 +661,17 @@ impl Planner {
     fn plan_table_ref_with_cte(&self, table_ref: &TableRef, _cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
         match table_ref {
             TableRef::Table { name, alias: _ } => {
-                // Check if this is a reference to a CTE
-                // For now, we'll resolve it normally and handle CTE references in the execution layer
+                let (catalog, database, table_name) = self.resolve_table_name(name);
 
-                let (database, table_name) = self.resolve_table_name(name);
-                let columns = self.resolve_table_columns(&database, &table_name);
+                let columns = if let Some(ref cat) = catalog {
+                    self.resolve_external_table_columns(cat, &database, &table_name)
+                } else {
+                    self.resolve_table_columns(&database, &table_name)
+                };
 
                 Ok(self.make_node(
                     PlanNodeType::Scan(ScanNode {
+                        catalog,
                         table_name,
                         database: Some(database),
                         columns,
@@ -684,14 +714,14 @@ impl Planner {
         }
     }
 
-    /// Split "db.table" or plain "table" into (database, table_name).
-    fn resolve_table_name(&self, name: &str) -> (String, String) {
-        if let Some(pos) = name.find('.') {
-            let db = &name[..pos];
-            let tbl = &name[pos + 1..];
-            (db.to_string(), tbl.to_string())
-        } else {
-            (self.current_database.clone(), name.to_string())
+    /// Split "catalog.db.table", "db.table", or plain "table" into (catalog, database, table_name).
+    fn resolve_table_name(&self, name: &str) -> (Option<String>, String, String) {
+        let parts: Vec<&str> = name.split('.').collect();
+        match parts.len() {
+            1 => (None, self.current_database.clone(), parts[0].to_string()),
+            2 => (None, parts[0].to_string(), parts[1].to_string()),
+            3 => (Some(parts[0].to_string()), parts[1].to_string(), parts[2].to_string()),
+            _ => (None, self.current_database.clone(), name.to_string()),
         }
     }
 
@@ -701,6 +731,20 @@ impl Planner {
             .get_table(database, table_name)
             .map(|t| t.column_names().into_iter().map(|s| s.to_string()).collect())
             .unwrap_or_default()
+    }
+
+    /// Look up the column names for a table from an external catalog.
+    fn resolve_external_table_columns(&self, catalog_name: &str, database: &str, table_name: &str) -> Vec<String> {
+        if let Some(catalog) = self.external_catalogs.get(catalog_name) {
+            let rt = tokio::runtime::Handle::current();
+            let result = rt.block_on(async {
+                catalog.get_table(database, table_name).await
+            });
+            if let Ok(Some(table_info)) = result {
+                return table_info.columns.iter().map(|c| c.name.clone()).collect();
+            }
+        }
+        vec![]
     }
 
     // ---- Additional DDL/DML planning ----

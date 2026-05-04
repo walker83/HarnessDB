@@ -195,10 +195,7 @@ async fn main() -> Result<()> {
     println!("Starting MySQL server on 127.0.0.1:9030...");
 
     let handler = Arc::new(TpchQueryHandler::new());
-    let config = ServerConfig {
-        bind_addr: "127.0.0.1".to_string(),
-        port: 9030,
-    };
+    let config = ServerConfig::default();
 
     let server = MysqlServer::new(config, handler);
     println!("MySQL server listening on 127.0.0.1:9030");

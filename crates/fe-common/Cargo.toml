@@ -10,3 +10,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 common = { workspace = true }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
