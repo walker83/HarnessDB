@@ -1,5 +1,6 @@
 use crate::plan_node::*;
 use crate::statistics::StatisticsProvider;
+use crate::runtime_filter::RuntimeFilterRule;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -40,8 +41,10 @@ impl Optimizer {
         let plan = self.push_down_predicates(plan);
         let plan = self.prune_columns(plan);
         let plan = self.push_down_limit(plan);
-        
-        self.reorder_joins(plan)
+        let plan = self.reorder_joins(plan);
+
+        let rule = RuntimeFilterRule::new();
+        rule.apply(plan)
     }
 
     fn push_down_predicates(&self, plan: PlanNode) -> PlanNode {

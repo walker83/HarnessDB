@@ -2,22 +2,38 @@ use crate::ast::*;
 use crate::error::ParseError;
 
 pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    let trimmed = sql.trim();
+    let trimmed = sql.trim().to_uppercase();
 
-    // Handle ANALYZE TABLE before sqlparser (not natively supported).
-    if trimmed.to_uppercase().starts_with("ANALYZE TABLE") || trimmed.to_uppercase().starts_with("ANALYZE   TABLE") {
-        return parse_analyze_table(trimmed);
+    if trimmed.starts_with("CREATE REPOSITORY") {
+        return parse_create_repository(sql);
     }
-
-    // Handle SHOW STATS before sqlparser.
-    if trimmed.to_uppercase().starts_with("SHOW STATS") {
-        return parse_show_stats(trimmed);
+    if trimmed.starts_with("DROP REPOSITORY") {
+        return parse_drop_repository(sql);
+    }
+    if trimmed.starts_with("SHOW REPOSITORIES") {
+        return Ok(vec![Statement::ShowRepositories]);
+    }
+    if trimmed.starts_with("BACKUP DATABASE") {
+        return parse_backup_database(sql);
+    }
+    if trimmed.starts_with("RESTORE DATABASE") {
+        return parse_restore_database(sql);
+    }
+    if trimmed.starts_with("CREATE MATERIALIZED VIEW") {
+        return parse_create_materialized_view(sql);
+    }
+    if trimmed.starts_with("DROP MATERIALIZED VIEW") {
+        return parse_drop_materialized_view(sql);
+    }
+    if trimmed.starts_with("ALTER MATERIALIZED VIEW") {
+        return parse_alter_materialized_view(sql);
+    }
+    if trimmed.starts_with("REFRESH MATERIALIZED VIEW") {
+        return parse_refresh_materialized_view(sql);
     }
 
     let dialect = sqlparser::dialect::MySqlDialect {};
-
-    let (clean_sql, partition_override, distribution_override) = strip_clauses(sql);
-    let statements = sqlparser::parser::Parser::parse_sql(&dialect, &clean_sql)
+    let statements = sqlparser::parser::Parser::parse_sql(&dialect, sql)
         .map_err(|e| ParseError::SyntaxError {
             position: 0,
             message: e.to_string(),
@@ -25,131 +41,456 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     statements
         .into_iter()
-        .enumerate()
-        .map(|(i, stmt)| convert_statement(stmt, &clean_sql, &partition_override, &distribution_override, i))
+        .map(convert_statement)
         .collect()
 }
 
-fn parse_analyze_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    // ANALYZE TABLE [db.]table_name
-    let parts: Vec<&str> = sql.split_whitespace().collect();
-    if parts.len() < 3 {
+fn parse_create_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE REPOSITORY")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE REPOSITORY".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let mut repo_type = RepositoryType::Local;
+    let mut properties = vec![];
+
+    if rest.starts_with("WITH") {
+        let after_with = rest.strip_prefix("WITH").unwrap().trim();
+        if after_with.starts_with("S3") || after_with.starts_with("s3") {
+            repo_type = RepositoryType::S3;
+            let after_s3 = after_with
+                .strip_prefix("S3")
+                .or_else(|| after_with.strip_prefix("s3"))
+                .unwrap_or("")
+                .trim();
+            properties = parse_properties(after_s3);
+        } else if after_with.starts_with("HDFS") || after_with.starts_with("hdfs") {
+            repo_type = RepositoryType::Hdfs;
+            let after_hdfs = after_with
+                .strip_prefix("HDFS")
+                .or_else(|| after_with.strip_prefix("hdfs"))
+                .unwrap_or("")
+                .trim();
+            properties = parse_properties(after_hdfs);
+        } else {
+            properties = parse_properties(after_with);
+        }
+    }
+
+    Ok(vec![Statement::CreateRepository(CreateRepositoryStmt {
+        name: name.to_string(),
+        repo_type,
+        properties,
+    })])
+}
+
+fn parse_drop_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP REPOSITORY")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP REPOSITORY".to_string(),
+        })?
+        .trim();
+
+    let if_exists = after_drop.starts_with("IF EXISTS");
+    let name_part = if if_exists {
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+
+    let (name, _) = extract_identifier(name_part)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    Ok(vec![Statement::DropRepository(DropRepositoryStmt {
+        name: name.to_string(),
+        if_exists,
+    })])
+}
+
+fn parse_backup_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_backup = sql.strip_prefix("BACKUP DATABASE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected BACKUP DATABASE".to_string(),
+        })?
+        .trim();
+
+    let (database, rest) = extract_identifier(after_backup)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("TO")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected TO".to_string(),
+        })?
+        .trim();
+
+    let (repository, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let backup_name = if rest.starts_with("BACKUP") {
+        let after_backup = rest.strip_prefix("BACKUP").unwrap().trim();
+        let (name, _) = extract_identifier(after_backup)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected backup name".to_string(),
+            })?;
+        name.to_string()
+    } else {
+        format!("{}_{}", database, chrono_lite_timestamp())
+    };
+
+    let properties = parse_properties(rest);
+
+    Ok(vec![Statement::BackupDatabase(BackupDatabaseStmt {
+        database: database.to_string(),
+        repository: repository.to_string(),
+        backup_name,
+        properties,
+    })])
+}
+
+fn parse_restore_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_restore = sql.strip_prefix("RESTORE DATABASE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected RESTORE DATABASE".to_string(),
+        })?
+        .trim();
+
+    let (database, rest) = extract_identifier(after_restore)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("FROM")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected FROM".to_string(),
+        })?
+        .trim();
+
+    let (repository, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("BACKUP")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected BACKUP".to_string(),
+        })?
+        .trim();
+
+    let (backup_name, _) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected backup name".to_string(),
+        })?;
+
+    Ok(vec![Statement::RestoreDatabase(RestoreDatabaseStmt {
+        database: database.to_string(),
+        repository: repository.to_string(),
+        backup_name: backup_name.to_string(),
+        properties: vec![],
+    })])
+}
+
+fn parse_create_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let if_not_exists = after_create.starts_with("IF NOT EXISTS");
+    let rest = if if_not_exists {
+        after_create.strip_prefix("IF NOT EXISTS").unwrap().trim()
+    } else {
+        after_create
+    };
+
+    let (name, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let mut columns = Vec::new();
+    let mut query = String::new();
+    let mut refresh = None;
+
+    if rest.starts_with('(') {
+        if let Some(end) = rest.find(')') {
+            let cols_str = &rest[1..end];
+            for col in cols_str.split(',') {
+                columns.push(col.trim().to_string());
+            }
+            query = rest[end + 1..].trim().to_string();
+        }
+    } else {
+        let as_pos = rest.to_uppercase().find(" AS ");
+        if let Some(pos) = as_pos {
+            let after_as = &rest[pos + 4..];
+            query = after_as.trim().to_string();
+        }
+    }
+
+    if query.to_uppercase().contains("REFRESH") {
+        let refresh_pos = query.to_uppercase().find("REFRESH").unwrap();
+        let before_refresh = query[..refresh_pos].trim();
+        if !before_refresh.is_empty() && before_refresh != "AS" {
+            query = before_refresh.to_string();
+        }
+        let refresh_start = query[refresh_pos..].find("COMPLETE")
+            .or_else(|| query[refresh_pos..].find("FAST"))
+            .map(|p| p + refresh_pos);
+
+        if let Some(pos) = refresh_start {
+            let refresh_str = &query[pos..];
+            if refresh_str.to_uppercase().starts_with("COMPLETE") {
+                refresh = Some(RefreshClause {
+                    r#type: RefreshType::Complete,
+                    concurrency: None,
+                });
+            } else if refresh_str.to_uppercase().starts_with("FAST") {
+                refresh = Some(RefreshClause {
+                    r#type: RefreshType::Fast,
+                    concurrency: None,
+                });
+            }
+        }
+    }
+
+    Ok(vec![Statement::CreateMaterializedView(CreateMaterializedViewStmt {
+        database,
+        name: view_name,
+        if_not_exists,
+        query: query.replace("AS ", "").replace("as ", "").trim().to_string(),
+        columns,
+        refresh,
+    })])
+}
+
+fn parse_drop_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let if_exists = after_drop.starts_with("IF EXISTS");
+    let rest = if if_exists {
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+
+    let (name, _) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    Ok(vec![Statement::DropMaterializedView(DropMaterializedViewStmt {
+        database,
+        name: view_name,
+        if_exists,
+    })])
+}
+
+fn parse_alter_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql.strip_prefix("ALTER MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let rest = rest.trim();
+    let operation = if rest.to_uppercase().starts_with("PAUSE REFRESH") {
+        AlterMaterializedViewOperation::PauseRefresh
+    } else if rest.to_uppercase().starts_with("RESUME REFRESH") {
+        AlterMaterializedViewOperation::ResumeRefresh
+    } else if rest.to_uppercase().starts_with("RENAME TO ") {
+        let new_name = rest.strip_prefix("RENAME TO ").unwrap().trim();
+        AlterMaterializedViewOperation::Rename(new_name.to_string())
+    } else {
         return Err(ParseError::SyntaxError {
             position: 0,
-            message: "ANALYZE TABLE requires a table name".to_string(),
+            message: format!("Unknown ALTER MATERIALIZED VIEW operation: {}", rest),
         });
-    }
-    let name = parts[2].trim_end_matches(';');
-    if name.contains('.') {
-        let p: Vec<&str> = name.splitn(2, '.').collect();
-        Ok(vec![Statement::AnalyzeTable {
-            database: Some(p[0].to_string()),
-            table: p[1].to_string(),
-        }])
+    };
+
+    Ok(vec![Statement::AlterMaterializedView(AlterMaterializedViewStmt {
+        database,
+        name: view_name,
+        operation,
+    })])
+}
+
+fn parse_refresh_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_refresh = sql.strip_prefix("REFRESH MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected REFRESH MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_refresh)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
     } else {
-        Ok(vec![Statement::AnalyzeTable {
-            database: None,
-            table: name.to_string(),
-        }])
-    }
-}
+        (None, name_str)
+    };
 
-fn parse_show_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    // SHOW STATS [FROM [db.]table_name]
-    let parts: Vec<&str> = sql.split_whitespace().collect();
-    if parts.len() >= 4 && parts[1].eq_ignore_ascii_case("STATS") && parts[2].eq_ignore_ascii_case("FROM") {
-        let name = parts[3].trim_end_matches(';');
-        if name.contains('.') {
-            let p: Vec<&str> = name.splitn(2, '.').collect();
-            Ok(vec![Statement::ShowStats {
-                database: Some(p[0].to_string()),
-                table: Some(p[1].to_string()),
-            }])
-        } else {
-            Ok(vec![Statement::ShowStats {
-                database: None,
-                table: Some(name.to_string()),
-            }])
-        }
+    let refresh_type = if rest.trim().to_uppercase().starts_with("COMPLETE") {
+        RefreshType::Complete
     } else {
-        // SHOW STATS (all tables)
-        Ok(vec![Statement::ShowStats {
-            database: None,
-            table: None,
-        }])
-    }
+        RefreshType::Fast
+    };
+
+    Ok(vec![Statement::RefreshMaterializedView(RefreshMaterializedViewStmt {
+        database,
+        name: view_name,
+        refresh_type,
+    })])
 }
 
-fn strip_clauses(sql: &str) -> (String, Option<String>, Option<String>) {
-    let upper = sql.to_uppercase();
-
-    let pos_pby = upper.find(" PARTITION BY ");
-    let pos_dby = upper.find(" DISTRIBUTED BY ");
-
-    let pby = pos_pby.map(|p| {
-        let part_str = &sql[p..];
-        let part_end = find_clause_end(part_str);
-        part_str[..part_end].to_string()
-    });
-    let dby = pos_dby.map(|p| {
-        let dist_str = &sql[p..];
-        let dist_end = find_clause_end(dist_str);
-        dist_str[..dist_end].to_string()
-    });
-
-    let mut clean = sql.to_string();
-    if let Some(ref p) = pby {
-        if let Some(pos) = clean.find(p.as_str()) {
-            clean.replace_range(pos..pos + p.len(), "");
-            clean = clean.trim().to_string();
-        }
-    }
-    if let Some(ref d) = dby {
-        if let Some(pos) = clean.find(d.as_str()) {
-            clean.replace_range(pos..pos + d.len(), "");
-            clean = clean.trim().to_string();
-        }
+fn extract_identifier(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
     }
 
-    (clean, pby, dby)
-}
-
-fn find_clause_end(s: &str) -> usize {
-    let trimmed = s.trim();
-    let leading_ws = s.len() - trimmed.len();
-    let upper = trimmed.to_uppercase();
-    let is_dist = upper.starts_with("DISTRIBUTED BY");
-    if !upper.starts_with("PARTITION BY") && !is_dist {
-        return s.len();
-    }
-
-    let props_pos = upper.find(" PROPERTIES ");
-    let search_end = props_pos.unwrap_or(trimmed.len());
-
-    if is_dist {
-        leading_ws + search_end
+    if s.starts_with('"') || s.starts_with('\'') {
+        let quote = s.chars().next().unwrap();
+        let rest = &s[1..];
+        let end = rest.find(quote).unwrap_or(0);
+        let identifier = &rest[..end];
+        let remaining = &rest[end + 1..];
+        Some((identifier, remaining))
     } else {
-        let partitions_pos = upper[..search_end].find(" PARTITIONS ");
-        if let Some(p) = partitions_pos {
-            let num_len = trimmed[p + " PARTITIONS ".len()..]
-                .split_whitespace()
-                .next()
-                .map(|num| num.len())
-                .unwrap_or(0);
-            return leading_ws + p + " PARTITIONS ".len() + num_len;
+        let end = s.find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(s.len());
+        if end == 0 {
+            return None;
         }
-        leading_ws + search_end
+        let identifier = &s[..end];
+        let remaining = &s[end..];
+        Some((identifier, remaining))
     }
 }
+
+fn parse_properties(s: &str) -> Vec<(String, String)> {
+    let s = s.trim();
+    if !s.starts_with("PROPERTIES") {
+        return vec![];
     }
+
+    let props_str = s.strip_prefix("PROPERTIES").unwrap().trim();
+    if !props_str.starts_with('(') || !props_str.ends_with(')') {
+        return vec![];
+    }
+
+    let content = &props_str[1..props_str.len() - 1];
+    let mut props = vec![];
+
+    for pair in content.split(',') {
+        let pair = pair.trim();
+        if let Some((key, value)) = pair.split_once('=') {
+            let key = key.trim().trim_matches('"').trim_matches('\'');
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            props.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    props
+}
+
+fn chrono_lite_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}", duration.as_secs())
 }
 
 fn convert_statement(
     stmt: sqlparser::ast::Statement,
-    _clean_sql: &str,
-    partition_sql: &Option<String>,
-    distribution_sql: &Option<String>,
-    _stmt_index: usize,
 ) -> Result<Statement, ParseError> {
     match stmt {
         sqlparser::ast::Statement::Query(query) => {
@@ -200,20 +541,14 @@ fn convert_statement(
                 agg_type: None,
                 comment: None,
             }).collect();
-
-            let partition = partition_sql.as_ref().and_then(|s| extract_partition_def(s))
-                .or_else(|| extract_partition_def(&stmt.to_string()));
-
-            let distribution = distribution_sql.as_ref().and_then(|s| extract_distribution_def(s));
-
             Ok(Statement::CreateTable(CreateTableStmt {
                 database,
                 name: table_name,
                 if_not_exists: stmt.if_not_exists,
                 columns: col_defs,
                 keys_type: KeysType::Duplicate,
-                partition,
-                distribution,
+                partition: None,
+                distribution: None,
                 properties: vec![],
             }))
         }
@@ -286,7 +621,7 @@ fn convert_statement(
         sqlparser::ast::Statement::Explain {
             statement, verbose, ..
         } => {
-            let inner = convert_statement(*statement, _clean_sql, partition_sql, distribution_sql, _stmt_index)?;
+            let inner = convert_statement(*statement)?;
             Ok(Statement::Explain(ExplainStmt {
                 statement: Box::new(inner),
                 verbose,
@@ -668,214 +1003,4 @@ fn convert_binary_op(op: sqlparser::ast::BinaryOperator) -> BinaryOp {
         BinaryOperator::Modulo => BinaryOp::Modulo,
         _ => BinaryOp::Eq,
     }
-}
-
-fn extract_partition_def(sql: &str) -> Option<PartitionDef> {
-    let upper = sql.to_uppercase();
-    let pby_pos = upper.find("PARTITION BY ")?;
-    let after_pby = &sql[pby_pos + "PARTITION BY ".len()..].trim();
-
-    if after_pby.to_uppercase().starts_with("RANGE") {
-        let rest = &after_pby["RANGE".len()..].trim();
-        let (columns, rest) = extract_parenthesized(rest)?;
-
-        let range_partitions: Vec<RangePartition> = extract_range_partitions(rest.trim());
-        if range_partitions.is_empty() {
-            return None;
-        }
-        Some(PartitionDef::Range(RangePartitionDef {
-            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
-            partitions: range_partitions,
-        }))
-    } else if after_pby.to_uppercase().starts_with("LIST") {
-        let rest = &after_pby["LIST".len()..].trim();
-        let (columns, rest) = extract_parenthesized(rest)?;
-
-        let list_partitions: Vec<ListPartition> = extract_list_partitions(rest.trim());
-        if list_partitions.is_empty() {
-            return None;
-        }
-        Some(PartitionDef::List(ListPartitionDef {
-            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
-            partitions: list_partitions,
-        }))
-    } else if after_pby.to_uppercase().starts_with("HASH") {
-        let rest = &after_pby["HASH".len()..].trim();
-        let (columns, rest) = extract_parenthesized(rest)?;
-
-        let num = extract_partitions_count(rest.trim()).unwrap_or(4);
-        Some(PartitionDef::Hash(HashPartitionDef {
-            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
-            num_partitions: num,
-        }))
-    } else {
-        None
-    }
-}
-
-fn extract_parenthesized(s: &str) -> Option<(String, &str)> {
-    let s = s.trim();
-    let start = s.find('(')?;
-    let mut depth = 0;
-    for (i, ch) in s[start..].char_indices() {
-        if ch == '(' {
-            depth += 1;
-        } else if ch == ')' {
-            depth -= 1;
-            if depth == 0 {
-                return Some((s[start + 1..start + i].to_string(), &s[start + i + 1..]));
-            }
-        }
-    }
-    None
-}
-
-fn split_columns(s: &str) -> Vec<&str> {
-    s.split(',')
-        .map(|col| col.trim().trim_matches(|c| c == '\'' || c == '"' || c == '`'))
-        .filter(|c| !c.is_empty())
-        .collect()
-}
-
-fn extract_distribution_def(sql: &str) -> Option<DistributionDef> {
-    let upper = sql.to_uppercase();
-    let dby_pos = upper.find("DISTRIBUTED BY ")?;
-    let after_dby = &sql[dby_pos + "DISTRIBUTED BY ".len()..].trim();
-
-    if after_dby.to_uppercase().starts_with("HASH") {
-        let rest = &after_dby["HASH".len()..].trim();
-        let (columns, rest) = extract_parenthesized(rest)?;
-
-        let buckets = extract_buckets_count(rest.trim()).unwrap_or(10);
-        Some(DistributionDef {
-            dist_type: "HASH".to_string(),
-            columns: split_columns(&columns).into_iter().map(|s| s.to_string()).collect(),
-            buckets,
-        })
-    } else if after_dby.to_uppercase().starts_with("RANDOM") {
-        let buckets = extract_buckets_count(after_dby.trim()).unwrap_or(10);
-        Some(DistributionDef {
-            dist_type: "RANDOM".to_string(),
-            columns: vec![],
-            buckets,
-        })
-    } else {
-        None
-    }
-}
-
-fn extract_range_partitions(s: &str) -> Vec<RangePartition> {
-    let s = s.trim();
-    let inner = s
-        .strip_prefix('(')
-        .and_then(|rest| rest.strip_suffix(')'))
-        .unwrap_or(s);
-    let mut partitions = Vec::new();
-    let mut rest = inner.trim();
-    while !rest.is_empty() {
-        let upper = rest.to_uppercase();
-        if let Some(part_pos) = upper.find("PARTITION ") {
-            let after_part = &rest[part_pos + "PARTITION ".len()..].trim();
-            let name_end = after_part
-                .find(|c: char| c.is_whitespace())
-                .unwrap_or(after_part.len());
-            let part_name = after_part[..name_end].to_string();
-
-            let after_name = after_part[name_end..].trim();
-            let after_name_upper = after_name.to_uppercase();
-            if let Some(vlt_pos) = after_name_upper.find("VALUES LESS THAN") {
-                let after_vlt = &after_name[vlt_pos + "VALUES LESS THAN".len()..].trim();
-                if let Some((less_than, _)) = extract_parenthesized(after_vlt) {
-                    let lt_val = less_than.trim().trim_matches(|c: char| c == '\'' || c == '"').to_string();
-                    partitions.push(RangePartition {
-                        name: part_name.clone(),
-                        less_than: lt_val,
-                    });
-                    rest = advance_to_next_partition(rest);
-                    continue;
-                }
-            }
-            break;
-        } else {
-            break;
-        }
-    }
-    partitions
-}
-
-fn extract_list_partitions(s: &str) -> Vec<ListPartition> {
-    let s = s.trim();
-    let inner = s
-        .strip_prefix('(')
-        .and_then(|rest| rest.strip_suffix(')'))
-        .unwrap_or(s);
-    let mut partitions = Vec::new();
-    let mut rest = inner.trim();
-    while !rest.is_empty() {
-        let upper = rest.to_uppercase();
-        if let Some(part_pos) = upper.find("PARTITION ") {
-            let after_part = &rest[part_pos + "PARTITION ".len()..].trim();
-            let name_end = after_part
-                .find(|c: char| c.is_whitespace())
-                .unwrap_or(after_part.len());
-            let part_name = after_part[..name_end].to_string();
-
-            let after_name = after_part[name_end..].trim();
-            let after_name_upper = after_name.to_uppercase();
-            if let Some(vi_pos) = after_name_upper.find("VALUES IN") {
-                let after_vi = &after_name[vi_pos + "VALUES IN".len()..].trim();
-                if let Some((values_str, _)) = extract_parenthesized(after_vi) {
-                    let values: Vec<String> = values_str
-                        .split(',')
-                        .map(|v| v.trim().trim_matches(|c: char| c == '\'' || c == '"').to_string())
-                        .filter(|v| !v.is_empty())
-                        .collect();
-                    partitions.push(ListPartition {
-                        name: part_name.clone(),
-                        values,
-                    });
-                    rest = advance_to_next_partition(rest);
-                    continue;
-                }
-            }
-            break;
-        } else {
-            break;
-        }
-    }
-    partitions
-}
-
-fn advance_to_next_partition(s: &str) -> &str {
-    let upper = s.to_uppercase();
-    let skip = "PARTITION ".len();
-    if let Some(pos) = upper[skip..].find("PARTITION ") {
-        s[pos + skip..].trim()
-    } else {
-        ""
-    }
-}
-
-fn extract_partitions_count(s: &str) -> Option<usize> {
-    let upper = s.to_uppercase();
-    let pos = upper.find("PARTITIONS ")?;
-    let after = &s[pos + "PARTITIONS ".len()..].trim();
-    after
-        .split_whitespace()
-        .next()?
-        .trim_end_matches(|c: char| !c.is_ascii_digit())
-        .parse()
-        .ok()
-}
-
-fn extract_buckets_count(s: &str) -> Option<usize> {
-    let upper = s.to_uppercase();
-    let pos = upper.find("BUCKETS ")?;
-    let after = &s[pos + "BUCKETS ".len()..].trim();
-    after
-        .split_whitespace()
-        .next()?
-        .trim_end_matches(|c: char| !c.is_ascii_digit())
-        .parse()
-        .ok()
 }

@@ -1,13 +1,11 @@
 pub mod catalog;
 pub mod database;
-pub mod table;
+pub mod materialized_view;
 pub mod partition;
 pub mod replica;
-pub mod stats;
+pub mod table;
 
 pub use catalog::CatalogManager;
 pub use database::Database;
+pub use materialized_view::{MaterializedView, MaterializedViewColumn, RefreshStrategy};
 pub use table::Table;
-pub use partition::{PartitionType, PartitionSpec, PartitionEntry, PartitionMeta, PartitionState};
-pub use stats::{TableStats, ColumnStats, Histogram, HistogramBucket, StatisticsProvider, InMemoryStatsProvider};
-pub use catalog::CatalogStatsProvider;

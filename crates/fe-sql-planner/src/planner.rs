@@ -65,8 +65,6 @@ impl Planner {
             Statement::ShowDatabases => self.plan_show_databases(),
             Statement::ShowTables(db) => self.plan_show_tables(db),
             Statement::Explain(explain) => {
-                // Plan the inner statement; the explain wrapper is transparent
-                // at the logical plan level.
                 self.plan(*explain.statement)
             }
             Statement::AlterTable(alter) => self.plan_alter_table(alter),
@@ -83,12 +81,15 @@ impl Planner {
             Statement::CreateView { database, name, if_not_exists, query, columns } => {
                 self.plan_create_view(database, name, if_not_exists, query, columns)
             }
-            Statement::AnalyzeTable { database, table } => {
-                self.plan_analyze_table(database, table)
-            }
-            Statement::ShowStats { database, table } => {
-                self.plan_show_stats(database, table)
-            }
+            Statement::CreateRepository(stmt) => self.plan_create_repository(stmt),
+            Statement::DropRepository(stmt) => self.plan_drop_repository(stmt),
+            Statement::ShowRepositories => self.plan_show_repositories(),
+            Statement::BackupDatabase(stmt) => self.plan_backup_database(stmt),
+            Statement::RestoreDatabase(stmt) => self.plan_restore_database(stmt),
+            Statement::CreateMaterializedView(stmt) => self.plan_create_materialized_view(stmt),
+            Statement::DropMaterializedView(stmt) => self.plan_drop_materialized_view(stmt),
+            Statement::AlterMaterializedView(stmt) => self.plan_alter_materialized_view(stmt),
+            Statement::RefreshMaterializedView(stmt) => self.plan_refresh_materialized_view(stmt),
         }
     }
 
@@ -106,8 +107,6 @@ impl Planner {
                     format!("table_name = '{}'", table),
                 ],
                 limit: None,
-                partition_info: None,
-                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -130,8 +129,6 @@ impl Planner {
                     table_pred,
                 ],
                 limit: None,
-                partition_info: None,
-                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -162,8 +159,8 @@ impl Planner {
         let partition_info = stmt.partition.map(|p| {
             format!(
                 "{}({})",
-                p.partition_type(),
-                p.columns().join(", ")
+                p.partition_type,
+                p.columns.join(", ")
             )
         });
 
@@ -364,8 +361,6 @@ impl Planner {
                 columns: vec![],
                 predicates: vec![],
                 limit: None,
-                partition_info: None,
-                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -379,8 +374,6 @@ impl Planner {
                 columns: vec!["schema_name".into()],
                 predicates: vec![],
                 limit: None,
-                partition_info: None,
-                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -395,8 +388,6 @@ impl Planner {
                 columns: vec!["table_name".into()],
                 predicates: vec![format!("table_schema = '{}'", target_db)],
                 limit: None,
-                partition_info: None,
-                partition_ids: vec![],
             }),
             vec![],
         ))
@@ -451,19 +442,12 @@ impl Planner {
                     columns: vec![],
                     predicates: vec![],
                     limit: None,
-                    partition_info: None,
-                    partition_ids: vec![],
                 }),
                 vec![],
             )
         };
 
-        // 2. Apply partition pruning based on WHERE conditions
-        if let Some(where_expr) = &query.r#where {
-            plan = self.apply_partition_pruning(plan, where_expr);
-        }
-
-        // 3. WHERE clause - handle subqueries (IN/EXISTS)
+        // 2. WHERE clause - handle subqueries (IN/EXISTS)
         if let Some(where_expr) = &query.r#where {
             plan = self.plan_where_clause(where_expr, plan)?;
         }
@@ -647,50 +631,6 @@ impl Planner {
         self.plan_table_ref_with_cte(table_ref, None)
     }
 
-    fn apply_partition_pruning(&self, plan: PlanNode, where_expr: &fe_sql_parser::ast::Expr) -> PlanNode {
-        let PlanNode { id, node_type, children, stats } = plan;
-        let PlanNodeType::Scan(mut scan) = node_type else {
-            return PlanNode { id, node_type, children, stats };
-        };
-
-        let (database, table_name) = scan
-            .database
-            .as_deref()
-            .map(|d| (d, scan.table_name.as_str()))
-            .unwrap_or_else(|| ("", scan.table_name.as_str()));
-
-        let Some(table) = self.catalog.get_table(database, table_name) else {
-            return PlanNode { id, node_type: PlanNodeType::Scan(scan), children, stats };
-        };
-        let Some(partition_info) = &table.partition_info else {
-            return PlanNode { id, node_type: PlanNodeType::Scan(scan), children, stats };
-        };
-
-        let partition_cols: Vec<&str> = partition_info.columns.iter().map(|c| c.as_str()).collect();
-        let partition_conditions: Vec<String> = extract_partition_conditions(where_expr, &partition_cols);
-
-        if partition_conditions.is_empty() {
-            return PlanNode { id, node_type: PlanNodeType::Scan(scan), children, stats };
-        }
-
-        let pruned_ids: Vec<u64> = match partition_info.partition_type.to_uppercase().as_str() {
-            "RANGE" => prune_range_partitions(&partition_info.partitions, &partition_conditions),
-            "LIST" => prune_list_partitions(&partition_info.partitions, &partition_conditions),
-            _ => vec![],
-        };
-
-        if !pruned_ids.is_empty() {
-            scan.partition_ids = pruned_ids;
-        }
-
-        PlanNode {
-            id,
-            node_type: PlanNodeType::Scan(scan),
-            children,
-            stats,
-        }
-    }
-
     fn plan_table_ref_with_cte(&self, table_ref: &TableRef, _cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
         match table_ref {
             TableRef::Table { name, alias: _ } => {
@@ -699,9 +639,6 @@ impl Planner {
 
                 let (database, table_name) = self.resolve_table_name(name);
                 let columns = self.resolve_table_columns(&database, &table_name);
-                let partition_info = self.catalog
-                    .get_table(&database, &table_name)
-                    .and_then(|t| t.partition_info.as_ref().map(|p| format!("{}({})", p.partition_type, p.columns.join(", "))));
 
                 Ok(self.make_node(
                     PlanNodeType::Scan(ScanNode {
@@ -710,8 +647,6 @@ impl Planner {
                         columns,
                         predicates: vec![],
                         limit: None,
-                        partition_info,
-                        partition_ids: vec![],
                     }),
                     vec![],
                 ))
@@ -841,31 +776,147 @@ impl Planner {
         ))
     }
 
-    fn plan_analyze_table(
+    fn plan_create_repository(
         &self,
-        database: Option<String>,
-        table: String,
+        stmt: fe_sql_parser::ast::CreateRepositoryStmt,
     ) -> Result<PlanNode, DrorisError> {
-        let database = database.or_else(|| Some(self.current_database.clone()));
+        let repo_type = match stmt.repo_type {
+            fe_sql_parser::ast::RepositoryType::Local => "local".to_string(),
+            fe_sql_parser::ast::RepositoryType::S3 => "s3".to_string(),
+            fe_sql_parser::ast::RepositoryType::Hdfs => "hdfs".to_string(),
+        };
         Ok(self.make_node(
-            PlanNodeType::AnalyzeTable(AnalyzeTableNode {
-                database,
-                table_name: table,
+            PlanNodeType::CreateRepository(CreateRepositoryNode {
+                name: stmt.name,
+                repo_type,
+                properties: stmt.properties,
             }),
             vec![],
         ))
     }
 
-    fn plan_show_stats(
+    fn plan_drop_repository(
         &self,
-        database: Option<String>,
-        table: Option<String>,
+        stmt: fe_sql_parser::ast::DropRepositoryStmt,
     ) -> Result<PlanNode, DrorisError> {
-        let database = database.or_else(|| Some(self.current_database.clone()));
         Ok(self.make_node(
-            PlanNodeType::ShowStats(ShowStatsNode {
-                database,
-                table_name: table,
+            PlanNodeType::DropRepository(DropRepositoryNode {
+                name: stmt.name,
+                if_exists: stmt.if_exists,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_repositories(&self) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::ShowRepositories(ShowRepositoriesNode),
+            vec![],
+        ))
+    }
+
+    fn plan_backup_database(
+        &self,
+        stmt: fe_sql_parser::ast::BackupDatabaseStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::BackupDatabase(BackupDatabaseNode {
+                database: stmt.database,
+                repository: stmt.repository,
+                backup_name: stmt.backup_name,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_restore_database(
+        &self,
+        stmt: fe_sql_parser::ast::RestoreDatabaseStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::RestoreDatabase(RestoreDatabaseNode {
+                database: stmt.database,
+                repository: stmt.repository,
+                backup_name: stmt.backup_name,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_create_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::CreateMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        let refresh_type = stmt.refresh.as_ref().map(|r| {
+            match r.r#type {
+                fe_sql_parser::ast::RefreshType::Complete => "COMPLETE".to_string(),
+                fe_sql_parser::ast::RefreshType::Fast => "FAST".to_string(),
+            }
+        });
+
+        Ok(self.make_node(
+            PlanNodeType::CreateMaterializedView(CreateMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                if_not_exists: stmt.if_not_exists,
+                query: stmt.query,
+                columns: stmt.columns,
+                refresh_type,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_drop_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::DropMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DropMaterializedView(DropMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                if_exists: stmt.if_exists,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_alter_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::AlterMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        let operation = match stmt.operation {
+            fe_sql_parser::ast::AlterMaterializedViewOperation::PauseRefresh => "PAUSE REFRESH".to_string(),
+            fe_sql_parser::ast::AlterMaterializedViewOperation::ResumeRefresh => "RESUME REFRESH".to_string(),
+            fe_sql_parser::ast::AlterMaterializedViewOperation::Rename(new_name) => format!("RENAME TO {}", new_name),
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::AlterMaterializedView(AlterMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                operation,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_refresh_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::RefreshMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        let refresh_type = match stmt.refresh_type {
+            fe_sql_parser::ast::RefreshType::Complete => "COMPLETE",
+            fe_sql_parser::ast::RefreshType::Fast => "FAST",
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::RefreshMaterializedView(RefreshMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                refresh_type: refresh_type.to_string(),
             }),
             vec![],
         ))
@@ -892,96 +943,4 @@ fn is_aggregate_function(name: &str) -> bool {
             | "PERCENTILE_UNION"
             | "GROUP_CONCAT"
     )
-}
-
-fn extract_partition_conditions(
-    expr: &fe_sql_parser::ast::Expr,
-    partition_cols: &[&str],
-) -> Vec<String> {
-    match expr {
-        fe_sql_parser::ast::Expr::BinaryOp { left, op, right } => {
-            match op {
-                fe_sql_parser::ast::BinaryOp::And => {
-                    let mut conds = extract_partition_conditions(left, partition_cols);
-                    conds.extend(extract_partition_conditions(right, partition_cols));
-                    conds
-                }
-                fe_sql_parser::ast::BinaryOp::Or => {
-                    let mut conds = extract_partition_conditions(left, partition_cols);
-                    conds.extend(extract_partition_conditions(right, partition_cols));
-                    conds
-                }
-                _ => {
-                    let col = match (&**left, &**right) {
-                        (fe_sql_parser::ast::Expr::ColumnRef { column, .. }, _)
-                            if partition_cols.iter().any(|c| *c == column) =>
-                        {
-                            Some((column.clone(), right))
-                        }
-                        (_, fe_sql_parser::ast::Expr::ColumnRef { column, .. })
-                            if partition_cols.iter().any(|c| *c == column) =>
-                        {
-                            Some((column.clone(), left))
-                        }
-                        _ => None,
-                    };
-                    if let Some((col_name, val_expr)) = col {
-                        let val = expression::expr_to_string(val_expr);
-                        vec![format!("{} = {}", col_name, val)]
-                    } else {
-                        vec![]
-                    }
-                }
-            }
-        }
-        _ => vec![],
-    }
-}
-
-fn prune_range_partitions(
-    partitions: &[fe_catalog::table::Partition],
-    _conditions: &[String],
-) -> Vec<u64> {
-    let mut pruned: Vec<u64> = Vec::new();
-    let mut selected = false;
-    for p in partitions {
-        if !selected {
-            pruned.push(p.id);
-        }
-        if let Some(end) = &p.range_end {
-            for cond in _conditions {
-                if cond.contains(end) {
-                    selected = true;
-                }
-            }
-        }
-    }
-    if pruned.is_empty() {
-        partitions.iter().map(|p| p.id).collect()
-    } else {
-        pruned
-    }
-}
-
-fn prune_list_partitions(
-    partitions: &[fe_catalog::table::Partition],
-    conditions: &[String],
-) -> Vec<u64> {
-    let mut pruned: Vec<u64> = Vec::new();
-    for p in partitions {
-        for cond in conditions {
-            if cond.contains(&p.name)
-                || p.range_start.as_ref().map_or(false, |s| cond.contains(s))
-                || p.range_end.as_ref().map_or(false, |e| cond.contains(e))
-            {
-                pruned.push(p.id);
-                break;
-            }
-        }
-    }
-    if pruned.is_empty() {
-        partitions.iter().map(|p| p.id).collect()
-    } else {
-        pruned
-    }
 }

@@ -5,7 +5,10 @@ use types::vector::{
     BooleanVector, Int8Vector, Int16Vector, Int32Vector, Int64Vector, Int128Vector,
     Float32Vector, Float64Vector, StringVector, DateVector, DateTimeVector, NullVector,
 };
+use types::runtime_filter::{MinMaxFilter, InFilter};
+use be_storage::index::BloomFilter;
 use std::sync::Arc;
+use std::collections::HashMap;
 use be_storage::StorageEngine;
 use be_storage::index::{ColumnPredicate, apply_predicates_to_block};
 use crate::predicate_parser::{parse_predicates, parse_set_value, make_affected_rows_block};
@@ -115,12 +118,22 @@ pub struct ScanExecNode {
     pub limit: Option<usize>,
     pub predicates: Vec<String>,
     pub data: Option<Block>,
-    /// Optional tablet ID for storage-backed scan
     pub tablet_id: Option<u64>,
-    /// Optional storage engine for reading from persistent storage
     pub storage: Option<Arc<StorageEngine>>,
     opened: bool,
     rows_consumed: usize,
+    runtime_filters: Vec<ScanRuntimeFilter>,
+}
+
+pub struct ScanRuntimeFilter {
+    pub column_index: usize,
+    pub filter: AppliedFilter,
+}
+
+pub enum AppliedFilter {
+    Bloom(BloomFilter),
+    MinMax(MinMaxFilter),
+    In(InFilter),
 }
 
 impl ScanExecNode {
@@ -135,6 +148,7 @@ impl ScanExecNode {
             storage: None,
             opened: false,
             rows_consumed: 0,
+            runtime_filters: Vec::new(),
         }
     }
 
@@ -148,11 +162,44 @@ impl ScanExecNode {
         self
     }
 
-    /// Configure this scan to read from a storage engine using the given tablet_id.
     pub fn with_storage(mut self, tablet_id: u64, storage: Arc<StorageEngine>) -> Self {
         self.tablet_id = Some(tablet_id);
         self.storage = Some(storage);
         self
+    }
+
+    pub fn with_runtime_filters(mut self, filters: Vec<ScanRuntimeFilter>) -> Self {
+        self.runtime_filters = filters;
+        self
+    }
+
+    fn apply_runtime_filters(&self, block: &Block) -> Bitmap {
+        if self.runtime_filters.is_empty() {
+            return Bitmap::all_set(block.num_rows());
+        }
+
+        let mut selection = Bitmap::all_set(block.num_rows());
+        for rf in &self.runtime_filters {
+            let mut filter_selection = Bitmap::with_capacity(block.num_rows());
+            for row_idx in 0..block.num_rows() {
+                let pass = if let Some(col) = block.column(rf.column_index) {
+                    let val = col.scalar_at(row_idx);
+                    match &rf.filter {
+                        AppliedFilter::Bloom(bf) => {
+                            let bytes = format!("{:?}", val);
+                            bf.may_contain(bytes.as_bytes())
+                        }
+                        AppliedFilter::MinMax(mm) => mm.may_contain(&val),
+                        AppliedFilter::In(in_f) => in_f.may_contain(&val),
+                    }
+                } else {
+                    true
+                };
+                filter_selection.push(pass);
+            }
+            selection = &selection & &filter_selection;
+        }
+        selection
     }
 
     
@@ -202,15 +249,26 @@ impl ExecNode for ScanExecNode {
 
     async fn get_next(&mut self) -> Result<Option<Block>> {
         if let Some(data) = self.data.take() {
+            let filtered_data = if !self.runtime_filters.is_empty() {
+                let selection = self.apply_runtime_filters(&data);
+                let filtered = data.filter(&selection);
+                if filtered.is_empty() {
+                    return Ok(None);
+                }
+                filtered
+            } else {
+                data
+            };
+
             if let Some(limit) = self.limit {
                 let rows_to_take = limit.saturating_sub(self.rows_consumed);
                 if rows_to_take == 0 {
                     return Ok(None);
                 }
-                self.rows_consumed += data.num_rows();
-                Ok(Some(data.slice(0, rows_to_take.min(data.num_rows()))))
+                self.rows_consumed += filtered_data.num_rows();
+                Ok(Some(filtered_data.slice(0, rows_to_take.min(filtered_data.num_rows()))))
             } else {
-                Ok(Some(data))
+                Ok(Some(filtered_data))
             }
         } else {
             Ok(None)
@@ -721,10 +779,31 @@ pub struct HashJoinExecNode {
     pub opened: bool,
     pub build_complete: bool,
     pub probe_consumed: bool,
-    pub hash_table: std::collections::HashMap<String, Vec<Block>>,
+    pub hash_table: HashMap<String, Vec<Block>>,
     pub current_probe_blocks: Vec<Block>,
     pub current_probe_idx: usize,
-    pub matched_build_keys: std::collections::HashSet<String>,
+    pub matched_build_keys: HashMap<String, bool>,
+    pub runtime_filters: Vec<RuntimeFilterConfig>,
+    pub generated_filters: HashMap<u64, GeneratedFilter>,
+}
+
+pub struct RuntimeFilterConfig {
+    pub id: u64,
+    pub filter_type: RuntimeFilterTypeExec,
+    pub build_key_index: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RuntimeFilterTypeExec {
+    Bloom,
+    MinMax,
+    In,
+}
+
+pub enum GeneratedFilter {
+    Bloom(BloomFilter),
+    MinMax(MinMaxFilter),
+    In(InFilter),
 }
 
 impl HashJoinExecNode {
@@ -748,11 +827,18 @@ impl HashJoinExecNode {
             opened: false,
             build_complete: false,
             probe_consumed: false,
-            hash_table: std::collections::HashMap::new(),
+            hash_table: HashMap::new(),
             current_probe_blocks: Vec::new(),
             current_probe_idx: 0,
-            matched_build_keys: std::collections::HashSet::new(),
+            matched_build_keys: HashMap::new(),
+            runtime_filters: Vec::new(),
+            generated_filters: HashMap::new(),
         }
+    }
+
+    pub fn with_runtime_filters(mut self, filters: Vec<RuntimeFilterConfig>) -> Self {
+        self.runtime_filters = filters;
+        self
     }
 
     fn extract_keys_from_block(block: &Block, key_indices: &[usize]) -> Vec<String> {
@@ -768,6 +854,57 @@ impl HashJoinExecNode {
             }
             key_parts.join("|")
         }).collect()
+    }
+
+    fn extract_scalar_from_block(block: &Block, key_index: usize) -> Vec<ScalarValue> {
+        (0..block.num_rows()).filter_map(|row_idx| {
+            if key_index < block.num_columns() {
+                block.column(key_index).map(|col| col.scalar_at(row_idx))
+            } else {
+                None
+            }
+        }).collect()
+    }
+
+    fn generate_runtime_filters(&mut self, build_blocks: &[Block]) {
+        for config in &self.runtime_filters {
+            let values = build_blocks.iter()
+                .flat_map(|block| Self::extract_scalar_from_block(block, config.build_key_index))
+                .collect::<Vec<_>>();
+
+            let filter = match config.filter_type {
+                RuntimeFilterTypeExec::Bloom => {
+                    let mut bloom = BloomFilter::new(values.len(), 0.01);
+                    for val in &values {
+                        let bytes = format!("{:?}", val);
+                        bloom.insert(bytes.as_bytes());
+                    }
+                    GeneratedFilter::Bloom(bloom)
+                }
+                RuntimeFilterTypeExec::MinMax => {
+                    let mut minmax = MinMaxFilter::new();
+                    for val in &values {
+                        minmax.update(val);
+                    }
+                    GeneratedFilter::MinMax(minmax)
+                }
+                RuntimeFilterTypeExec::In => {
+                    let mut in_filter = InFilter::with_capacity(values.len());
+                    for val in values {
+                        in_filter.insert(val);
+                    }
+                    GeneratedFilter::In(in_filter)
+                }
+            };
+
+            self.generated_filters.insert(config.id, filter);
+        }
+    }
+
+    pub fn get_runtime_filters(&self) -> HashMap<u64, &GeneratedFilter> {
+        self.generated_filters.iter()
+            .map(|(k, v)| (*k, v))
+            .collect()
     }
 }
 
@@ -801,6 +938,10 @@ impl ExecNode for HashJoinExecNode {
                 }
             }
 
+            if !self.runtime_filters.is_empty() {
+                self.generate_runtime_filters(&build_blocks);
+            }
+
             self.build_complete = true;
             tracing::debug!("HashJoin build complete: {} keys in hash table", self.hash_table.len());
         }
@@ -811,7 +952,7 @@ impl ExecNode for HashJoinExecNode {
 
             for (row_idx, key) in keys.iter().enumerate() {
                 if let Some(build_blocks) = self.hash_table.get(key) {
-                    self.matched_build_keys.insert(key.clone());
+                    self.matched_build_keys.insert(key.clone(), true);
                     let probe_row = block.slice(row_idx, 1);
                     for build_row in build_blocks {
                         let mut joined = probe_row.clone();
@@ -841,6 +982,7 @@ impl ExecNode for HashJoinExecNode {
         self.hash_table.clear();
         self.current_probe_blocks.clear();
         self.matched_build_keys.clear();
+        self.generated_filters.clear();
         Ok(())
     }
 

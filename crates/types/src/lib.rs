@@ -6,6 +6,7 @@ pub mod bitmap;
 pub mod field;
 pub mod schema;
 pub mod block;
+pub mod runtime_filter;
 
 pub use data_type::DataType;
 pub use scalar::{ScalarValue, JsonValue};
@@ -16,3 +17,4 @@ pub use bitmap::Bitmap;
 pub use field::Field;
 pub use schema::Schema;
 pub use block::Block;
+pub use runtime_filter::{RuntimeFilter, RuntimeFilterType, RuntimeFilterId, MinMaxFilter, InFilter};

@@ -6,11 +6,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::database::Database;
+use crate::materialized_view::MaterializedView;
 use crate::table::Table;
 use common::{DrorisError, Result, CatalogError};
 
 pub struct CatalogManager {
     databases: DashMap<String, Database>,
+    materialized_views: DashMap<String, MaterializedView>,
     next_id: AtomicU64,
     catalog_path: String,
 }
@@ -24,7 +26,6 @@ enum CatalogOp {
     DropTable { db: String, table: String },
     AlterDatabase { name: String },
     AlterTable { db: String, table: String },
-    UpdateStats { db: String, table: String },
 }
 
 pub struct CatalogWriter {
@@ -43,6 +44,7 @@ impl CatalogManager {
 
         Self {
             databases: dbs,
+            materialized_views: DashMap::new(),
             next_id: AtomicU64::new(1),
             catalog_path: path.into(),
         }
@@ -96,37 +98,34 @@ impl CatalogManager {
             .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
     }
 
-    /// Update statistics for a table.
-    pub fn update_table_stats(
-        &self,
-        db_name: &str,
-        table_name: &str,
-        stats: crate::stats::TableStats,
-    ) -> Result<()> {
-        let mut db_ref = self.databases.get_mut(db_name)
-            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound,
-                format!("database '{}' not found", db_name)))?;
-        let table = db_ref.get_table_mut(table_name)
-            .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound,
-                format!("table '{}' not found", table_name)))?;
-        table.stats = Some(stats);
+    pub fn create_materialized_view(&self, mv: MaterializedView) -> common::Result<()> {
+        let key = format!("{}.{}", mv.database, mv.name);
+        self.materialized_views.insert(key, mv);
         Ok(())
     }
 
-    /// Get statistics for a table.
-    pub fn get_table_stats(&self, db_name: &str, table_name: &str) -> Option<crate::stats::TableStats> {
-        self.get_table(db_name, table_name).and_then(|t| t.stats.clone())
+    pub fn drop_materialized_view(&self, db_name: &str, name: &str) -> common::Result<()> {
+        let key = format!("{}.{}", db_name, name);
+        self.materialized_views.remove(&key)
+            .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound, format!("materialized view '{}' not found", name)))?;
+        Ok(())
     }
 
-    /// Get all tables with their stats for a given database.
-    pub fn get_all_table_stats(&self, db_name: &str) -> Vec<(String, Option<crate::stats::TableStats>)> {
-        self.databases.get(db_name)
-            .map(|db| {
-                db.tables.iter()
-                    .map(|(name, table)| (name.clone(), table.stats.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+    pub fn get_materialized_view(&self, db_name: &str, name: &str) -> Option<MaterializedView> {
+        let key = format!("{}.{}", db_name, name);
+        self.materialized_views.get(&key).map(|r| r.value().clone())
+    }
+
+    pub fn list_materialized_views(&self, db_name: &str) -> Vec<MaterializedView> {
+        let prefix = format!("{}.", db_name);
+        self.materialized_views.iter()
+            .filter(|r| r.key().starts_with(&prefix))
+            .map(|r| r.value().clone())
+            .collect()
+    }
+
+    pub fn all_materialized_views(&self) -> Vec<MaterializedView> {
+        self.materialized_views.iter().map(|r| r.value().clone()).collect()
     }
 
     /// Serialize catalog state to JSON file
@@ -138,6 +137,7 @@ impl CatalogManager {
         runtime.block_on(async {
             let catalog_state = CatalogState {
                 databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+                materialized_views: self.materialized_views.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
                 next_id: self.next_id.load(Ordering::Relaxed),
             };
             let json = serde_json::to_string(&catalog_state)
@@ -168,6 +168,9 @@ impl CatalogManager {
                 .map_err(|e| DrorisError::Internal(e.to_string()))?;
             for (key, value) in state.databases {
                 self.databases.insert(key, value);
+            }
+            for (key, value) in state.materialized_views {
+                self.materialized_views.insert(key, value);
             }
             self.next_id = AtomicU64::new(state.next_id);
             Ok(())
@@ -204,12 +207,6 @@ impl CatalogManager {
                             self.drop_table(&db, &table)?;
                         }
                 }
-                OpType::UpdateStats => {
-                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
-                        && let CatalogOp::UpdateStats { db: _, table: _ } = op {
-                            // Stats are stored directly on the Table struct, already persisted via catalog save.
-                        }
-                }
                 _ => { /* ignore other op types for now */ }
             }
         }
@@ -220,6 +217,7 @@ impl CatalogManager {
 #[derive(Debug, Serialize, Deserialize)]
 struct CatalogState {
     databases: HashMap<String, Database>,
+    materialized_views: HashMap<String, MaterializedView>,
     next_id: u64,
 }
 
@@ -269,37 +267,6 @@ impl CatalogWriter {
         self.catalog.write().await.drop_table(db_name, table_name)?;
         Ok(())
     }
-
-    pub async fn update_table_stats(
-        &self,
-        db_name: &str,
-        table_name: &str,
-        stats: crate::stats::TableStats,
-    ) -> common::Result<()> {
-        let op = CatalogOp::UpdateStats { db: db_name.to_string(), table: table_name.to_string() };
-        let data = serde_json::to_vec(&op)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
-        let _index = self.edit_log.write().await.append(fe_common::edit_log::OpType::UpdateStats, data);
-        self.catalog.write().await.update_table_stats(db_name, table_name, stats)?;
-        Ok(())
-    }
-}
-
-/// Statistics provider backed by the catalog's persisted stats.
-pub struct CatalogStatsProvider {
-    catalog: std::sync::Arc<CatalogManager>,
-}
-
-impl CatalogStatsProvider {
-    pub fn new(catalog: std::sync::Arc<CatalogManager>) -> Self {
-        Self { catalog }
-    }
-}
-
-impl crate::stats::StatisticsProvider for CatalogStatsProvider {
-    fn get_table_stats(&self, database: &str, table: &str) -> Option<crate::stats::TableStats> {
-        self.catalog.get_table_stats(database, table)
-    }
 }
 
 #[cfg(test)]
@@ -330,7 +297,6 @@ mod tests {
             properties: HashMap::new(),
             row_count: 0,
             data_size: 0,
-            stats: None,
         }
     }
 

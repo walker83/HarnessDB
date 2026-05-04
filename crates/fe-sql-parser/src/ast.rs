@@ -7,8 +7,12 @@ pub enum Statement {
     CreateDatabase(CreateDatabaseStmt),
     CreateTable(CreateTableStmt),
     CreateView { database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String> },
+    CreateMaterializedView(CreateMaterializedViewStmt),
     DropDatabase(DropDatabaseStmt),
     DropTable(DropTableStmt),
+    DropMaterializedView(DropMaterializedViewStmt),
+    AlterMaterializedView(AlterMaterializedViewStmt),
+    RefreshMaterializedView(RefreshMaterializedViewStmt),
     AlterTable(AlterTableStmt),
     TruncateTable { database: Option<String>, table: String, if_exists: bool },
     ShowDatabases,
@@ -20,8 +24,11 @@ pub enum Statement {
     UseDatabase(String),
     SetVariable(SetVariableStmt),
     Union(UnionStmt),
-    AnalyzeTable { database: Option<String>, table: String },
-    ShowStats { database: Option<String>, table: Option<String> },
+    CreateRepository(CreateRepositoryStmt),
+    DropRepository(DropRepositoryStmt),
+    ShowRepositories,
+    BackupDatabase(BackupDatabaseStmt),
+    RestoreDatabase(RestoreDatabaseStmt),
 }
 
 #[derive(Debug, Clone)]
@@ -147,58 +154,17 @@ pub enum KeysType {
 }
 
 #[derive(Debug, Clone)]
-pub enum PartitionDef {
-    Range(RangePartitionDef),
-    List(ListPartitionDef),
-    Hash(HashPartitionDef),
-}
-
-#[derive(Debug, Clone)]
-pub struct RangePartitionDef {
+pub struct PartitionDef {
+    pub partition_type: String,
     pub columns: Vec<String>,
-    pub partitions: Vec<RangePartition>,
+    pub ranges: Vec<PartitionRange>,
 }
 
 #[derive(Debug, Clone)]
-pub struct RangePartition {
+pub struct PartitionRange {
     pub name: String,
-    pub less_than: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ListPartitionDef {
-    pub columns: Vec<String>,
-    pub partitions: Vec<ListPartition>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ListPartition {
-    pub name: String,
-    pub values: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct HashPartitionDef {
-    pub columns: Vec<String>,
-    pub num_partitions: usize,
-}
-
-impl PartitionDef {
-    pub fn partition_type(&self) -> &str {
-        match self {
-            PartitionDef::Range(_) => "RANGE",
-            PartitionDef::List(_) => "LIST",
-            PartitionDef::Hash(_) => "HASH",
-        }
-    }
-
-    pub fn columns(&self) -> &[String] {
-        match self {
-            PartitionDef::Range(d) => &d.columns,
-            PartitionDef::List(d) => &d.columns,
-            PartitionDef::Hash(d) => &d.columns,
-        }
-    }
+    pub start: String,
+    pub end: String,
 }
 
 #[derive(Debug, Clone)]
@@ -297,4 +263,90 @@ pub enum BinaryOp {
 pub enum UnaryOp {
     Not,
     Negate,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateRepositoryStmt {
+    pub name: String,
+    pub repo_type: RepositoryType,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub enum RepositoryType {
+    Local,
+    S3,
+    Hdfs,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropRepositoryStmt {
+    pub name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BackupDatabaseStmt {
+    pub database: String,
+    pub repository: String,
+    pub backup_name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RestoreDatabaseStmt {
+    pub database: String,
+    pub repository: String,
+    pub backup_name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateMaterializedViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub if_not_exists: bool,
+    pub query: String,
+    pub columns: Vec<String>,
+    pub refresh: Option<RefreshClause>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshClause {
+    pub r#type: RefreshType,
+    pub concurrency: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RefreshType {
+    Complete,
+    Fast,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropMaterializedViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterMaterializedViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub operation: AlterMaterializedViewOperation,
+}
+
+#[derive(Debug, Clone)]
+pub enum AlterMaterializedViewOperation {
+    PauseRefresh,
+    ResumeRefresh,
+    Rename(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshMaterializedViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub refresh_type: RefreshType,
 }
