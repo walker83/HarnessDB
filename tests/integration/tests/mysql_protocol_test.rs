@@ -101,7 +101,7 @@ fn test_handshake_v10_encode() {
 #[test]
 fn test_ok_packet() {
     let packet = make_ok_packet(1, 5, 100, 0x0002, 0);
-    let (payload_len, seq_id) = read_packet_header(&packet).unwrap();
+    let (_payload_len, seq_id) = read_packet_header(&packet).unwrap();
     assert_eq!(seq_id, 1);
     assert_eq!(packet[4], 0x00); // OK header byte
 }
@@ -113,7 +113,7 @@ fn test_ok_packet() {
 #[test]
 fn test_err_packet() {
     let packet = make_general_err(1, 1064, "syntax error");
-    let (payload_len, seq_id) = read_packet_header(&packet).unwrap();
+    let (_payload_len, seq_id) = read_packet_header(&packet).unwrap();
     assert_eq!(seq_id, 1);
     assert_eq!(packet[4], 0xFF); // ERR header byte
 }
@@ -134,7 +134,7 @@ fn test_err_packet_with_sql_state() {
 #[test]
 fn test_eof_packet() {
     let packet = make_eof_packet(3, 0, 0x0002);
-    let (payload_len, seq_id) = read_packet_header(&packet).unwrap();
+    let (_payload_len, seq_id) = read_packet_header(&packet).unwrap();
     assert_eq!(seq_id, 3);
     assert_eq!(packet[4], 0xFE); // EOF header byte
 }

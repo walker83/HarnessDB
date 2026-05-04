@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_scalar_value_to_string() {
         assert_eq!(scalar_value_to_string(&ScalarValue::Int64(42)), "42");
-        assert_eq!(scalar_value_to_string(&ScalarValue::Float64(3.14)), "3.14");
+        assert_eq!(scalar_value_to_string(&ScalarValue::Float64(2.5)), "2.5");
         assert_eq!(scalar_value_to_string(&ScalarValue::String("hello".to_string())), "hello");
         assert_eq!(scalar_value_to_string(&ScalarValue::Null), "");
     }

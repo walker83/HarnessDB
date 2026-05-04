@@ -204,6 +204,7 @@ mod tests {
     use super::*;
     
 
+    #[allow(dead_code)]
     fn next_id() -> PlanNodeId { PlanNodeId(0) }
 
     fn scan_node(table: &str, cols: &[&str]) -> PlanNode {

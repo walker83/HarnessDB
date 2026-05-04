@@ -162,7 +162,7 @@ impl ExchangeSink {
         }
 
         let mut row_assignments: Vec<usize> = vec![0; block.num_rows()];
-        for row_idx in 0..block.num_rows() {
+        for (row_idx, assignment) in row_assignments.iter_mut().enumerate() {
             let mut hash: u64 = 0;
             for &col_idx in key_columns {
                 if let Some(col) = block.column(col_idx) {
@@ -170,7 +170,7 @@ impl ExchangeSink {
                     hash = hash.wrapping_add(Self::hash_scalar(&scalar));
                 }
             }
-            row_assignments[row_idx] = (hash % num_partitions as u64) as usize;
+            *assignment = (hash % num_partitions as u64) as usize;
         }
 
         // Build per-partition row indices and slice.

@@ -60,8 +60,8 @@ fn test_json_valid() {
     let result = registry.call("json_valid", &args);
     assert!(matches!(result, Vector::Boolean(_)));
     if let Vector::Boolean(v) = result {
-        for i in 0..valid_json.len() {
-            assert!(v.get(i).unwrap(), "Should be valid: {}", valid_json[i]);
+        for (i, json) in valid_json.iter().enumerate() {
+            assert!(v.get(i).unwrap(), "Should be valid: {}", json);
         }
     }
 
@@ -70,8 +70,8 @@ fn test_json_valid() {
     let result = registry.call("json_valid", &args);
     assert!(matches!(result, Vector::Boolean(_)));
     if let Vector::Boolean(v) = result {
-        for i in 0..invalid_json.len() {
-            assert!(!v.get(i).unwrap(), "Should be invalid: {}", invalid_json[i]);
+        for (i, json) in invalid_json.iter().enumerate() {
+            assert!(!v.get(i).unwrap(), "Should be invalid: {}", json);
         }
     }
 }

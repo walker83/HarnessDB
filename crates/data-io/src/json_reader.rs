@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn test_infer_type_from_json_value() {
         assert_eq!(infer_type_from_json_value(&serde_json::json!(123)), DataType::Int64);
-        assert_eq!(infer_type_from_json_value(&serde_json::json!(3.14)), DataType::Float64);
+        assert_eq!(infer_type_from_json_value(&serde_json::json!(2.5)), DataType::Float64);
         assert_eq!(infer_type_from_json_value(&serde_json::json!("hello")), DataType::String);
         assert_eq!(infer_type_from_json_value(&serde_json::json!(true)), DataType::Boolean);
     }

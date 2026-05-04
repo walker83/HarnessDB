@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use types::{
-    Bitmap, Block, DataType, Field, Float64Vector, Int64Vector, Schema,
-    StringVector, Vector,
+    Bitmap, Block, DataType, Field, Schema, Vector,
+    vector::{Float64Vector, Int64Vector, StringVector},
 };
 
 // ---------------------------------------------------------------------------
@@ -41,8 +41,8 @@ fn bench_int64_nullable_creation(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn bench_vector_filter(c: &mut Criterion) {
-    let size = 1_000_000;
-    let data: Vec<i64> = (0..size).collect();
+    let size: usize = 1_000_000;
+    let data: Vec<i64> = (0..size as i64).collect();
     let vector = Int64Vector::from_vec(data);
 
     // Build selection bitmap with 50% selectivity
@@ -144,8 +144,8 @@ fn bench_bitmap_not(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn bench_block_creation(c: &mut Criterion) {
-    let num_rows = 1_000_000;
-    let num_cols = 10;
+    let num_rows: usize = 1_000_000;
+    let num_cols: usize = 10;
 
     let fields: Vec<Field> = (0..num_cols)
         .map(|i| {
@@ -188,7 +188,7 @@ fn bench_block_creation(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn bench_block_filter(c: &mut Criterion) {
-    let num_rows = 1_000_000;
+    let num_rows: usize = 1_000_000;
 
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
@@ -197,7 +197,7 @@ fn bench_block_filter(c: &mut Criterion) {
     ]);
 
     let columns = vec![
-        Vector::Int64(Int64Vector::from_vec((0..num_rows).collect())),
+        Vector::Int64(Int64Vector::from_vec((0..num_rows as i64).collect())),
         Vector::Float64(Float64Vector::from_vec((0..num_rows).map(|i| i as f64).collect())),
         Vector::String(StringVector::from_vec(
             (0..num_rows).map(|_| "value").collect(),
@@ -267,18 +267,17 @@ fn bench_scalar_vs_vectorized_filter(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("scalar_vs_vectorized_filter");
 
-    let threshold = size as i64 / 2;
+    let threshold = size / 2;
 
     // Scalar approach: check each element individually
     group.bench_function("scalar_filter_loop", |b| {
         b.iter(|| {
             let mut results = Vec::new();
             for i in 0..black_box(&vector).len() {
-                if let Some(v) = black_box(&vector).get(i) {
-                    if v > threshold {
+                if let Some(v) = black_box(&vector).get(i)
+                    && v > threshold {
                         results.push(v);
                     }
-                }
             }
             black_box(&results);
         });

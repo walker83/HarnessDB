@@ -66,11 +66,13 @@ pub struct QueryResult {
 /// Tracks the state of a query that has been scheduled and is executing.
 struct RunningQuery {
     query_id: QueryId,
+    #[allow(dead_code)]
     sql: String,
     scheduled_at: std::time::Instant,
     timeout: Duration,
     fragment_tree: FragmentTree,
     /// Partial result blocks collected from BE nodes so far.
+    #[allow(dead_code)]
     result_blocks: Vec<Block>,
     /// Accumulated rows scanned across all fragments.
     rows_scanned: u64,

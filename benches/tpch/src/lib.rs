@@ -143,26 +143,16 @@ impl TpchBenchmark {
 
     /// Build Table definitions for catalog registration from generated data schemas.
     fn build_table_definitions(data: &TpchData) -> Vec<Table> {
-        let mut tables = Vec::new();
-
-        // Nation
-        tables.push(make_table(1, "tpch", "nation", &data.nation));
-        // Region
-        tables.push(make_table(2, "tpch", "region", &data.region));
-        // Supplier
-        tables.push(make_table(3, "tpch", "supplier", &data.supplier));
-        // Part
-        tables.push(make_table(4, "tpch", "part", &data.part));
-        // PartSupp
-        tables.push(make_table(5, "tpch", "partsupp", &data.partsupp));
-        // Customer
-        tables.push(make_table(6, "tpch", "customer", &data.customer));
-        // Orders
-        tables.push(make_table(7, "tpch", "orders", &data.orders));
-        // Lineitem
-        tables.push(make_table(8, "tpch", "lineitem", &data.lineitem));
-
-        tables
+        vec![
+            make_table(1, "tpch", "nation", &data.nation),
+            make_table(2, "tpch", "region", &data.region),
+            make_table(3, "tpch", "supplier", &data.supplier),
+            make_table(4, "tpch", "part", &data.part),
+            make_table(5, "tpch", "partsupp", &data.partsupp),
+            make_table(6, "tpch", "customer", &data.customer),
+            make_table(7, "tpch", "orders", &data.orders),
+            make_table(8, "tpch", "lineitem", &data.lineitem),
+        ]
     }
 }
 

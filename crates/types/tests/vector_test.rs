@@ -553,7 +553,7 @@ fn test_data_type_is_numeric() {
 #[test]
 fn test_scalar_value_data_type() {
     assert_eq!(ScalarValue::Int64(42).data_type(), DataType::Int64);
-    assert_eq!(ScalarValue::Float64(3.14).data_type(), DataType::Float64);
+    assert_eq!(ScalarValue::Float64(2.5).data_type(), DataType::Float64);
     assert_eq!(ScalarValue::Boolean(true).data_type(), DataType::Boolean);
     assert_eq!(ScalarValue::String("hello".to_string()).data_type(), DataType::String);
     assert_eq!(ScalarValue::Date(0).data_type(), DataType::Date);
@@ -1103,7 +1103,7 @@ fn test_string_view_vector_slice_zero_copy() {
 fn test_string_view_vector_to_owned() {
     let v = StringViewVector::from_vec(vec!["test1", "test2"]);
     let v2 = v.clone();
-    v2.to_owned();
+    let _ = v2.to_owned();
 
     assert_eq!(v2.len(), 2);
     assert_eq!(v2.get(0), Some("test1"));

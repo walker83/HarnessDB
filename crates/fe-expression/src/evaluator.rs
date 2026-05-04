@@ -45,7 +45,11 @@ impl ExprEvaluator {
                 let mut result = vec![false; len];
                 for e in list {
                     let ev = self.evaluate(e, block);
-                    for i in 0..len { if !result[i] && v.scalar_at(i) == ev.scalar_at(i) { result[i] = true; } }
+                    for (i, r) in result.iter_mut().enumerate() {
+                        if !*r && v.scalar_at(i) == ev.scalar_at(i) {
+                            *r = true;
+                        }
+                    }
                 }
                 if *negated { result.iter_mut().for_each(|b| *b = !*b); }
                 bool_vec(result)
@@ -79,6 +83,7 @@ impl ExprEvaluator {
                     let cond = self.evaluate(&case.when, block);
                     let val = self.evaluate(&case.then, block);
                     if let Vector::Boolean(bv) = &cond {
+                        #[allow(clippy::needless_range_loop)]
                         for i in 0..len {
                             if matched.get(i) && bv.get(i).unwrap_or(false) {
                                 result[i] = val.scalar_at(i);
@@ -89,7 +94,11 @@ impl ExprEvaluator {
                 }
                 if let Some(ee) = else_expr {
                     let val = self.evaluate(ee, block);
-                    for i in 0..len { if matched.get(i) { result[i] = val.scalar_at(i); } }
+                    for (i, r) in result.iter_mut().enumerate() {
+                        if matched.get(i) {
+                            *r = val.scalar_at(i);
+                        }
+                    }
                 }
                 result.into_iter().next().map(|v| Vector::from_scalar(&v, 1)).unwrap_or_else(|| bool_vec(vec![]))
             }

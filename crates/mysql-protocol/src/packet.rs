@@ -388,8 +388,8 @@ impl HandshakeResponse {
         };
 
         // Auth plugin name - starts after database (if present)
-        let plugin_start = if database.is_some() {
-            db_start + database.as_ref().unwrap().len() + 1
+        let plugin_start = if let Some(db) = &database {
+            db_start + db.len() + 1
         } else {
             db_start
         };
