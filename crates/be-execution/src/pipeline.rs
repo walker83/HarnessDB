@@ -1,13 +1,13 @@
-use crate::exec_node::ExecNode;
+use crate::exec_node::{ExecNode, ExecutionPlan};
 use common::Result;
 use types::Block;
 
 pub struct Pipeline {
-    root: Box<dyn ExecNode>,
+    root: Box<ExecutionPlan>,
 }
 
 impl Pipeline {
-    pub fn new(root: Box<dyn ExecNode>) -> Self {
+    pub fn new(root: Box<ExecutionPlan>) -> Self {
         Self { root }
     }
 

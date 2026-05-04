@@ -1,4 +1,4 @@
-use be_execution::exec_node::{AggregateExecNode, SortExecNode, ScanExecNode, ExecNode};
+use be_execution::exec_node::{AggregateExecNode, SortExecNode, ScanExecNode, ExecNode, ExecutionPlan};
 use types::{Block, Schema, Field, DataType, Vector, ScalarValue};
 
 // Helper functions
@@ -39,7 +39,7 @@ fn test_aggregate_sum_batch() {
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
         aggregates: vec![("sum".to_string(), 1)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
     };
@@ -75,7 +75,7 @@ fn test_aggregate_count_batch() {
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
         aggregates: vec![("count".to_string(), 1)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
     };
@@ -110,7 +110,7 @@ fn test_aggregate_min_max_batch() {
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
         aggregates: vec![("min".to_string(), 1), ("max".to_string(), 1)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
     };
@@ -148,7 +148,7 @@ fn test_aggregate_avg_batch() {
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
         aggregates: vec![("avg".to_string(), 1)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
     };
@@ -182,7 +182,7 @@ fn test_aggregate_float_values() {
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
         aggregates: vec![("sum".to_string(), 1)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
     };
@@ -221,7 +221,7 @@ fn test_sort_single_column_asc() {
     
     let mut sort_node = SortExecNode {
         order_by: vec![(0, true)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
         returned: false,
@@ -258,7 +258,7 @@ fn test_sort_single_column_desc() {
     
     let mut sort_node = SortExecNode {
         order_by: vec![(0, false)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
         returned: false,
@@ -294,7 +294,7 @@ fn test_sort_float_column() {
     
     let mut sort_node = SortExecNode {
         order_by: vec![(0, true)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
         returned: false,
@@ -332,7 +332,7 @@ fn test_sort_multi_column() {
     
     let mut sort_node = SortExecNode {
         order_by: vec![(0, true), (1, true)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
         returned: false,
@@ -372,7 +372,7 @@ fn test_sort_empty_block() {
     
     let mut sort_node = SortExecNode {
         order_by: vec![(0, true)],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
         returned: false,
@@ -402,7 +402,7 @@ fn test_sort_no_order_keys() {
     
     let mut sort_node = SortExecNode {
         order_by: vec![],
-        child: Box::new(scan_node),
+        child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
         returned: false,

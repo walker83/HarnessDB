@@ -10,6 +10,81 @@ pub trait ExecNode: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
+pub enum ExecutionPlan {
+    Scan(ScanExecNode),
+    Filter(FilterExecNode),
+    Project(ProjectExecNode),
+    Aggregate(AggregateExecNode),
+    Sort(SortExecNode),
+    Limit(LimitExecNode),
+    HashJoin(HashJoinExecNode),
+    Union(UnionExecNode),
+    Truncate(TruncateExecNode),
+    Window(WindowExecNode),
+}
+
+impl ExecNode for ExecutionPlan {
+    fn open(&mut self) -> Result<()> {
+        match self {
+            ExecutionPlan::Scan(node) => node.open(),
+            ExecutionPlan::Filter(node) => node.open(),
+            ExecutionPlan::Project(node) => node.open(),
+            ExecutionPlan::Aggregate(node) => node.open(),
+            ExecutionPlan::Sort(node) => node.open(),
+            ExecutionPlan::Limit(node) => node.open(),
+            ExecutionPlan::HashJoin(node) => node.open(),
+            ExecutionPlan::Union(node) => node.open(),
+            ExecutionPlan::Truncate(node) => node.open(),
+            ExecutionPlan::Window(node) => node.open(),
+        }
+    }
+
+    fn get_next(&mut self) -> Result<Option<Block>> {
+        match self {
+            ExecutionPlan::Scan(node) => node.get_next(),
+            ExecutionPlan::Filter(node) => node.get_next(),
+            ExecutionPlan::Project(node) => node.get_next(),
+            ExecutionPlan::Aggregate(node) => node.get_next(),
+            ExecutionPlan::Sort(node) => node.get_next(),
+            ExecutionPlan::Limit(node) => node.get_next(),
+            ExecutionPlan::HashJoin(node) => node.get_next(),
+            ExecutionPlan::Union(node) => node.get_next(),
+            ExecutionPlan::Truncate(node) => node.get_next(),
+            ExecutionPlan::Window(node) => node.get_next(),
+        }
+    }
+
+    fn close(&mut self) -> Result<()> {
+        match self {
+            ExecutionPlan::Scan(node) => node.close(),
+            ExecutionPlan::Filter(node) => node.close(),
+            ExecutionPlan::Project(node) => node.close(),
+            ExecutionPlan::Aggregate(node) => node.close(),
+            ExecutionPlan::Sort(node) => node.close(),
+            ExecutionPlan::Limit(node) => node.close(),
+            ExecutionPlan::HashJoin(node) => node.close(),
+            ExecutionPlan::Union(node) => node.close(),
+            ExecutionPlan::Truncate(node) => node.close(),
+            ExecutionPlan::Window(node) => node.close(),
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        match self {
+            ExecutionPlan::Scan(node) => node.as_any(),
+            ExecutionPlan::Filter(node) => node.as_any(),
+            ExecutionPlan::Project(node) => node.as_any(),
+            ExecutionPlan::Aggregate(node) => node.as_any(),
+            ExecutionPlan::Sort(node) => node.as_any(),
+            ExecutionPlan::Limit(node) => node.as_any(),
+            ExecutionPlan::HashJoin(node) => node.as_any(),
+            ExecutionPlan::Union(node) => node.as_any(),
+            ExecutionPlan::Truncate(node) => node.as_any(),
+            ExecutionPlan::Window(node) => node.as_any(),
+        }
+    }
+}
+
 pub struct ScanExecNode {
     pub table_name: String,
     pub columns: Vec<String>,
@@ -83,7 +158,7 @@ impl ExecNode for ScanExecNode {
 
 pub struct FilterExecNode {
     pub predicate: String,
-    pub child: Box<dyn ExecNode>,
+    pub child: Box<ExecutionPlan>,
     pub opened: bool,
 }
 
@@ -127,7 +202,7 @@ impl ExecNode for FilterExecNode {
 
 pub struct ProjectExecNode {
     pub exprs: Vec<String>,
-    pub child: Box<dyn ExecNode>,
+    pub child: Box<ExecutionPlan>,
     pub opened: bool,
 }
 
@@ -154,9 +229,9 @@ impl ExecNode for ProjectExecNode {
 }
 
 pub struct AggregateExecNode {
-    pub group_by: Vec<usize>,  // column indices
-    pub aggregates: Vec<(String, usize)>,  // (function_name, column_index)
-    pub child: Box<dyn ExecNode>,
+    pub group_by: Vec<usize>,
+    pub aggregates: Vec<(String, usize)>,
+    pub child: Box<ExecutionPlan>,
     pub opened: bool,
     pub returned: bool,
 }
@@ -400,8 +475,8 @@ impl ExecNode for AggregateExecNode {
 }
 
 pub struct SortExecNode {
-    pub order_by: Vec<(usize, bool)>,  // (column_index, ascending)
-    pub child: Box<dyn ExecNode>,
+    pub order_by: Vec<(usize, bool)>,
+    pub child: Box<ExecutionPlan>,
     pub opened: bool,
     pub buffered: Vec<Block>,
     pub returned: bool,
@@ -496,13 +571,13 @@ impl ExecNode for SortExecNode {
 pub struct LimitExecNode {
     pub limit: usize,
     pub offset: usize,
-    pub child: Box<dyn ExecNode>,
+    pub child: Box<ExecutionPlan>,
     pub rows_returned: usize,
     pub rows_skipped: usize,
 }
 
 impl LimitExecNode {
-    pub fn new(limit: usize, child: Box<dyn ExecNode>) -> Self {
+    pub fn new(limit: usize, child: Box<ExecutionPlan>) -> Self {
         Self { limit, offset: 0, child, rows_returned: 0, rows_skipped: 0 }
     }
 
@@ -586,8 +661,8 @@ pub struct HashJoinExecNode {
     pub join_type: String,
     pub build_keys: Vec<usize>,
     pub probe_keys: Vec<usize>,
-    pub build_child: Box<dyn ExecNode>,
-    pub probe_child: Box<dyn ExecNode>,
+    pub build_child: Box<ExecutionPlan>,
+    pub probe_child: Box<ExecutionPlan>,
     pub build_schema: Schema,
     pub probe_schema: Schema,
     pub opened: bool,
@@ -604,8 +679,8 @@ impl HashJoinExecNode {
         join_type: String,
         build_keys: Vec<usize>,
         probe_keys: Vec<usize>,
-        build_child: Box<dyn ExecNode>,
-        probe_child: Box<dyn ExecNode>,
+        build_child: Box<ExecutionPlan>,
+        probe_child: Box<ExecutionPlan>,
         build_schema: Schema,
         probe_schema: Schema,
     ) -> Self {
@@ -730,13 +805,13 @@ impl ExecNode for HashJoinExecNode {
 }
 
 pub struct UnionExecNode {
-    pub children: Vec<Box<dyn ExecNode>>,
+    pub children: Vec<Box<ExecutionPlan>>,
     pub current_child: usize,
     pub opened: Vec<bool>,
 }
 
 impl UnionExecNode {
-    pub fn new(children: Vec<Box<dyn ExecNode>>) -> Self {
+    pub fn new(children: Vec<Box<ExecutionPlan>>) -> Self {
         let opened = vec![false; children.len()];
         Self {
             children,
@@ -850,13 +925,13 @@ impl ExecNode for TruncateExecNode {
 
 // Window function execution node
 pub struct WindowExecNode {
-    pub partition_by: Vec<usize>,  // column indices for PARTITION BY
-    pub order_by: Vec<(usize, bool)>,  // (column_index, ascending) for ORDER BY
-    pub window_func: String,  // "row_number", "rank", "dense_rank", "lead", "lag", "first_value", "last_value"
-    pub window_func_col: usize,  // column index to operate on
-    pub offset: i64,  // for lead/lag: how many rows to look ahead/behind
-    pub default_val: ScalarValue,  // for lead/lag: default value when out of bounds
-    pub child: Box<dyn ExecNode>,
+    pub partition_by: Vec<usize>,
+    pub order_by: Vec<(usize, bool)>,
+    pub window_func: String,
+    pub window_func_col: usize,
+    pub offset: i64,
+    pub default_val: ScalarValue,
+    pub child: Box<ExecutionPlan>,
     pub opened: bool,
     pub returned: bool,
     pub buffered: Option<Block>,
@@ -868,7 +943,7 @@ impl WindowExecNode {
         window_func_col: usize,
         partition_by: Vec<usize>,
         order_by: Vec<(usize, bool)>,
-        child: Box<dyn ExecNode>,
+        child: Box<ExecutionPlan>,
     ) -> Self {
         Self {
             partition_by,
