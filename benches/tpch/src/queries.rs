@@ -1,5 +1,5 @@
-/// All 22 TPC-H benchmark queries as SQL strings.
-/// These follow the standard TPC-H specification.
+//! All 22 TPC-H benchmark queries as SQL strings.
+//! These follow the standard TPC-H specification.
 
 /// Q1: Pricing Summary Report
 pub const Q1: &str = r#"

@@ -1,5 +1,4 @@
 use thiserror::Error;
-use std::fmt;
 
 #[derive(Error, Debug)]
 pub enum DrorisError {

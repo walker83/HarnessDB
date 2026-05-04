@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use parking_lot::RwLock;
 use types::{Block, DataType, Field, Schema, Vector, ScalarValue};
@@ -61,6 +60,7 @@ pub struct MemTable {
     rows: BTreeMap<MemTableKey, ColumnarRow>,
     memory_size: u64,
     capacity: u64,
+    #[allow(dead_code)]
     schema: TabletSchema,
 }
 
@@ -242,6 +242,22 @@ impl MemTable {
         self.memory_size = 0;
     }
 
+    /// Delete rows from memtable matching the given predicates.
+    pub fn delete(&mut self, block: &Block, key_column_idx: usize, predicates: &[ColumnPredicate]) -> Result<usize, String> {
+        let selection = crate::index::apply_predicates_to_block(block, predicates);
+        let mut deleted_count = 0;
+
+        for row_idx in 0..block.num_rows() {
+            if selection.get(row_idx) {
+                let key = self.extract_key(block, row_idx, key_column_idx)?;
+                if self.rows.remove(&key).is_some() {
+                    deleted_count += 1;
+                }
+            }
+        }
+        Ok(deleted_count)
+    }
+
     fn extract_key(&self, block: &Block, row_idx: usize, col_idx: usize) -> Result<MemTableKey, String> {
         let col = block.column(col_idx)
             .ok_or_else(|| format!("Key column index {} out of bounds", col_idx))?;
@@ -330,6 +346,22 @@ impl Tablet {
             self.flush()?;
         }
         Ok(())
+    }
+
+    /// Delete rows from the tablet matching the given predicates.
+    pub fn delete(&self, predicates: &[ColumnPredicate]) -> Result<usize, String> {
+        let key_col_idx = self.schema
+            .columns
+            .iter()
+            .position(|c| c.is_key)
+            .unwrap_or(0);
+
+        // Read all data
+        let block = self.read(None, &[])?;
+
+        let mut memtable = self.memtable.write();
+        let deleted = memtable.delete(&block, key_col_idx, predicates)?;
+        Ok(deleted)
     }
 
     /// Flush the current memtable to a new segment file on disk.
@@ -437,11 +469,11 @@ impl Tablet {
         for (i, block) in blocks.into_iter().enumerate() {
             // The first block is from memtable (index 0 if memtable had data)
             // Subsequent blocks are already filtered by SegmentReader
-            if i == 0 && predicates.len() > 0 && rowsets.len() > 0 {
+            if i == 0 && !predicates.is_empty() && !rowsets.is_empty() {
                 // This might be a memtable block, need to apply predicates
                 let selection = crate::index::apply_predicates_to_block(&block, predicates);
                 filtered_blocks.push(block.filter(&selection));
-            } else if i == 0 && predicates.len() > 0 {
+            } else if i == 0 && !predicates.is_empty() {
                 // Only memtable, need to filter
                 let selection = crate::index::apply_predicates_to_block(&block, predicates);
                 filtered_blocks.push(block.filter(&selection));
@@ -537,6 +569,7 @@ impl Tablet {
 }
 
 /// Estimate the memory size of a block.
+#[allow(dead_code)]
 fn estimate_block_size(block: &Block) -> u64 {
     let mut size = 0u64;
     for col in block.columns() {

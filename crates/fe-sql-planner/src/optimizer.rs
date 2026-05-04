@@ -31,8 +31,8 @@ impl Optimizer {
         let plan = self.push_down_predicates(plan);
         let plan = self.prune_columns(plan);
         let plan = self.push_down_limit(plan);
-        let plan = self.reorder_joins(plan);
-        plan
+        
+        self.reorder_joins(plan)
     }
 
     fn push_down_predicates(&self, plan: PlanNode) -> PlanNode {
@@ -97,11 +97,10 @@ impl Optimizer {
                     let col = cleaned[pos + 1..].trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
                     if !col.is_empty() && col != "*" { cols.insert(col.to_string()); }
                 }
-            } else if !cleaned.is_empty() && cleaned != "*" && !["AND","OR","NOT","IS","NULL","IN","BETWEEN","LIKE","ASC","DESC","TRUE","FALSE"].contains(&cleaned) {
-                if cleaned.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) && !cleaned.contains('(') {
+            } else if !cleaned.is_empty() && cleaned != "*" && !["AND","OR","NOT","IS","NULL","IN","BETWEEN","LIKE","ASC","DESC","TRUE","FALSE"].contains(&cleaned)
+                && cleaned.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) && !cleaned.contains('(') {
                     cols.insert(cleaned.to_string());
                 }
-            }
         }
     }
 
@@ -157,8 +156,8 @@ impl Optimizer {
 
     fn reorder_joins(&self, plan: PlanNode) -> PlanNode {
         let children: Vec<PlanNode> = plan.children.into_iter().map(|c| self.reorder_joins(c)).collect();
-        if let PlanNodeType::Join(join) = &plan.node_type {
-            if children.len() == 2 && matches!(join.join_type, JoinTypePlan::Inner) {
+        if let PlanNodeType::Join(join) = &plan.node_type
+            && children.len() == 2 && matches!(join.join_type, JoinTypePlan::Inner) {
                 let left_rows = self.estimate_rows(&children[0]);
                 let right_rows = self.estimate_rows(&children[1]);
                 if right_rows < left_rows {
@@ -167,7 +166,6 @@ impl Optimizer {
                     return PlanNode { id: plan.id, node_type: PlanNodeType::Join(join.clone()), children: reordered, stats: plan.stats };
                 }
             }
-        }
         PlanNode { id: plan.id, node_type: plan.node_type, children, stats: plan.stats }
     }
 
@@ -204,8 +202,9 @@ impl Default for Optimizer { fn default() -> Self { Self::new() } }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan_node::*;
+    
 
+    #[allow(dead_code)]
     fn next_id() -> PlanNodeId { PlanNodeId(0) }
 
     fn scan_node(table: &str, cols: &[&str]) -> PlanNode {
@@ -459,7 +458,7 @@ mod tests {
     fn test_simplify_not_not() {
         use crate::expression::simplify;
         use fe_sql_parser::ast::*;
-        let col = Expr::ColumnRef { table: None, column: "a".to_string() };
+        let _col = Expr::ColumnRef { table: None, column: "a".to_string() };
         let expr = Expr::UnaryOp {
             op: UnaryOp::Not,
             expr: Box::new(Expr::UnaryOp {

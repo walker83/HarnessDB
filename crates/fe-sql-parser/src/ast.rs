@@ -2,6 +2,8 @@
 pub enum Statement {
     Query(QueryStmt),
     Insert(InsertStmt),
+    Update(UpdateStmt),
+    Delete(DeleteStmt),
     CreateDatabase(CreateDatabaseStmt),
     CreateTable(CreateTableStmt),
     CreateView { database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String> },
@@ -18,6 +20,25 @@ pub enum Statement {
     UseDatabase(String),
     SetVariable(SetVariableStmt),
     Union(UnionStmt),
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateStmt {
+    pub table: String,
+    pub set_clauses: Vec<SetClause>,
+    pub selection: Option<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetClause {
+    pub column: String,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteStmt {
+    pub table: String,
+    pub selection: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +104,7 @@ pub struct InsertStmt {
     pub columns: Vec<String>,
     pub values: Vec<Vec<Expr>>,
     pub query: Option<QueryStmt>,
+    pub is_overwrite: bool,
 }
 
 #[derive(Debug, Clone)]

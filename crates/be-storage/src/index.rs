@@ -10,6 +10,12 @@ pub struct ZoneMap {
     pub num_rows: u64,
 }
 
+impl Default for ZoneMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZoneMap {
     pub fn new() -> Self {
         Self {
@@ -89,7 +95,7 @@ pub struct BloomFilter {
 impl BloomFilter {
     pub fn new(expected_items: usize, fp_rate: f64) -> Self {
         let bits = Self::optimal_bits(expected_items, fp_rate);
-        let words = (bits + 63) / 64;
+        let words = bits.div_ceil(64);
         let num_hashes = Self::optimal_hashes(bits, expected_items);
         Self {
             bitmap: vec![0u64; words],
@@ -139,7 +145,7 @@ impl BloomFilter {
 
     fn optimal_hashes(m: usize, n: usize) -> usize {
         let k = (m as f64 / n as f64 * 2.0_f64.ln()).ceil() as usize;
-        k.max(1).min(20)
+        k.clamp(1, 20)
     }
 
     fn hash_pair(data: &[u8]) -> (u64, u64) {

@@ -43,6 +43,12 @@ macro_rules! impl_typed_vector {
             validity: Bitmap,
         }
 
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl $name {
             pub fn new() -> Self {
                 Self { data: Vec::new(), validity: Bitmap::new() }
@@ -231,7 +237,7 @@ macro_rules! impl_numeric_vector {
                 let mut count = 0;
                 for (i, val) in self.data.iter().enumerate() {
                     if self.validity.is_valid(i) {
-                        sum = sum + *val;
+                        sum += *val;
                         count += 1;
                     }
                 }
@@ -277,6 +283,12 @@ pub struct StringVector {
     offsets: Vec<u32>,
     data: Vec<u8>,
     validity: Bitmap,
+}
+
+impl Default for StringVector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StringVector {
@@ -524,6 +536,12 @@ pub struct StringViewVector {
     owned_data: Option<Vec<u8>>,
 }
 
+impl Default for StringViewVector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StringViewVector {
     pub fn new() -> Self {
         Self {
@@ -674,6 +692,12 @@ pub struct JsonVector {
     validity: Bitmap,
 }
 
+impl Default for JsonVector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JsonVector {
     pub fn new() -> Self {
         Self { data: Vec::new(), validity: Bitmap::new() }
@@ -690,7 +714,7 @@ impl JsonVector {
     pub fn from_option_vec(vals: Vec<Option<ScalarValue>>) -> Self {
         let mut validity = Bitmap::with_capacity(vals.len());
         let data: Vec<ScalarValue> = vals.into_iter().map(|v| {
-            let is_valid = v.is_some();
+            let _is_valid = v.is_some();
             if let Some(val) = v {
                 validity.push(true);
                 val
@@ -1156,11 +1180,10 @@ impl Vector {
             Self::String(v) => {
                 let mut min: Option<&str> = None;
                 for i in 0..v.len() {
-                    if v.validity().is_valid(i) {
-                        if let Some(s) = v.get(i) {
+                    if v.validity().is_valid(i)
+                        && let Some(s) = v.get(i) {
                             min = Some(min.map_or(s, |m| m.min(s)));
                         }
-                    }
                 }
                 min.map(|s| ScalarValue::String(s.to_string()))
             },
@@ -1183,11 +1206,10 @@ impl Vector {
             Self::String(v) => {
                 let mut max: Option<&str> = None;
                 for i in 0..v.len() {
-                    if v.validity().is_valid(i) {
-                        if let Some(s) = v.get(i) {
+                    if v.validity().is_valid(i)
+                        && let Some(s) = v.get(i) {
                             max = Some(max.map_or(s, |m| m.max(s)));
                         }
-                    }
                 }
                 max.map(|s| ScalarValue::String(s.to_string()))
             },
@@ -1343,7 +1365,7 @@ impl Vector {
                 let a = v.get(idx_a);
                 let b = v.get(idx_b);
                 match (a, b) {
-                    (Some(va), Some(vb)) => va.cmp(&vb),
+                    (Some(va), Some(vb)) => va.cmp(vb),
                     (Some(_), None) => std::cmp::Ordering::Greater,
                     (None, Some(_)) => std::cmp::Ordering::Less,
                     (None, None) => std::cmp::Ordering::Equal,

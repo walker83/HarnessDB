@@ -1,5 +1,4 @@
-use bytes::{Buf, BufMut, BytesMut};
-use std::io::Cursor;
+use bytes::{BufMut, BytesMut};
 use types::ScalarValue;
 
 use crate::charset::{self, DEFAULT_CHARSET};
@@ -66,6 +65,7 @@ pub mod column_type {
 // Capability flags
 // ---------------------------------------------------------------------------
 
+#[allow(non_snake_case)]
 pub mod CapabilityFlags {
     pub const LONG_PASSWORD: u32 = 0x00000001;
     pub const FOUND_ROWS: u32 = 0x00000002;
@@ -388,8 +388,8 @@ impl HandshakeResponse {
         };
 
         // Auth plugin name - starts after database (if present)
-        let plugin_start = if database.is_some() {
-            db_start + database.as_ref().unwrap().len() + 1
+        let plugin_start = if let Some(db) = &database {
+            db_start + db.len() + 1
         } else {
             db_start
         };

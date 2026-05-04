@@ -336,7 +336,7 @@ fn test_bitmap_all_set_non_word_aligned() {
 #[test]
 fn test_bitmap_set_and_get() {
     let mut bm = Bitmap::with_capacity(10);
-    for i in 0..10 {
+    for _i in 0..10 {
         bm.push(false);
     }
     assert_eq!(bm.set_count(), 0);
@@ -553,7 +553,7 @@ fn test_data_type_is_numeric() {
 #[test]
 fn test_scalar_value_data_type() {
     assert_eq!(ScalarValue::Int64(42).data_type(), DataType::Int64);
-    assert_eq!(ScalarValue::Float64(3.14).data_type(), DataType::Float64);
+    assert_eq!(ScalarValue::Float64(2.5).data_type(), DataType::Float64);
     assert_eq!(ScalarValue::Boolean(true).data_type(), DataType::Boolean);
     assert_eq!(ScalarValue::String("hello".to_string()).data_type(), DataType::String);
     assert_eq!(ScalarValue::Date(0).data_type(), DataType::Date);
@@ -1102,8 +1102,8 @@ fn test_string_view_vector_slice_zero_copy() {
 #[test]
 fn test_string_view_vector_to_owned() {
     let v = StringViewVector::from_vec(vec!["test1", "test2"]);
-    let mut v2 = v.clone();
-    v2.to_owned();
+    let v2 = v.clone();
+    let _ = v2.to_owned();
 
     assert_eq!(v2.len(), 2);
     assert_eq!(v2.get(0), Some("test1"));

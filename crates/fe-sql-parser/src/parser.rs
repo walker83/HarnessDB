@@ -11,7 +11,7 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     statements
         .into_iter()
-        .map(|stmt| convert_statement(stmt))
+        .map(convert_statement)
         .collect()
 }
 
@@ -32,6 +32,7 @@ fn convert_statement(
                 columns: cols,
                 values: values_list,
                 query: stmt.source.map(|q| convert_query(*q).ok().unwrap()),
+                is_overwrite: stmt.overwrite,
             }))
         }
         sqlparser::ast::Statement::CreateTable(stmt) => {
@@ -105,7 +106,7 @@ fn convert_statement(
             Ok(Statement::ShowCreateTable(db, tbl))
         }
         sqlparser::ast::Statement::ShowColumns {
-            show_options, ..
+            show_options: _, ..
         } => {
             // SHOW COLUMNS FROM table - table name is in the filter
             Ok(Statement::ShowColumns(None, None))
@@ -183,6 +184,31 @@ fn convert_statement(
                 columns: col_names,
             })
         }
+        sqlparser::ast::Statement::Update { table, assignments, from: _, selection, returning: _, or: _ } => {
+            let table_name = table.to_string();
+            let set_clauses: Vec<SetClause> = assignments.iter().map(|s| {
+                let column = match &s.target {
+                    sqlparser::ast::AssignmentTarget::ColumnName(name) => name.to_string(),
+                    sqlparser::ast::AssignmentTarget::Tuple(_) => String::new(),
+                };
+                let value = convert_expr(s.value.clone());
+                SetClause { column, value }
+            }).collect();
+            let selection = selection.map(convert_expr);
+            Ok(Statement::Update(UpdateStmt {
+                table: table_name,
+                set_clauses,
+                selection,
+            }))
+        }
+        sqlparser::ast::Statement::Delete(delete) => {
+            let table_name = delete.tables.first().map(|t: &sqlparser::ast::ObjectName| t.to_string()).unwrap_or_default();
+            let selection = delete.selection.map(convert_expr);
+            Ok(Statement::Delete(DeleteStmt {
+                table: table_name,
+                selection,
+            }))
+        }
         _ => Err(ParseError::Unsupported(format!(
             "statement type: {:?}",
             stmt
@@ -193,7 +219,7 @@ fn convert_statement(
 fn convert_query(
     query: sqlparser::ast::Query,
 ) -> Result<QueryStmt, ParseError> {
-    let cte = query.with.as_ref().map(|w| {
+    let cte = query.with.as_ref().and_then(|w| {
         w.cte_tables.first().map(|c| Cte {
             name: c.alias.name.value.clone(),
             columns: vec![],
@@ -209,7 +235,7 @@ fn convert_query(
                 with: None,
             })),
         })
-    }).flatten();
+    });
 
     match *query.body {
         sqlparser::ast::SetExpr::Select(select) => {
@@ -291,7 +317,7 @@ fn convert_select(
         }
     }).collect();
 
-    let from = select.from.into_iter().next().map(|t| convert_table_ref(t));
+    let from = select.from.into_iter().next().map(convert_table_ref);
 
     let group_by = match select.group_by {
         sqlparser::ast::GroupByExpr::Expressions(exprs, _) => {
@@ -402,12 +428,7 @@ fn convert_function_args(args: sqlparser::ast::FunctionArguments) -> Vec<Expr> {
         sqlparser::ast::FunctionArguments::List(list) => {
             list.args.into_iter().map(|arg| {
                 match arg {
-                    sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
-                        match arg_expr {
-                            sqlparser::ast::FunctionArgExpr::Expr(expr) => convert_expr(expr),
-                            _ => Expr::Wildcard,
-                        }
-                    }
+                    sqlparser::ast::FunctionArg::Unnamed(arg_expr) |
                     sqlparser::ast::FunctionArg::Named { arg: arg_expr, .. } => {
                         match arg_expr {
                             sqlparser::ast::FunctionArgExpr::Expr(expr) => convert_expr(expr),

@@ -8,3 +8,4 @@ mysql-protocol = { path = "../../crates/mysql-protocol" }
 tpch-bench = { path = "../../benches/tpch" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
+types = { path = "../../crates/types" }

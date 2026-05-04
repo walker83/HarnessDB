@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use fe_catalog::table::TableColumn;
 use fe_catalog::CatalogManager;
-use fe_sql_planner::{Optimizer, PlanNode, PlanNodeType, Planner};
+use fe_sql_planner::{PlanNodeType, Planner};
 
 use integration_tests::common;
 
@@ -30,7 +30,7 @@ fn test_create_database_duplicate() {
 #[test]
 fn test_create_database_via_planner() {
     let catalog = Arc::new(CatalogManager::new());
-    let planner = Planner::new(catalog.clone());
+    let _planner = Planner::new(catalog.clone());
 
     // Note: The current parser doesn't fully support CREATE DATABASE yet,
     // so we test the catalog directly
@@ -347,14 +347,12 @@ fn test_inner_join_block() {
         if let types::ScalarValue::String(ref dept) = emp_dept {
             for j in 0..departments.num_rows() {
                 let dept_name = dept_name_col.scalar_at(j);
-                if let types::ScalarValue::String(ref dn) = dept_name {
-                    if dept == dn {
-                        if let types::ScalarValue::String(ref name) = emp_name_col.scalar_at(i) {
+                if let types::ScalarValue::String(ref dn) = dept_name
+                    && dept == dn
+                        && let types::ScalarValue::String(ref name) = emp_name_col.scalar_at(i) {
                             result_names.push(name.clone());
                             result_depts.push(dn.clone());
                         }
-                    }
-                }
             }
         }
     }
@@ -372,7 +370,7 @@ fn test_left_join_block() {
     // Simulate a LEFT JOIN: even if no department match, employee is included
     let emp_dept_col = employees.column_by_name("department").unwrap().1;
     let dept_name_col = departments.column_by_name("name").unwrap().1;
-    let dept_budget_col = departments.column_by_name("budget").unwrap().1;
+    let _dept_budget_col = departments.column_by_name("budget").unwrap().1;
 
     let mut join_count = 0;
     let mut null_budget_count = 0;
@@ -384,12 +382,11 @@ fn test_left_join_block() {
         if let types::ScalarValue::String(ref dept) = emp_dept {
             for j in 0..departments.num_rows() {
                 let dept_name = dept_name_col.scalar_at(j);
-                if let types::ScalarValue::String(ref dn) = dept_name {
-                    if dept == dn {
+                if let types::ScalarValue::String(ref dn) = dept_name
+                    && dept == dn {
                         matched = true;
                         join_count += 1;
                     }
-                }
             }
         }
 

@@ -138,11 +138,10 @@ impl ExchangeSink {
                 }
             }
             ExchangeKind::Gather => {
-                if let Some(blocks) = self.buffers.remove(&0) {
-                    if let Some(dest) = self.destinations.first().cloned() {
+                if let Some(blocks) = self.buffers.remove(&0)
+                    && let Some(dest) = self.destinations.first().cloned() {
                         results.push((dest, blocks));
                     }
-                }
             }
         }
 
@@ -163,7 +162,7 @@ impl ExchangeSink {
         }
 
         let mut row_assignments: Vec<usize> = vec![0; block.num_rows()];
-        for row_idx in 0..block.num_rows() {
+        for (row_idx, assignment) in row_assignments.iter_mut().enumerate() {
             let mut hash: u64 = 0;
             for &col_idx in key_columns {
                 if let Some(col) = block.column(col_idx) {
@@ -171,7 +170,7 @@ impl ExchangeSink {
                     hash = hash.wrapping_add(Self::hash_scalar(&scalar));
                 }
             }
-            row_assignments[row_idx] = (hash % num_partitions as u64) as usize;
+            *assignment = (hash % num_partitions as u64) as usize;
         }
 
         // Build per-partition row indices and slice.
@@ -316,7 +315,7 @@ mod tests {
                 partition: 0,
             },
         };
-        let mut sink = ExchangeSink::new(ExchangeKind::Gather, vec![dest]);
+        let sink = ExchangeSink::new(ExchangeKind::Gather, vec![dest]);
         assert_eq!(sink.buffered_rows(), 0);
     }
 }
