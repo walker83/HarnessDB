@@ -28,6 +28,12 @@ impl Block {
         self.columns.get(idx)
     }
 
+    pub fn set_column(&mut self, idx: usize, col: Vector) {
+        if idx < self.columns.len() {
+            self.columns[idx] = col;
+        }
+    }
+
     pub fn column_by_name(&self, name: &str) -> Option<(usize, &Vector)> {
         let idx = self.schema.index_of(name)?;
         Some((idx, &self.columns[idx]))
