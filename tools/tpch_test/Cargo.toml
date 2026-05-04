@@ -1,0 +1,7 @@
+[package]
+name = "tpch_test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tpch-bench = { path = "../../benches/tpch" }

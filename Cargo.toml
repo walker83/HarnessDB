@@ -28,6 +28,7 @@ members = [
 
     # Tools & utilities
     "tools/roris-cli",
+    "tools/tpch_test",
 
     # Benchmarks
     "benches/tpch",

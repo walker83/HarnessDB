@@ -1955,6 +1955,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tpch_test"
+version = "0.1.0"
+dependencies = [
+ "tpch-bench",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
