@@ -3,6 +3,21 @@ use crate::scalar::JsonValue;
 use std::fmt;
 use std::sync::Arc;
 
+pub trait TypedVector: Clone + Send + Sync {
+    type Primitive;
+    
+    fn new() -> Self;
+    fn from_vec(data: Vec<Self::Primitive>) -> Self;
+    fn from_nullable_vec(data: Vec<Option<Self::Primitive>>) -> Self;
+    fn push(&mut self, val: Option<Self::Primitive>);
+    fn get(&self, idx: usize) -> Option<Self::Primitive>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn null_count(&self) -> usize;
+    fn filter(&self, selection: &Bitmap) -> Self;
+    fn slice(&self, offset: usize, len: usize) -> Self;
+}
+
 #[derive(Clone)]
 pub enum Vector {
     Boolean(BooleanVector),
@@ -154,6 +169,50 @@ macro_rules! impl_typed_vector {
                     }
                 }
                 max
+            }
+        }
+
+        impl TypedVector for $name {
+            type Primitive = $prim;
+
+            fn new() -> Self {
+                Self::new()
+            }
+
+            fn from_vec(data: Vec<$prim>) -> Self {
+                Self::from_vec(data)
+            }
+
+            fn from_nullable_vec(data: Vec<Option<$prim>>) -> Self {
+                Self::from_nullable_vec(data)
+            }
+
+            fn push(&mut self, val: Option<$prim>) {
+                Self::push(self, val)
+            }
+
+            fn get(&self, idx: usize) -> Option<$prim> {
+                Self::get(self, idx)
+            }
+
+            fn len(&self) -> usize {
+                Self::len(self)
+            }
+
+            fn is_empty(&self) -> bool {
+                Self::is_empty(self)
+            }
+
+            fn null_count(&self) -> usize {
+                Self::null_count(self)
+            }
+
+            fn filter(&self, selection: &Bitmap) -> Self {
+                Self::filter(self, selection)
+            }
+
+            fn slice(&self, offset: usize, len: usize) -> Self {
+                Self::slice(self, offset, len)
             }
         }
     };
@@ -340,6 +399,119 @@ impl StringVector {
 
     pub fn offsets(&self) -> &[u32] {
         &self.offsets
+    }
+}
+
+impl TypedVector for StringVector {
+    type Primitive = String;
+
+    fn new() -> Self {
+        Self { offsets: vec![0], data: Vec::new(), validity: Bitmap::new() }
+    }
+
+    fn from_vec(data: Vec<String>) -> Self {
+        let mut offsets = vec![0u32];
+        let mut str_data = Vec::new();
+        let mut validity = Bitmap::with_capacity(data.len());
+        for s in &data {
+            str_data.extend_from_slice(s.as_bytes());
+            offsets.push(str_data.len() as u32);
+            validity.push(true);
+        }
+        Self { offsets, data: str_data, validity }
+    }
+
+    fn from_nullable_vec(data: Vec<Option<String>>) -> Self {
+        let mut offsets = vec![0u32];
+        let mut str_data = Vec::new();
+        let mut validity = Bitmap::with_capacity(data.len());
+        for s in &data {
+            match s {
+                Some(s) => {
+                    str_data.extend_from_slice(s.as_bytes());
+                    offsets.push(str_data.len() as u32);
+                    validity.push(true);
+                }
+                None => {
+                    offsets.push(str_data.len() as u32);
+                    validity.push(false);
+                }
+            }
+        }
+        Self { offsets, data: str_data, validity }
+    }
+
+    fn push(&mut self, val: Option<String>) {
+        match val {
+            Some(s) => {
+                self.data.extend_from_slice(s.as_bytes());
+                self.offsets.push(self.data.len() as u32);
+                self.validity.push(true);
+            }
+            None => {
+                self.offsets.push(self.data.len() as u32);
+                self.validity.push(false);
+            }
+        }
+    }
+
+    fn get(&self, idx: usize) -> Option<String> {
+        if self.validity.is_valid(idx) && idx + 1 < self.offsets.len() {
+            let start = self.offsets[idx] as usize;
+            let end = self.offsets[idx + 1] as usize;
+            Some(std::str::from_utf8(&self.data[start..end]).unwrap_or("").to_string())
+        } else {
+            None
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.offsets.len().saturating_sub(1)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn null_count(&self) -> usize {
+        self.validity.null_count()
+    }
+
+    fn filter(&self, selection: &Bitmap) -> Self {
+        let num_selected = selection.set_count();
+        let mut offsets = vec![0u32];
+        let mut data = Vec::with_capacity(num_selected * 16);
+        let mut validity = Bitmap::with_capacity(num_selected);
+
+        for idx in selection.iter_set_bits() {
+            if let Some(s) = self.get(idx) {
+                data.extend_from_slice(s.as_bytes());
+                offsets.push(data.len() as u32);
+                validity.push(self.validity.is_valid(idx));
+            } else {
+                offsets.push(data.len() as u32);
+                validity.push(false);
+            }
+        }
+        Self { offsets, data, validity }
+    }
+
+    fn slice(&self, start: usize, len: usize) -> Self {
+        let end = (start + len).min(self.len());
+        let mut offsets = vec![0u32];
+        let mut data = Vec::new();
+        let mut validity = Bitmap::with_capacity(len);
+        for i in start..end {
+            if let Some(s) = self.get(i) {
+                data.extend_from_slice(s.as_bytes());
+                offsets.push(data.len() as u32);
+                validity.push(self.validity.is_valid(i));
+            } else {
+                offsets.push(data.len() as u32);
+                validity.push(false);
+            }
+        }
+        Self { offsets, data, validity }
     }
 }
 
@@ -597,6 +769,94 @@ impl JsonVector {
     }
 }
 
+impl TypedVector for JsonVector {
+    type Primitive = ScalarValue;
+
+    fn new() -> Self {
+        Self { data: Vec::new(), validity: Bitmap::new() }
+    }
+
+    fn from_vec(data: Vec<ScalarValue>) -> Self {
+        let mut validity = Bitmap::with_capacity(data.len());
+        for v in &data {
+            validity.push(!matches!(v, ScalarValue::Null));
+        }
+        Self { data, validity }
+    }
+
+    fn from_nullable_vec(data: Vec<Option<ScalarValue>>) -> Self {
+        let mut validity = Bitmap::with_capacity(data.len());
+        let values: Vec<ScalarValue> = data.into_iter().map(|v| {
+            if let Some(val) = v {
+                validity.push(true);
+                val
+            } else {
+                validity.push(false);
+                ScalarValue::Json(JsonValue::Null)
+            }
+        }).collect();
+        Self { data: values, validity }
+    }
+
+    fn push(&mut self, val: Option<ScalarValue>) {
+        match val {
+            Some(v) => {
+                self.data.push(v);
+                self.validity.push(true);
+            }
+            None => {
+                self.data.push(ScalarValue::Json(JsonValue::Null));
+                self.validity.push(false);
+            }
+        }
+    }
+
+    fn get(&self, idx: usize) -> Option<ScalarValue> {
+        if self.validity.is_valid(idx) {
+            Some(self.data[idx].clone())
+        } else {
+            None
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    fn null_count(&self) -> usize {
+        self.validity.null_count()
+    }
+
+    fn filter(&self, selection: &Bitmap) -> Self {
+        let mut data = Vec::new();
+        let mut validity = Bitmap::new();
+        for idx in selection.iter_set_bits() {
+            if let Some(v) = self.get(idx) {
+                data.push(v);
+                validity.push(true);
+            } else {
+                data.push(ScalarValue::Json(JsonValue::Null));
+                validity.push(false);
+            }
+        }
+        Self { data, validity }
+    }
+
+    fn slice(&self, start: usize, len: usize) -> Self {
+        let end = (start + len).min(self.len());
+        let data: Vec<ScalarValue> = (start..end).filter_map(|i| self.get(i)).collect();
+        let mut validity = Bitmap::with_capacity(len);
+        for i in start..end {
+            validity.push(self.validity.is_valid(i));
+        }
+        Self { data, validity }
+    }
+}
+
 #[derive(Clone)]
 pub struct NullVector {
     len: usize,
@@ -613,6 +873,50 @@ impl NullVector {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+}
+
+impl TypedVector for NullVector {
+    type Primitive = ();
+
+    fn new() -> Self {
+        Self { len: 0 }
+    }
+
+    fn from_vec(data: Vec<Self::Primitive>) -> Self {
+        Self { len: data.len() }
+    }
+
+    fn from_nullable_vec(data: Vec<Option<Self::Primitive>>) -> Self {
+        Self { len: data.len() }
+    }
+
+    fn push(&mut self, _val: Option<Self::Primitive>) {
+        self.len += 1;
+    }
+
+    fn get(&self, _idx: usize) -> Option<Self::Primitive> {
+        None
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn null_count(&self) -> usize {
+        self.len
+    }
+
+    fn filter(&self, selection: &Bitmap) -> Self {
+        Self { len: selection.set_count() }
+    }
+
+    fn slice(&self, offset: usize, len: usize) -> Self {
+        Self { len: len.min(self.len.saturating_sub(offset)) }
     }
 }
 
