@@ -26,12 +26,28 @@ fn convert_statement(
         sqlparser::ast::Statement::Insert(stmt) => {
             let table_name = stmt.table_name.to_string();
             let cols: Vec<String> = stmt.columns.iter().map(|c| c.value.clone()).collect();
-            let values_list: Vec<Vec<Expr>> = vec![];
+            // Handle VALUES via source query
+            let query_opt: Option<QueryStmt> = stmt.source.as_ref().and_then(|q| {
+                if let sqlparser::ast::SetExpr::Values(_) = &*q.body {
+                    None
+                } else {
+                    convert_query(*q.clone()).ok()
+                }
+            });
+            let values_list: Vec<Vec<Expr>> = stmt.source.as_ref().and_then(|q| {
+                if let sqlparser::ast::SetExpr::Values(values) = &*q.body {
+                    Some(values.rows.iter().map(|row| {
+                        row.iter().map(|e| convert_expr(e.clone())).collect()
+                    }).collect())
+                } else {
+                    None
+                }
+            }).unwrap_or_default();
             Ok(Statement::Insert(InsertStmt {
                 table: table_name,
                 columns: cols,
                 values: values_list,
-                query: stmt.source.map(|q| convert_query(*q).ok().unwrap()),
+                query: query_opt,
                 is_overwrite: stmt.overwrite,
             }))
         }

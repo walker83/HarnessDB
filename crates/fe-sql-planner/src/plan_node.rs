@@ -42,6 +42,7 @@ pub enum PlanNodeType {
     TruncateTable(TruncateTableNode),
     ShowCreateTable(ShowCreateTableNode),
     AlterTable(AlterTableNode),
+    Values(VirtualValuesNode),
 }
 
 // ---- Leaf / scan nodes ----
@@ -64,6 +65,12 @@ pub struct InsertNode {
     pub database: Option<String>,
     pub columns: Vec<String>,
     pub is_overwrite: bool,
+}
+
+/// A node that produces rows from VALUES clause.
+#[derive(Debug, Clone)]
+pub struct VirtualValuesNode {
+    pub rows: Vec<Vec<fe_sql_parser::ast::Expr>>,
 }
 
 #[derive(Debug, Clone)]
@@ -537,6 +544,9 @@ impl PlanNode {
             PlanNodeType::Update(_) => "UpdateNode".to_string(),
             PlanNodeType::Delete(_) => "DeleteNode".to_string(),
             PlanNodeType::AlterTable(_) => "AlterTableNode".to_string(),
+            PlanNodeType::Values(vals) => {
+                format!("VirtualValuesNode: {} rows", vals.rows.len())
+            }
         }
     }
 
@@ -601,7 +611,9 @@ impl PlanNode {
             | PlanNodeType::DropTable(_)
             | PlanNodeType::DropDatabase(_)
             | PlanNodeType::TruncateTable(_)
-            | PlanNodeType::ShowCreateTable(_) => vec![],
+            | PlanNodeType::ShowCreateTable(_)
+            | PlanNodeType::Values(_)
+            | PlanNodeType::Update(_) => vec![],
         }
     }
 }
