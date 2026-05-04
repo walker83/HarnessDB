@@ -2,6 +2,18 @@ use crate::ast::*;
 use crate::error::ParseError;
 
 pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let trimmed = sql.trim();
+
+    // Handle ANALYZE TABLE before sqlparser (not natively supported).
+    if trimmed.to_uppercase().starts_with("ANALYZE TABLE") || trimmed.to_uppercase().starts_with("ANALYZE   TABLE") {
+        return parse_analyze_table(trimmed);
+    }
+
+    // Handle SHOW STATS before sqlparser.
+    if trimmed.to_uppercase().starts_with("SHOW STATS") {
+        return parse_show_stats(trimmed);
+    }
+
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, sql)
         .map_err(|e| ParseError::SyntaxError {
@@ -13,6 +25,56 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .into_iter()
         .map(convert_statement)
         .collect()
+}
+
+fn parse_analyze_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    // ANALYZE TABLE [db.]table_name
+    let parts: Vec<&str> = sql.split_whitespace().collect();
+    if parts.len() < 3 {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "ANALYZE TABLE requires a table name".to_string(),
+        });
+    }
+    let name = parts[2].trim_end_matches(';');
+    if name.contains('.') {
+        let p: Vec<&str> = name.splitn(2, '.').collect();
+        Ok(vec![Statement::AnalyzeTable {
+            database: Some(p[0].to_string()),
+            table: p[1].to_string(),
+        }])
+    } else {
+        Ok(vec![Statement::AnalyzeTable {
+            database: None,
+            table: name.to_string(),
+        }])
+    }
+}
+
+fn parse_show_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    // SHOW STATS [FROM [db.]table_name]
+    let parts: Vec<&str> = sql.split_whitespace().collect();
+    if parts.len() >= 4 && parts[1].eq_ignore_ascii_case("STATS") && parts[2].eq_ignore_ascii_case("FROM") {
+        let name = parts[3].trim_end_matches(';');
+        if name.contains('.') {
+            let p: Vec<&str> = name.splitn(2, '.').collect();
+            Ok(vec![Statement::ShowStats {
+                database: Some(p[0].to_string()),
+                table: Some(p[1].to_string()),
+            }])
+        } else {
+            Ok(vec![Statement::ShowStats {
+                database: None,
+                table: Some(name.to_string()),
+            }])
+        }
+    } else {
+        // SHOW STATS (all tables)
+        Ok(vec![Statement::ShowStats {
+            database: None,
+            table: None,
+        }])
+    }
 }
 
 fn convert_statement(

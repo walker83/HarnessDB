@@ -20,6 +20,8 @@ pub enum Statement {
     UseDatabase(String),
     SetVariable(SetVariableStmt),
     Union(UnionStmt),
+    AnalyzeTable { database: Option<String>, table: String },
+    ShowStats { database: Option<String>, table: Option<String> },
 }
 
 #[derive(Debug, Clone)]

@@ -15,6 +15,8 @@ pub struct Table {
     pub properties: HashMap<String, String>,
     pub row_count: u64,
     pub data_size: u64,
+    /// Collected statistics for CBO (NULL if never analyzed).
+    pub stats: Option<crate::stats::TableStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

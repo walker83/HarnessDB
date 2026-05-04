@@ -43,6 +43,8 @@ pub enum PlanNodeType {
     ShowCreateTable(ShowCreateTableNode),
     AlterTable(AlterTableNode),
     Values(VirtualValuesNode),
+    AnalyzeTable(AnalyzeTableNode),
+    ShowStats(ShowStatsNode),
 }
 
 // ---- Leaf / scan nodes ----
@@ -107,6 +109,18 @@ pub enum AlterOperationPlan {
     DropColumn { name: String },
     ModifyColumn { name: String, data_type: String },
     RenameTable { new_name: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct AnalyzeTableNode {
+    pub database: Option<String>,
+    pub table_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowStatsNode {
+    pub database: Option<String>,
+    pub table_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -547,6 +561,26 @@ impl PlanNode {
             PlanNodeType::Values(vals) => {
                 format!("VirtualValuesNode: {} rows", vals.rows.len())
             }
+            PlanNodeType::AnalyzeTable(analyze) => {
+                let db_prefix = analyze
+                    .database
+                    .as_ref()
+                    .map(|d| format!("{}.", d))
+                    .unwrap_or_default();
+                format!("AnalyzeTableNode: {}{}", db_prefix, analyze.table_name)
+            }
+            PlanNodeType::ShowStats(show) => {
+                let db_prefix = show
+                    .database
+                    .as_ref()
+                    .map(|d| format!("{}.", d))
+                    .unwrap_or_default();
+                let tbl = show
+                    .table_name
+                    .as_deref()
+                    .unwrap_or("*");
+                format!("ShowStatsNode: {}{}", db_prefix, tbl)
+            }
         }
     }
 
@@ -612,7 +646,9 @@ impl PlanNode {
             | PlanNodeType::DropDatabase(_)
             | PlanNodeType::TruncateTable(_)
             | PlanNodeType::ShowCreateTable(_)
-            | PlanNodeType::Values(_) => vec![],
+            | PlanNodeType::Values(_)
+            | PlanNodeType::AnalyzeTable(_)
+            | PlanNodeType::ShowStats(_) => vec![],
         }
     }
 }

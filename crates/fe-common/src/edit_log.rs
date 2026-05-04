@@ -37,6 +37,8 @@ pub enum OpType {
     // Node ops
     AddBackend,
     RemoveBackend,
+    // Stats ops
+    UpdateStats,
 }
 
 impl EditLog {

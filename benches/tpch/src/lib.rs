@@ -318,5 +318,6 @@ fn make_table(id: u64, database: &str, name: &str, block: &Block) -> Table {
         properties: HashMap::new(),
         row_count: block.num_rows() as u64,
         data_size: 0,
+        stats: None,
     }
 }

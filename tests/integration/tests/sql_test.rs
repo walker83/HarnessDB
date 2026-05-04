@@ -168,6 +168,7 @@ fn test_create_table_multiple_types() {
         properties: std::collections::HashMap::new(),
         row_count: 0,
         data_size: 0,
+        stats: None,
     };
 
     catalog.create_table("typed_db", table).unwrap();

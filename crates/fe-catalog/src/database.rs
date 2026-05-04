@@ -37,4 +37,8 @@ impl Database {
     pub fn table_names(&self) -> Vec<&str> {
         self.tables.keys().map(|s| s.as_str()).collect()
     }
+
+    pub fn get_table_mut(&mut self, name: &str) -> Option<&mut Table> {
+        self.tables.get_mut(name)
+    }
 }

@@ -5,17 +5,20 @@ use std::sync::Arc;
 
 pub struct Optimizer {
     stats_provider: Option<Arc<dyn StatisticsProvider>>,
+    cbo: Option<crate::cbo_optimizer::CboOptimizer>,
 }
 
 impl Optimizer {
-    pub fn new() -> Self { Self { stats_provider: None } }
+    pub fn new() -> Self { Self { stats_provider: None, cbo: None } }
 
     pub fn with_stats_provider(mut self, provider: Arc<dyn StatisticsProvider>) -> Self {
+        self.cbo = Some(crate::cbo_optimizer::CboOptimizer::new(provider.clone()));
         self.stats_provider = Some(provider);
         self
     }
 
     pub fn optimize(&self, plan: PlanNode) -> PlanNode {
+        // Phase 1: RBO rules
         const MAX_ITERATIONS: usize = 10;
         let mut plan = plan;
         for _ in 0..MAX_ITERATIONS {
@@ -24,6 +27,12 @@ impl Optimizer {
             let after = format!("{}", plan);
             if before == after { break; }
         }
+
+        // Phase 2: CBO rules
+        if let Some(ref cbo) = self.cbo {
+            plan = cbo.optimize(plan);
+        }
+
         plan
     }
 

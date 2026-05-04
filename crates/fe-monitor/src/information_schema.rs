@@ -433,6 +433,7 @@ mod tests {
                 properties: HashMap::new(),
                 row_count: 0,
                 data_size: 0,
+                stats: None,
             };
 
             catalog_guard.create_table("test_db", table).unwrap();

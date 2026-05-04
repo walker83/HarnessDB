@@ -64,6 +64,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
         properties: HashMap::new(),
         row_count: 5,
         data_size: 0,
+        stats: None,
     };
     catalog.create_table("test_db", employees).unwrap();
 
@@ -105,6 +106,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
         properties: HashMap::new(),
         row_count: 3,
         data_size: 0,
+        stats: None,
     };
     catalog.create_table("test_db", departments).unwrap();
 

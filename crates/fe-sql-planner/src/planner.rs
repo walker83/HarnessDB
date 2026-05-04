@@ -83,6 +83,12 @@ impl Planner {
             Statement::CreateView { database, name, if_not_exists, query, columns } => {
                 self.plan_create_view(database, name, if_not_exists, query, columns)
             }
+            Statement::AnalyzeTable { database, table } => {
+                self.plan_analyze_table(database, table)
+            }
+            Statement::ShowStats { database, table } => {
+                self.plan_show_stats(database, table)
+            }
         }
     }
 
@@ -764,6 +770,36 @@ impl Planner {
                 if_not_exists,
                 query,
                 columns,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_analyze_table(
+        &self,
+        database: Option<String>,
+        table: String,
+    ) -> Result<PlanNode, DrorisError> {
+        let database = database.or_else(|| Some(self.current_database.clone()));
+        Ok(self.make_node(
+            PlanNodeType::AnalyzeTable(AnalyzeTableNode {
+                database,
+                table_name: table,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_stats(
+        &self,
+        database: Option<String>,
+        table: Option<String>,
+    ) -> Result<PlanNode, DrorisError> {
+        let database = database.or_else(|| Some(self.current_database.clone()));
+        Ok(self.make_node(
+            PlanNodeType::ShowStats(ShowStatsNode {
+                database,
+                table_name: table,
             }),
             vec![],
         ))

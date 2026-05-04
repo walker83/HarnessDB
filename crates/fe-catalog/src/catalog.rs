@@ -24,6 +24,7 @@ enum CatalogOp {
     DropTable { db: String, table: String },
     AlterDatabase { name: String },
     AlterTable { db: String, table: String },
+    UpdateStats { db: String, table: String },
 }
 
 pub struct CatalogWriter {
@@ -93,6 +94,39 @@ impl CatalogManager {
     pub fn list_tables(&self, db_name: &str) -> Option<Vec<String>> {
         self.databases.get(db_name)
             .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
+    }
+
+    /// Update statistics for a table.
+    pub fn update_table_stats(
+        &self,
+        db_name: &str,
+        table_name: &str,
+        stats: crate::stats::TableStats,
+    ) -> Result<()> {
+        let mut db_ref = self.databases.get_mut(db_name)
+            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound,
+                format!("database '{}' not found", db_name)))?;
+        let table = db_ref.get_table_mut(table_name)
+            .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound,
+                format!("table '{}' not found", table_name)))?;
+        table.stats = Some(stats);
+        Ok(())
+    }
+
+    /// Get statistics for a table.
+    pub fn get_table_stats(&self, db_name: &str, table_name: &str) -> Option<crate::stats::TableStats> {
+        self.get_table(db_name, table_name).and_then(|t| t.stats.clone())
+    }
+
+    /// Get all tables with their stats for a given database.
+    pub fn get_all_table_stats(&self, db_name: &str) -> Vec<(String, Option<crate::stats::TableStats>)> {
+        self.databases.get(db_name)
+            .map(|db| {
+                db.tables.iter()
+                    .map(|(name, table)| (name.clone(), table.stats.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Serialize catalog state to JSON file
@@ -170,6 +204,12 @@ impl CatalogManager {
                             self.drop_table(&db, &table)?;
                         }
                 }
+                OpType::UpdateStats => {
+                    if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
+                        && let CatalogOp::UpdateStats { db: _, table: _ } = op {
+                            // Stats are stored directly on the Table struct, already persisted via catalog save.
+                        }
+                }
                 _ => { /* ignore other op types for now */ }
             }
         }
@@ -229,6 +269,37 @@ impl CatalogWriter {
         self.catalog.write().await.drop_table(db_name, table_name)?;
         Ok(())
     }
+
+    pub async fn update_table_stats(
+        &self,
+        db_name: &str,
+        table_name: &str,
+        stats: crate::stats::TableStats,
+    ) -> common::Result<()> {
+        let op = CatalogOp::UpdateStats { db: db_name.to_string(), table: table_name.to_string() };
+        let data = serde_json::to_vec(&op)
+            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let _index = self.edit_log.write().await.append(fe_common::edit_log::OpType::UpdateStats, data);
+        self.catalog.write().await.update_table_stats(db_name, table_name, stats)?;
+        Ok(())
+    }
+}
+
+/// Statistics provider backed by the catalog's persisted stats.
+pub struct CatalogStatsProvider {
+    catalog: std::sync::Arc<CatalogManager>,
+}
+
+impl CatalogStatsProvider {
+    pub fn new(catalog: std::sync::Arc<CatalogManager>) -> Self {
+        Self { catalog }
+    }
+}
+
+impl crate::stats::StatisticsProvider for CatalogStatsProvider {
+    fn get_table_stats(&self, database: &str, table: &str) -> Option<crate::stats::TableStats> {
+        self.catalog.get_table_stats(database, table)
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +330,7 @@ mod tests {
             properties: HashMap::new(),
             row_count: 0,
             data_size: 0,
+            stats: None,
         }
     }
 
