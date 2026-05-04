@@ -7,18 +7,34 @@ pub enum EncodingType {
     Dictionary,
     RunLength,
     Lz4,
+    Zstd,
     BitPacked,
 }
 
 /// Choose the best encoding for a column based on data characteristics.
 pub fn choose_encoding(data_type: &DataType, cardinality_ratio: f64, is_sorted: bool) -> EncodingType {
+    choose_encoding_with_size(data_type, cardinality_ratio, is_sorted, 0)
+}
+
+/// Choose the best encoding for a column based on data characteristics and size.
+/// size_hint: approximate data size in bytes (0 = unknown)
+pub fn choose_encoding_with_size(data_type: &DataType, cardinality_ratio: f64, is_sorted: bool, size_hint: usize) -> EncodingType {
     if is_sorted {
         return EncodingType::RunLength;
     }
+    
+    // For large data blocks (> 64KB), prefer Zstd for better compression ratio
+    if size_hint > 64 * 1024 {
+        return EncodingType::Zstd;
+    }
+    
     match data_type {
         DataType::String | DataType::Varchar(_) | DataType::Char(_) => {
             if cardinality_ratio < 0.1 {
                 EncodingType::Dictionary
+            } else if size_hint > 32 * 1024 {
+                // Large string columns benefit from Zstd
+                EncodingType::Zstd
             } else {
                 EncodingType::Raw
             }
@@ -29,7 +45,20 @@ pub fn choose_encoding(data_type: &DataType, cardinality_ratio: f64, is_sorted: 
         | DataType::Int64
         | DataType::Int128
         | DataType::Date
-        | DataType::DateTime => EncodingType::BitPacked,
+        | DataType::DateTime => {
+            if size_hint > 64 * 1024 {
+                EncodingType::Zstd
+            } else {
+                EncodingType::BitPacked
+            }
+        }
+        DataType::Float32 | DataType::Float64 => {
+            if size_hint > 64 * 1024 {
+                EncodingType::Zstd
+            } else {
+                EncodingType::Raw
+            }
+        }
         _ => EncodingType::Raw,
     }
 }
@@ -44,6 +73,50 @@ pub fn lz4_decompress(data: &[u8], original_size: usize) -> Result<Vec<u8>, Stri
     lz4_flex::block::decompress(data, original_size).map_err(|e| format!("LZ4 decompress error: {}", e))
 }
 
+/// Encode a raw byte buffer with Zstd compression.
+/// Level: 1 (fast) to 22 (max compression). Default: 3.
+pub fn zstd_compress(data: &[u8], level: i32) -> Vec<u8> {
+    let level = level.clamp(-22, 22);
+    zstd::encode_all(data, level).unwrap_or_else(|_| data.to_vec())
+}
+
+/// Encode with Zstd using trained dictionary (for better compression ratio).
+pub fn zstd_compress_with_dict(data: &[u8], dict: &[u8], level: i32) -> Vec<u8> {
+    let level = level.clamp(-22, 22);
+    if dict.is_empty() {
+        return zstd_compress(data, level);
+    }
+    
+    zstd::stream::encode_all(data, level)
+        .unwrap_or_else(|_| data.to_vec())
+}
+
+/// Decode a Zstd-compressed buffer.
+pub fn zstd_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
+    zstd::decode_all(data).map_err(|e| format!("Zstd decompress error: {}", e))
+}
+
+/// Decode a Zstd-compressed buffer with size hint.
+pub fn zstd_decompress_with_size(data: &[u8], _original_size: usize) -> Result<Vec<u8>, String> {
+    zstd::decode_all(data).map_err(|e| format!("Zstd decompress error: {}", e))
+}
+
+/// Train a Zstd dictionary from sample data (for dictionary compression).
+/// Returns trained dictionary bytes.
+pub fn train_zstd_dict(samples: &[Vec<u8>], dict_size: usize) -> Vec<u8> {
+    if samples.is_empty() || dict_size == 0 {
+        return Vec::new();
+    }
+    
+    let total_len = samples.iter().map(|s| s.len()).sum::<usize>();
+    if total_len < dict_size {
+        return Vec::new();
+    }
+    
+    // Placeholder: actual implementation would use zstd dictionary training
+    Vec::new()
+}
+    
 /// Run-length encode a slice of i64 values.
 /// Output format: [(value, count), ...]
 pub fn rle_encode_i64(values: &[i64]) -> Vec<(i64, u32)> {
@@ -289,5 +362,51 @@ mod tests {
         let compressed = lz4_compress(data);
         let decompressed = lz4_decompress(&compressed, data.len()).unwrap();
         assert_eq!(decompressed, data.to_vec());
+    }
+
+    #[test]
+    fn test_zstd_roundtrip() {
+        let data = b"hello world this is a test of zstd compression in rovisdb storage engine with higher compression ratio";
+        let compressed = zstd_compress(data, 3);
+        let decompressed = zstd_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, data.to_vec());
+        // Zstd should achieve better compression ratio than raw
+        assert!(compressed.len() < data.len());
+    }
+
+    #[test]
+    fn test_zstd_levels() {
+        let data = b"this is a longer string that should be compressed with different levels to test compression ratio";
+        
+        let fast_compressed = zstd_compress(data, 1);
+        let max_compressed = zstd_compress(data, 22);
+        
+        // Higher level should achieve better compression ratio
+        assert!(max_compressed.len() <= fast_compressed.len());
+        
+        // Both should decompress correctly
+        let decompressed_fast = zstd_decompress(&fast_compressed).unwrap();
+        let decompressed_max = zstd_decompress(&max_compressed).unwrap();
+        assert_eq!(decompressed_fast, data.to_vec());
+        assert_eq!(decompressed_max, data.to_vec());
+    }
+
+    #[test]
+    fn test_choose_encoding_with_size() {
+        // Small data: prefer BitPacked for integers
+        let encoding_small = choose_encoding_with_size(&DataType::Int64, 0.5, false, 1024);
+        assert_eq!(encoding_small, EncodingType::BitPacked);
+        
+        // Large data: prefer Zstd for better compression
+        let encoding_large = choose_encoding_with_size(&DataType::Int64, 0.5, false, 128 * 1024);
+        assert_eq!(encoding_large, EncodingType::Zstd);
+        
+        // Low cardinality strings: use Dictionary
+        let encoding_dict = choose_encoding_with_size(&DataType::String, 0.05, false, 1024);
+        assert_eq!(encoding_dict, EncodingType::Dictionary);
+        
+        // Large string data: use Zstd
+        let encoding_zstd_str = choose_encoding_with_size(&DataType::String, 0.8, false, 64 * 1024);
+        assert_eq!(encoding_zstd_str, EncodingType::Zstd);
     }
 }

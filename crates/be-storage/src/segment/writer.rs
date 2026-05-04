@@ -184,10 +184,22 @@ impl SegmentWriter {
 
         // Choose encoding and optionally compress
         let cardinality_ratio = Self::estimate_cardinality(&values);
-        let encoding = codec::choose_encoding(&field.data_type, cardinality_ratio, false);
+        let data_size_hint = raw_data.len();
+        let encoding = codec::choose_encoding_with_size(&field.data_type, cardinality_ratio, false, data_size_hint);
 
         let encoded_data = match encoding {
             EncodingType::Lz4 => codec::lz4_compress(&raw_data),
+            EncodingType::Zstd => {
+                // Use adaptive compression level based on data size
+                let level = if data_size_hint > 256 * 1024 {
+                    19  // High compression for very large data
+                } else if data_size_hint > 128 * 1024 {
+                    9   // Medium compression
+                } else {
+                    3   // Default level
+                };
+                codec::zstd_compress(&raw_data, level)
+            },
             _ => raw_data.clone(),
         };
 
