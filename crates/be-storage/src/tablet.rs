@@ -242,6 +242,22 @@ impl MemTable {
         self.memory_size = 0;
     }
 
+    /// Delete rows from memtable matching the given predicates.
+    pub fn delete(&mut self, block: &Block, key_column_idx: usize, predicates: &[ColumnPredicate]) -> Result<usize, String> {
+        let selection = crate::index::apply_predicates_to_block(block, predicates);
+        let mut deleted_count = 0;
+
+        for row_idx in 0..block.num_rows() {
+            if selection.get(row_idx) {
+                let key = self.extract_key(block, row_idx, key_column_idx)?;
+                if self.rows.remove(&key).is_some() {
+                    deleted_count += 1;
+                }
+            }
+        }
+        Ok(deleted_count)
+    }
+
     fn extract_key(&self, block: &Block, row_idx: usize, col_idx: usize) -> Result<MemTableKey, String> {
         let col = block.column(col_idx)
             .ok_or_else(|| format!("Key column index {} out of bounds", col_idx))?;
@@ -330,6 +346,22 @@ impl Tablet {
             self.flush()?;
         }
         Ok(())
+    }
+
+    /// Delete rows from the tablet matching the given predicates.
+    pub fn delete(&self, predicates: &[ColumnPredicate]) -> Result<usize, String> {
+        let key_col_idx = self.schema
+            .columns
+            .iter()
+            .position(|c| c.is_key)
+            .unwrap_or(0);
+
+        // Read all data
+        let block = self.read(None, &[])?;
+
+        let mut memtable = self.memtable.write();
+        let deleted = memtable.delete(&block, key_col_idx, predicates)?;
+        Ok(deleted)
     }
 
     /// Flush the current memtable to a new segment file on disk.

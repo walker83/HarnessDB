@@ -32,6 +32,7 @@ fn convert_statement(
                 columns: cols,
                 values: values_list,
                 query: stmt.source.map(|q| convert_query(*q).ok().unwrap()),
+                is_overwrite: stmt.overwrite,
             }))
         }
         sqlparser::ast::Statement::CreateTable(stmt) => {
@@ -182,6 +183,31 @@ fn convert_statement(
                 query: query.to_string(),
                 columns: col_names,
             })
+        }
+        sqlparser::ast::Statement::Update { table, assignments, from: _, selection, returning: _, or: _ } => {
+            let table_name = table.to_string();
+            let set_clauses: Vec<SetClause> = assignments.iter().map(|s| {
+                let column = match &s.target {
+                    sqlparser::ast::AssignmentTarget::ColumnName(name) => name.to_string(),
+                    sqlparser::ast::AssignmentTarget::Tuple(_) => String::new(),
+                };
+                let value = convert_expr(s.value.clone());
+                SetClause { column, value }
+            }).collect();
+            let selection = selection.map(convert_expr);
+            Ok(Statement::Update(UpdateStmt {
+                table: table_name,
+                set_clauses,
+                selection,
+            }))
+        }
+        sqlparser::ast::Statement::Delete(delete) => {
+            let table_name = delete.tables.first().map(|t: &sqlparser::ast::ObjectName| t.to_string()).unwrap_or_default();
+            let selection = delete.selection.map(convert_expr);
+            Ok(Statement::Delete(DeleteStmt {
+                table: table_name,
+                selection,
+            }))
         }
         _ => Err(ParseError::Unsupported(format!(
             "statement type: {:?}",

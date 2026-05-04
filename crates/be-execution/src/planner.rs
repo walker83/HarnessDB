@@ -9,13 +9,14 @@
 
 use std::sync::Arc;
 use be_storage::StorageEngine;
-use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, FilterNode, ProjectNode, AggregateNode, SortNode, LimitNode, JoinNode};
+use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, FilterNode, ProjectNode, AggregateNode, SortNode, LimitNode, JoinNode, UpdateNode, DeleteNode, AlterTableNode};
 use fe_catalog::CatalogManager;
 use types::Schema;
 
 use crate::exec_node::{
     ExecutionPlan, ExecNode, ScanExecNode, FilterExecNode, ProjectExecNode,
     AggregateExecNode, SortExecNode, LimitExecNode, HashJoinExecNode,
+    UpdateExecNode, DeleteExecNode, AlterTableExecNode,
 };
 
 /// Error type for plan execution conversion.
@@ -147,12 +148,72 @@ impl ExecutionContext {
                     Err(PlanExecutionError::UnsupportedNode("Join with < 2 children".into()))
                 }
             }
+            PlanNodeType::Update(update) => {
+                self.create_update_node(update)
+            }
+            PlanNodeType::Delete(delete) => {
+                self.create_delete_node(delete)
+            }
+            PlanNodeType::AlterTable(alter) => {
+                self.create_alter_table_node(alter)
+            }
             // DDL and other node types - return a no-op scan that returns empty
             _ => {
                 tracing::debug!("Unsupported node type for execution: {:?}", plan.node_type);
                 Err(PlanExecutionError::UnsupportedNode(format!("{:?}", plan.node_type)))
             }
         }
+    }
+
+    fn create_update_node(&self, update: &UpdateNode) -> Result<ExecutionPlan, PlanExecutionError> {
+        let database = update.database.as_deref().unwrap_or("default");
+        let tablet_id = self.resolve_tablet_id(database, &update.table_name).ok();
+        let set_clauses: Vec<(String, String)> = update.set_clauses.iter()
+            .map(|s| (s.column.clone(), s.value.clone()))
+            .collect();
+
+        let mut node = UpdateExecNode::new(
+            update.table_name.clone(),
+            database.to_string(),
+            set_clauses,
+            update.selection_predicate.clone(),
+        );
+
+        if let (Some(tid), Some(storage)) = (tablet_id, Some(self.storage.clone())) {
+            node = node.with_storage(tid, storage);
+        }
+
+        Ok(ExecutionPlan::Update(node))
+    }
+
+    fn create_delete_node(&self, delete: &DeleteNode) -> Result<ExecutionPlan, PlanExecutionError> {
+        let database = delete.database.as_deref().unwrap_or("default");
+        let tablet_id = self.resolve_tablet_id(database, &delete.table_name).ok();
+
+        let mut node = DeleteExecNode::new(
+            delete.table_name.clone(),
+            database.to_string(),
+            delete.selection_predicate.clone(),
+        );
+
+        if let (Some(tid), Some(storage)) = (tablet_id, Some(self.storage.clone())) {
+            node = node.with_storage(tid, storage);
+        }
+
+        Ok(ExecutionPlan::Delete(node))
+    }
+
+    fn create_alter_table_node(&self, alter: &AlterTableNode) -> Result<ExecutionPlan, PlanExecutionError> {
+        let database = alter.database.as_deref().unwrap_or("default");
+        let operations: Vec<String> = alter.operations.iter().map(|op| format!("{:?}", op)).collect();
+
+        let node = AlterTableExecNode::new(
+            database.to_string(),
+            alter.table_name.clone(),
+            operations,
+        );
+
+        Ok(ExecutionPlan::AlterTable(node))
     }
 
     fn create_scan_node(&self, scan: &ScanNode) -> Result<ExecutionPlan, PlanExecutionError> {

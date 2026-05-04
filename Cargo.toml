@@ -11,6 +11,7 @@ members = [
     "crates/fe-scheduler",
     "crates/fe-common",
     "crates/fe-expression",
+    "crates/fe-monitor",
     "crates/mysql-protocol",
 
     # Backend (BE) - Storage engine, query execution
@@ -73,6 +74,12 @@ bytes = "1"
 tokio-stream = { version = "0.1", features = ["fs"] }
 dashmap = "6"
 
+# HTTP server
+axum = "0.7"
+
+# Monitoring & metrics
+prometheus = "0.13"
+
 # Date/time handling
 chrono = "0.4"
 
@@ -108,5 +115,6 @@ rpc = { path = "crates/rpc" }
 types = { path = "crates/types" }
 proto = { path = "crates/proto" }
 fe-expression = { path = "crates/fe-expression" }
+fe-monitor = { path = "crates/fe-monitor" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 data-io = { path = "crates/data-io" }

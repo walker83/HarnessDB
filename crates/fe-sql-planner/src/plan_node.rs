@@ -32,6 +32,8 @@ pub enum PlanNodeType {
     Union(UnionNode),
     Cte(CteNode),
     Insert(InsertNode),
+    Update(UpdateNode),
+    Delete(DeleteNode),
     CreateTable(CreateTableNode),
     CreateDatabase(CreateDatabaseNode),
     CreateView(CreateViewNode),
@@ -39,6 +41,7 @@ pub enum PlanNodeType {
     DropDatabase(DropDatabaseNode),
     TruncateTable(TruncateTableNode),
     ShowCreateTable(ShowCreateTableNode),
+    AlterTable(AlterTableNode),
 }
 
 // ---- Leaf / scan nodes ----
@@ -60,6 +63,43 @@ pub struct InsertNode {
     pub table_name: String,
     pub database: Option<String>,
     pub columns: Vec<String>,
+    pub is_overwrite: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateNode {
+    pub table_name: String,
+    pub database: Option<String>,
+    pub set_clauses: Vec<SetClausePlan>,
+    pub selection_predicate: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetClausePlan {
+    pub column: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteNode {
+    pub table_name: String,
+    pub database: Option<String>,
+    pub selection_predicate: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterTableNode {
+    pub database: Option<String>,
+    pub table_name: String,
+    pub operations: Vec<AlterOperationPlan>,
+}
+
+#[derive(Debug, Clone)]
+pub enum AlterOperationPlan {
+    AddColumn { name: String, data_type: String, nullable: bool },
+    DropColumn { name: String },
+    ModifyColumn { name: String, data_type: String },
+    RenameTable { new_name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -494,6 +534,9 @@ impl PlanNode {
             }
             PlanNodeType::ShowCreateTable(_) => "ShowCreateTableNode".to_string(),
             PlanNodeType::CreateView(_) => "CreateViewNode".to_string(),
+            PlanNodeType::Update(_) => "UpdateNode".to_string(),
+            PlanNodeType::Delete(_) => "DeleteNode".to_string(),
+            PlanNodeType::AlterTable(_) => "AlterTableNode".to_string(),
         }
     }
 
@@ -549,6 +592,9 @@ impl PlanNode {
             PlanNodeType::Cte(cte) => cte.columns.clone(),
             // DDL / DML nodes don't produce query columns.
             PlanNodeType::Insert(_)
+            | PlanNodeType::Update(_)
+            | PlanNodeType::Delete(_)
+            | PlanNodeType::AlterTable(_)
             | PlanNodeType::CreateTable(_)
             | PlanNodeType::CreateDatabase(_)
             | PlanNodeType::CreateView(_)

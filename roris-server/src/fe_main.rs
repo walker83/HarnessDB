@@ -7,6 +7,7 @@ use tokio::time::{interval, Duration};
 use fe_common::edit_log::EditLog;
 use fe_catalog::CatalogManager;
 use fe_scheduler::ClusterManager;
+use fe_monitor::{MonitoringManager, MonitoringHttpServer};
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
@@ -22,6 +23,9 @@ struct Args {
 
     #[arg(long, default_value = "data/fe/doris-meta")]
     meta_dir: String,
+
+    #[arg(long, default_value = "8040")]
+    metrics_port: u16,
 }
 
 #[tokio::main]
@@ -33,6 +37,7 @@ async fn main() -> Result<()> {
     tracing::info!("Config file: {}", args.config);
     tracing::info!("HTTP port: {}, RPC port: {}", args.http_port, args.rpc_port);
     tracing::info!("Meta directory: {}", args.meta_dir);
+    tracing::info!("Metrics port: {}", args.metrics_port);
 
     // Initialize catalog manager with persistence path
     let catalog = Arc::new(RwLock::new(CatalogManager::with_path(&args.meta_dir)));
@@ -65,6 +70,19 @@ async fn main() -> Result<()> {
     // Initialize cluster manager for BE health monitoring
     let _cluster = Arc::new(RwLock::new(ClusterManager::new(fe_scheduler::cluster::ClusterConfig::default())));
 
+    // Initialize monitoring manager
+    let monitoring = Arc::new(MonitoringManager::new(catalog.clone()));
+    tracing::info!("Monitoring manager initialized");
+
+    // Start monitoring HTTP server
+    let http_server = MonitoringHttpServer::new(args.metrics_port, monitoring.clone());
+    tokio::spawn(async move {
+        if let Err(e) = http_server.start().await {
+            tracing::error!("Monitoring HTTP server failed: {}", e);
+        }
+    });
+    tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
+
     // Background task to periodically flush the EditLog
     let edit_log_clone = edit_log.clone();
     tokio::spawn(async move {
@@ -96,6 +114,10 @@ async fn main() -> Result<()> {
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("Roris FE shutting down...");
+
+    // Flush audit logs before shutdown
+    monitoring.audit_log.flush().await;
+    tracing::info!("Audit logs flushed");
 
     // Final save on shutdown
     catalog.read().await.save()?;

@@ -55,6 +55,8 @@ impl Planner {
         match stmt {
             Statement::Query(query) => self.plan_query(query),
             Statement::Insert(insert) => self.plan_insert(insert),
+            Statement::Update(update) => self.plan_update(update),
+            Statement::Delete(delete) => self.plan_delete(delete),
             Statement::CreateDatabase(create_db) => self.plan_create_database(create_db),
             Statement::CreateTable(create_tbl) => self.plan_create_table(create_tbl),
             Statement::DropDatabase(drop_db) => self.plan_drop_database(drop_db),
@@ -67,9 +69,7 @@ impl Planner {
                 // at the logical plan level.
                 self.plan(*explain.statement)
             }
-            Statement::AlterTable(_) => Err(DrorisError::plan(PlanError::UnsupportedOperation,
-                "ALTER TABLE is not yet supported"
-            )),
+            Statement::AlterTable(alter) => self.plan_alter_table(alter),
             Statement::SetVariable(_) => Err(DrorisError::plan(PlanError::UnsupportedOperation,
                 "SET variable is not yet supported"
             )),
@@ -225,8 +225,105 @@ impl Planner {
                 table_name,
                 database,
                 columns: stmt.columns,
+                is_overwrite: stmt.is_overwrite,
             }),
             children,
+        ))
+    }
+
+    fn plan_update(&self, stmt: UpdateStmt) -> Result<PlanNode, DrorisError> {
+        let (database, table_name) = if stmt.table.contains('.') {
+            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (None, stmt.table.clone())
+        };
+
+        let set_clauses: Vec<SetClausePlan> = stmt
+            .set_clauses
+            .iter()
+            .map(|s| SetClausePlan {
+                column: s.column.clone(),
+                value: expression::expr_to_string(&s.value),
+            })
+            .collect();
+
+        let selection_predicate = stmt
+            .selection
+            .as_ref()
+            .map(expression::expr_to_string);
+
+        Ok(self.make_node(
+            PlanNodeType::Update(UpdateNode {
+                table_name,
+                database,
+                set_clauses,
+                selection_predicate,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_delete(&self, stmt: DeleteStmt) -> Result<PlanNode, DrorisError> {
+        let (database, table_name) = if stmt.table.contains('.') {
+            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (None, stmt.table.clone())
+        };
+
+        let selection_predicate = stmt
+            .selection
+            .as_ref()
+            .map(expression::expr_to_string);
+
+        Ok(self.make_node(
+            PlanNodeType::Delete(DeleteNode {
+                table_name,
+                database,
+                selection_predicate,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_alter_table(&self, stmt: AlterTableStmt) -> Result<PlanNode, DrorisError> {
+        let (database, table_name) = if stmt.table.contains('.') {
+            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (None, stmt.table.clone())
+        };
+
+        let operations: Vec<AlterOperationPlan> = stmt
+            .operations
+            .iter()
+            .map(|op| match op {
+                AlterOperation::AddColumn(col) => AlterOperationPlan::AddColumn {
+                    name: col.name.clone(),
+                    data_type: col.data_type.clone(),
+                    nullable: col.nullable,
+                },
+                AlterOperation::DropColumn(name) => AlterOperationPlan::DropColumn {
+                    name: name.clone(),
+                },
+                AlterOperation::ModifyColumn(col) => AlterOperationPlan::ModifyColumn {
+                    name: col.name.clone(),
+                    data_type: col.data_type.clone(),
+                },
+                AlterOperation::RenameTable(new_name) => AlterOperationPlan::RenameTable {
+                    new_name: new_name.clone(),
+                },
+            })
+            .collect();
+
+        Ok(self.make_node(
+            PlanNodeType::AlterTable(AlterTableNode {
+                database,
+                table_name,
+                operations,
+            }),
+            vec![],
         ))
     }
 

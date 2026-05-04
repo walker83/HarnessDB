@@ -110,6 +110,16 @@ impl StorageEngine {
             .map_err(|e| DrorisError::storage(StorageError::FlushFailed, e.to_string()))
     }
 
+    /// Delete rows from a tablet matching the given predicates.
+    pub fn delete(&self, tablet_id: u64, predicates: &[ColumnPredicate]) -> Result<usize> {
+        let tablet = self.tablets
+            .get(&tablet_id)
+            .map(|v| v.clone())
+            .ok_or_else(|| DrorisError::storage_with_tablet(StorageError::TabletNotFound, tablet_id, format!("tablet {} not found", tablet_id)))?;
+        tablet.delete(predicates)
+            .map_err(|e| DrorisError::storage(StorageError::WriteFailed, e.to_string()))
+    }
+
     /// Trigger compaction for a tablet.
     pub fn compact(&self, tablet_id: u64, compaction_type: CompactionType) -> Result<()> {
         let tablet = self.tablets
