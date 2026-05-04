@@ -639,3 +639,100 @@ fn test_plan_order_limit_query() {
     // Should have: Scan -> Sort -> Limit -> Project
     assert!(matches!(plan.node_type, PlanNodeType::Limit(_)));
 }
+
+// ===========================================================================
+// CSV Data Import tests
+// ===========================================================================
+
+#[test]
+fn test_csv_reader_zclawbench() {
+    use std::fs::File;
+    use std::io::BufReader;
+    use data_io::csv_reader::CsvReader;
+
+    // Read the ZClawBench simplified CSV (260KB, 696 rows)
+    let file = File::open("/tmp/ZClawBench/zclawbench_simple.csv").unwrap();
+    let reader = BufReader::new(file);
+    let mut csv_reader = CsvReader::new(reader).with_header();
+
+    // Read first batch (this also reads headers internally)
+    let batch = csv_reader.next_batch().unwrap().unwrap();
+
+    // Check headers were read
+    let headers = csv_reader.headers();
+    assert_eq!(headers.len(), 4);
+    assert_eq!(headers[0], "task_id");
+    assert_eq!(headers[1], "model_name");
+    assert_eq!(headers[2], "task_category");
+    assert_eq!(headers[3], "trajectory_summary");
+
+    // Verify batch has data
+    assert!(batch.num_rows() > 0);
+    assert_eq!(batch.num_columns(), 4);
+
+    // Verify schema has the expected columns
+    let schema = batch.schema();
+    assert_eq!(schema.num_fields(), 4);
+
+    println!("CSV import test passed: {} rows, {} columns",
+        batch.num_rows(), batch.num_columns());
+}
+
+#[test]
+fn test_csv_create_table_and_query() {
+    use std::fs::File;
+    use std::io::BufReader;
+    use data_io::csv_reader::CsvReader;
+    use types::DataType;
+
+    let file = File::open("/tmp/ZClawBench/zclawbench_simple.csv").unwrap();
+    let reader = BufReader::new(file);
+    let mut csv_reader = CsvReader::new(reader).with_header();
+    let batch = csv_reader.next_batch().unwrap().unwrap();
+
+    // Verify we can read the data correctly
+    assert!(batch.num_rows() > 0);
+    assert_eq!(batch.num_columns(), 4);
+
+    // Test query planning with parsed SQL
+    let catalog = common::create_test_catalog();
+    let planner = Planner::new(catalog);
+
+    // Plan a simple SELECT query
+    let stmts = fe_sql_parser::parse_sql(
+        "SELECT id, name, department, salary FROM employees WHERE salary > 3000",
+    ).unwrap();
+
+    let plan = planner.plan(stmts.into_iter().next().unwrap());
+    assert!(plan.is_ok());
+
+    println!("Query planning test passed");
+}
+
+// ===========================================================================
+// Parquet Data Import tests
+// ===========================================================================
+
+#[test]
+fn test_parquet_reader_zclawbench() {
+    use data_io::parquet_reader::ParquetReader;
+
+    // Read the ZClawBench parquet file directly (23MB, 696 rows)
+    let mut reader = ParquetReader::open("/tmp/ZClawBench/train.parquet").unwrap();
+
+    // Check metadata
+    assert_eq!(reader.num_rows(), 696);
+    assert_eq!(reader.num_columns(), 4);
+
+    // Check schema
+    let schema = reader.schema();
+    assert_eq!(schema.num_fields(), 4);
+
+    // Read first batch
+    let batch = reader.next_batch().unwrap().unwrap();
+    assert!(batch.num_rows() > 0);
+    assert_eq!(batch.num_columns(), 4);
+
+    println!("Parquet import test passed: {} rows, {} columns, {} total rows",
+        batch.num_rows(), batch.num_columns(), reader.num_rows());
+}

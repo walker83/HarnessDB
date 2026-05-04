@@ -110,3 +110,6 @@ proto = { path = "crates/proto" }
 fe-expression = { path = "crates/fe-expression" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 data-io = { path = "crates/data-io" }
+
+# Parquet support
+parquet = "58"
