@@ -1,9 +1,9 @@
 # RorisDB vs Apache Doris 兼容性矩阵
 
 > 最后更新: 2026-05-04
-> 测试总数: 145 tests / 43 suites / 0 failures (v0.1.2)
+> 测试总数: 145 tests / 43 suites / 0 failures (v0.1.3)
 >
-> 版本: 0.1.2 - DESCRIBE/SHOW COLUMNS planner + UNION parsing
+> 版本: 0.1.3 - CTE parsing, ExecNode stubs
 
 ---
 
@@ -16,7 +16,7 @@
 | HAVING 子句 | ✅ | ✅ | ❌ | Filter→Aggregate, 待测试 |
 | JOIN (INNER/LEFT/RIGHT/FULL/CROSS) | ✅ | ✅ | ✅ (部分) | INNER/LEFT 有测试 |
 | 子查询 (IN/EXISTS) | ✅ | ✅ (AST) | ❌ | 解析器支持, planner 未实现 |
-| CTE (WITH 子句) | ✅ | ❌ | ❌ | 未实现 |
+| CTE (WITH 子句) | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
 | UNION / UNION ALL | ✅ | ✅ (解析) | ❌ | Parser 支持, Planner 待实现 |
 | INSERT INTO ... VALUES | ✅ | ✅ | ✅ | 支持 |
 | INSERT INTO ... SELECT | ✅ | ✅ | ❌ | Planner 支持, 待执行器 |
@@ -226,9 +226,9 @@ SQL 输入
 |---|------|-----------|---------|------|
 | 1 | INSERT INTO ... SELECT | 3天 | 数据导入必需 | ✅ 已实现 |
 | 2 | 日期函数 (DATE_ADD/DATE_FORMAT/NOW 等) | 5天 | OLAP 查询高频使用 | ✅ 已实现 (17函数) |
-| 3 | CTE (WITH 子句) | 5天 | 复杂分析查询必需 | ❌ 未实现 |
-| 4 | 实际 Pipeline 执行 | 10天 | 查询端到端执行 | ❌ 未实现 |
-| 5 | gRPC FE-BE 通信 | 7天 | 分布式执行必需 | ❌ 未实现 |
+| 3 | CTE (WITH 子句) | 5天 | 复杂分析查询必需 | ✅ 已解析 |
+| 4 | 实际 Pipeline 执行 | 10天 | 查询端到端执行 | ⚙️ ExecNode框架 |
+| 5 | gRPC FE-BE 通信 | 7天 | 分布式执行必需 | ❌ Proto定义 |
 
 ### P1 - 重要功能增强
 

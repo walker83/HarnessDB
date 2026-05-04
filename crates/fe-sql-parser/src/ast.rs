@@ -28,6 +28,14 @@ pub struct QueryStmt {
     pub order_by: Vec<OrderByItem>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+    pub with: Option<Cte>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cte {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub query: Box<QueryStmt>,
 }
 
 #[derive(Debug, Clone)]

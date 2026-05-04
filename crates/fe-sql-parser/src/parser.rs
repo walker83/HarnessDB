@@ -146,12 +146,30 @@ fn convert_statement(
 fn convert_query(
     query: sqlparser::ast::Query,
 ) -> Result<QueryStmt, ParseError> {
+    let cte = query.with.as_ref().map(|w| {
+        w.cte_tables.first().map(|c| Cte {
+            name: c.alias.name.value.clone(),
+            columns: vec![],
+            query: Box::new(convert_query(*c.query.clone()).unwrap_or_else(|_| QueryStmt {
+                select_list: vec![],
+                from: None,
+                r#where: None,
+                group_by: vec![],
+                having: None,
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                with: None,
+            })),
+        })
+    }).flatten();
+
     match *query.body {
         sqlparser::ast::SetExpr::Select(select) => {
             let order_by = query.order_by.map(|ob| ob.exprs).unwrap_or_default();
             let limit = query.limit;
             let offset = query.offset;
-            convert_select(*select, order_by, limit, offset)
+            convert_select(*select, order_by, limit, offset, cte)
         }
         sqlparser::ast::SetExpr::SetOperation { op, set_quantifier, left, right } => {
             let left_query = convert_set_expr(*left)?;
@@ -183,6 +201,7 @@ fn convert_query(
                     sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
                     _ => None,
                 }),
+                with: cte,
             })
         }
         _ => Err(ParseError::Unsupported("non-SELECT query body".to_string())),
@@ -191,7 +210,7 @@ fn convert_query(
 
 fn convert_set_expr(expr: sqlparser::ast::SetExpr) -> Result<QueryStmt, ParseError> {
     match expr {
-        sqlparser::ast::SetExpr::Select(select) => convert_select(*select, vec![], None, None),
+        sqlparser::ast::SetExpr::Select(select) => convert_select(*select, vec![], None, None, None),
         sqlparser::ast::SetExpr::Query(query) => convert_query(*query),
         _ => Err(ParseError::Unsupported("set operation not supported".to_string())),
     }
@@ -202,6 +221,7 @@ fn convert_select(
     order_by: Vec<sqlparser::ast::OrderByExpr>,
     limit: Option<sqlparser::ast::Expr>,
     offset: Option<sqlparser::ast::Offset>,
+    cte: Option<Cte>,
 ) -> Result<QueryStmt, ParseError> {
     let select_list = select.projection.into_iter().map(|item| {
         match item {
@@ -258,6 +278,7 @@ fn convert_select(
         order_by,
         limit,
         offset,
+        with: cte,
     })
 }
 
