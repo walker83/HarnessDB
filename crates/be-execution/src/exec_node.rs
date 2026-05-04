@@ -343,22 +343,30 @@ impl ExecNode for LimitExecNode {
 
 pub struct HashJoinExecNode {
     pub join_type: String,
-    pub build_keys: Vec<String>,
-    pub probe_keys: Vec<String>,
+    pub build_keys: Vec<usize>,
+    pub probe_keys: Vec<usize>,
     pub build_child: Box<dyn ExecNode>,
     pub probe_child: Box<dyn ExecNode>,
+    pub build_schema: Schema,
+    pub probe_schema: Schema,
     pub opened: bool,
     pub build_complete: bool,
+    pub probe_consumed: bool,
     pub hash_table: std::collections::HashMap<String, Vec<Block>>,
+    pub current_probe_blocks: Vec<Block>,
+    pub current_probe_idx: usize,
+    pub matched_build_keys: std::collections::HashSet<String>,
 }
 
 impl HashJoinExecNode {
     pub fn new(
         join_type: String,
-        build_keys: Vec<String>,
-        probe_keys: Vec<String>,
+        build_keys: Vec<usize>,
+        probe_keys: Vec<usize>,
         build_child: Box<dyn ExecNode>,
         probe_child: Box<dyn ExecNode>,
+        build_schema: Schema,
+        probe_schema: Schema,
     ) -> Self {
         Self {
             join_type,
@@ -366,10 +374,31 @@ impl HashJoinExecNode {
             probe_keys,
             build_child,
             probe_child,
+            build_schema,
+            probe_schema,
             opened: false,
             build_complete: false,
+            probe_consumed: false,
             hash_table: std::collections::HashMap::new(),
+            current_probe_blocks: Vec::new(),
+            current_probe_idx: 0,
+            matched_build_keys: std::collections::HashSet::new(),
         }
+    }
+
+    fn extract_keys_from_block(block: &Block, key_indices: &[usize]) -> Vec<String> {
+        (0..block.num_rows()).map(|row_idx| {
+            let mut key_parts = Vec::new();
+            for &idx in key_indices {
+                if idx < block.num_columns() {
+                    if let Some(col) = block.column(idx) {
+                        let scalar = col.scalar_at(row_idx);
+                        key_parts.push(format!("{:?}", scalar));
+                    }
+                }
+            }
+            key_parts.join("|")
+        }).collect()
     }
 }
 
@@ -379,25 +408,64 @@ impl ExecNode for HashJoinExecNode {
         self.probe_child.open()?;
         self.opened = true;
         self.build_complete = false;
+        self.probe_consumed = false;
         self.hash_table.clear();
+        self.current_probe_blocks.clear();
+        self.current_probe_idx = 0;
+        self.matched_build_keys.clear();
         Ok(())
     }
 
     fn get_next(&mut self) -> Result<Option<Block>> {
-        // Build phase
+        // Build phase: read all build blocks and populate hash table
         if !self.build_complete {
+            let mut build_blocks = Vec::new();
             while let Some(block) = self.build_child.get_next()? {
-                // TODO: Extract join keys and build hash table
-                let key = "default".to_string();
-                self.hash_table.entry(key).or_insert_with(Vec::new).push(block);
+                build_blocks.push(block);
             }
+
+            // Build hash table: key -> blocks
+            for block in &build_blocks {
+                let keys = Self::extract_keys_from_block(block, &self.build_keys);
+                for (row_idx, key) in keys.iter().enumerate() {
+                    let row_block = block.slice(row_idx, 1);
+                    self.hash_table.entry(key.clone()).or_insert_with(Vec::new).push(row_block);
+                }
+            }
+
             self.build_complete = true;
+            tracing::debug!("HashJoin build complete: {} keys in hash table", self.hash_table.len());
         }
 
-        // Probe phase
+        // Probe phase: read probe blocks and join with hash table
         while let Some(block) = self.probe_child.get_next()? {
-            // TODO: Probe hash table and join
-            return Ok(Some(block));
+            let keys = Self::extract_keys_from_block(&block, &self.probe_keys);
+            let mut result_blocks = Vec::new();
+
+            for (row_idx, key) in keys.iter().enumerate() {
+                if let Some(build_blocks) = self.hash_table.get(key) {
+                    // Found match - concatenate probe row with each matching build row
+                    self.matched_build_keys.insert(key.clone());
+                    let probe_row = block.slice(row_idx, 1);
+                    for build_row in build_blocks {
+                        let mut joined = probe_row.clone();
+                        joined.append_block(build_row);
+                        result_blocks.push(joined);
+                    }
+                }
+                // For INNER join: only output rows with matches
+                // For LEFT OUTER join: would need to track unmatched rows - simplified for now
+            }
+
+            if !result_blocks.is_empty() {
+                // Concatenate all result blocks
+                return Ok(Some(Block::concat(&result_blocks).unwrap_or_else(|| block)));
+            }
+        }
+
+        // For LEFT OUTER join - output unmatched build rows
+        if self.join_type == "LEFT" && !self.matched_build_keys.is_empty() {
+            // This would need to track unmatched build keys - simplified for now
         }
 
         Ok(None)
@@ -408,7 +476,10 @@ impl ExecNode for HashJoinExecNode {
         self.probe_child.close()?;
         self.opened = false;
         self.build_complete = false;
+        self.probe_consumed = false;
         self.hash_table.clear();
+        self.current_probe_blocks.clear();
+        self.matched_build_keys.clear();
         Ok(())
     }
 
