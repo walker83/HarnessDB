@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use types::{Block, DataType, Field, Schema, Vector};
 
 use crate::codec::{self, EncodingType};
-use crate::index::ZoneMap;
+use crate::index::{BitmapIndex, ZoneMap};
 
 const DEFAULT_PAGE_SIZE: usize = 64 * 1024;
 const MAGIC: &[u8; 8] = b"ROVSSEG\0";
@@ -19,6 +19,8 @@ pub struct PageMeta {
     pub num_rows: u32,
     pub encoding: EncodingType,
     pub zone_map: ZoneMap,
+    /// Bitmap index for low-cardinality columns
+    pub bitmap_index: Option<Vec<u8>>,
 }
 
 /// Column metadata in the footer.
@@ -182,6 +184,15 @@ impl SegmentWriter {
             .collect();
         let zone_map = ZoneMap::build(&values);
 
+        // Build bitmap index for low-cardinality columns (distinct < 1000)
+        let bitmap_index = BitmapIndex::build(&values, 1000).and_then(|idx| {
+            if idx.is_valid() {
+                serde_json::to_vec(&idx).ok()
+            } else {
+                None
+            }
+        });
+
         // Choose encoding and optionally compress
         let cardinality_ratio = Self::estimate_cardinality(&values);
         let data_size_hint = raw_data.len();
@@ -233,6 +244,7 @@ impl SegmentWriter {
             num_rows: column.len() as u32,
             encoding,
             zone_map,
+            bitmap_index,
         })
     }
 

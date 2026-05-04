@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use types::{Bitmap, Block, ScalarValue};
+use roaring::RoaringBitmap;
+use std::collections::HashMap;
 
 /// Zone map index: tracks min/max/null_count per page for one column.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,8 @@ impl ZoneMap {
                 PredicateOp::Le => compare_scalars(&min, value) != std::cmp::Ordering::Greater,
                 PredicateOp::Gt => compare_scalars(&max, value) == std::cmp::Ordering::Greater,
                 PredicateOp::Ge => compare_scalars(&max, value) != std::cmp::Ordering::Less,
+                // For complex predicates, zone map can't prune - assume may match
+                _ => true,
             },
             _ => true,
         }
@@ -168,6 +172,163 @@ impl BloomFilter {
     }
 }
 
+/// Bitmap index for low-cardinality columns.
+/// Uses RoaringBitmap for efficient storage and fast intersection operations.
+/// Suitable for columns with < 1000 distinct values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BitmapIndex {
+    /// Map from value to row IDs (as RoaringBitmap)
+    bitmaps: HashMap<String, Vec<u8>>,  // Serialized RoaringBitmap
+    /// List of all unique values (for deserialization)
+    values: Vec<String>,
+    /// Bitmap for NULL values
+    null_bitmap: Vec<u8>,
+    /// Number of rows indexed
+    num_rows: usize,
+}
+
+impl Default for BitmapIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BitmapIndex {
+    pub fn new() -> Self {
+        Self {
+            bitmaps: HashMap::new(),
+            values: Vec::new(),
+            null_bitmap: Vec::new(),
+            num_rows: 0,
+        }
+    }
+    
+    /// Build a bitmap index from scalar values.
+    /// Returns None if cardinality is too high (> 1000 distinct values).
+    pub fn build(values: &[ScalarValue], max_cardinality: usize) -> Option<Self> {
+        if values.is_empty() {
+            return Some(Self::new());
+        }
+        
+        // Use string keys to avoid Eq/Hash constraints on ScalarValue
+        let mut distinct_keys = std::collections::HashSet::new();
+        for v in values {
+            if !v.is_null() {
+                distinct_keys.insert(Self::scalar_to_key(v));
+            }
+        }
+        
+        if distinct_keys.len() > max_cardinality {
+            return None;  // Cardinality too high
+        }
+        
+        let mut index = Self::new();
+        index.num_rows = values.len();
+        
+        // Build bitmaps per value
+        let mut bitmaps_map: HashMap<String, RoaringBitmap> = HashMap::new();
+        let mut null_bitmap = RoaringBitmap::new();
+        
+        for (row_id, value) in values.iter().enumerate() {
+            if value.is_null() {
+                null_bitmap.insert(row_id as u32);
+            } else {
+                let key = Self::scalar_to_key(value);
+                let bitmap = bitmaps_map.entry(key).or_insert_with(RoaringBitmap::new);
+                bitmap.insert(row_id as u32);
+            }
+        }
+        
+        // Serialize bitmaps
+        for (value_key, bitmap) in bitmaps_map.iter() {
+            let serialized = Self::serialize_bitmap(bitmap);
+            index.bitmaps.insert(value_key.clone(), serialized);
+            index.values.push(value_key.clone());
+        }
+        
+        index.null_bitmap = Self::serialize_bitmap(&null_bitmap);
+        
+        Some(index)
+    }
+    
+    /// Check if the index might contain rows matching the predicate.
+    pub fn may_match(&self, op: &PredicateOp, value: &ScalarValue) -> Option<Vec<u32>> {
+        if value.is_null() {
+            // For null predicates, return null bitmap
+            match op {
+                PredicateOp::Eq => {
+                    let bitmap = Self::deserialize_bitmap(&self.null_bitmap);
+                    Some(bitmap.iter().collect())
+                }
+                _ => None,  // Null comparisons other than = are not supported
+            }
+        } else {
+            let value_key = Self::scalar_to_key(value);
+            match op {
+                PredicateOp::Eq => {
+                    // Return bitmap for this exact value
+                    self.bitmaps.get(&value_key).map(|serialized| {
+                        Self::deserialize_bitmap(serialized).iter().collect()
+                    })
+                }
+                PredicateOp::In => {
+                    // For In operation, would need union of multiple bitmaps
+                    None  // Implemented in extended PredicateOp
+                }
+                _ => None,  // Range queries not efficient with bitmap index
+            }
+        }
+    }
+    
+    /// Convert ScalarValue to string key for bitmap storage.
+    fn scalar_to_key(value: &ScalarValue) -> String {
+        match value {
+            ScalarValue::Boolean(b) => b.to_string(),
+            ScalarValue::Int8(n) => n.to_string(),
+            ScalarValue::Int16(n) => n.to_string(),
+            ScalarValue::Int32(n) => n.to_string(),
+            ScalarValue::Int64(n) => n.to_string(),
+            ScalarValue::Int128(n) => n.to_string(),
+            ScalarValue::Float32(f) => f.to_string(),
+            ScalarValue::Float64(f) => f.to_string(),
+            ScalarValue::Date(d) => d.to_string(),
+            ScalarValue::DateTime(d) => d.to_string(),
+            ScalarValue::String(s) => s.clone(),
+            ScalarValue::Binary(b) => format!("binary_{}", b.len()),
+            ScalarValue::Array(_) => "array".to_string(),
+            ScalarValue::Json(_) => "json".to_string(),
+            ScalarValue::Null => "null".to_string(),
+        }
+    }
+    
+    /// Serialize RoaringBitmap to bytes.
+    fn serialize_bitmap(bitmap: &RoaringBitmap) -> Vec<u8> {
+        let mut serialized = Vec::new();
+        if bitmap.serialize_into(&mut serialized).is_err() {
+            return Vec::new();
+        }
+        serialized
+    }
+    
+    /// Deserialize bytes to RoaringBitmap.
+    fn deserialize_bitmap(data: &[u8]) -> RoaringBitmap {
+        if data.is_empty() {
+            return RoaringBitmap::new();
+        }
+        RoaringBitmap::deserialize_from(data).unwrap_or_else(|_| RoaringBitmap::new())
+    }
+    
+    /// Get number of indexed values.
+    pub fn num_values(&self) -> usize {
+        self.values.len()
+    }
+    
+    /// Check if this is a valid bitmap index.
+    pub fn is_valid(&self) -> bool {
+        !self.values.is_empty() || self.num_rows > 0
+    }
+}
+
 /// Predicate operators for pushdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateOp {
@@ -176,6 +337,13 @@ pub enum PredicateOp {
     Le,
     Gt,
     Ge,
+    In,          // col IN (val1, val2, ...)
+    Between,     // col BETWEEN val1 AND val2
+    Like,        // col LIKE pattern
+    NotEq,       // col != value
+    NotIn,       // col NOT IN (val1, val2, ...)
+    IsNull,      // col IS NULL
+    IsNotNull,   // col IS NOT NULL
 }
 
 /// A single predicate for a column.
@@ -184,6 +352,64 @@ pub struct ColumnPredicate {
     pub column_name: String,
     pub op: PredicateOp,
     pub value: ScalarValue,
+    /// Additional values for In/Between operations
+    pub values: Vec<ScalarValue>,
+}
+
+impl ColumnPredicate {
+    pub fn new(column_name: String, op: PredicateOp, value: ScalarValue) -> Self {
+        Self {
+            column_name,
+            op,
+            value,
+            values: Vec::new(),
+        }
+    }
+    
+    pub fn new_in(column_name: String, values: Vec<ScalarValue>) -> Self {
+        Self {
+            column_name,
+            op: PredicateOp::In,
+            value: ScalarValue::Null,  // Placeholder
+            values,
+        }
+    }
+    
+    pub fn new_between(column_name: String, low: ScalarValue, high: ScalarValue) -> Self {
+        Self {
+            column_name,
+            op: PredicateOp::Between,
+            value: low,
+            values: vec![high],
+        }
+    }
+    
+    pub fn new_like(column_name: String, pattern: String) -> Self {
+        Self {
+            column_name,
+            op: PredicateOp::Like,
+            value: ScalarValue::String(pattern),
+            values: Vec::new(),
+        }
+    }
+    
+    pub fn new_is_null(column_name: String) -> Self {
+        Self {
+            column_name,
+            op: PredicateOp::IsNull,
+            value: ScalarValue::Null,
+            values: Vec::new(),
+        }
+    }
+    
+    pub fn new_is_not_null(column_name: String) -> Self {
+        Self {
+            column_name,
+            op: PredicateOp::IsNotNull,
+            value: ScalarValue::Null,
+            values: Vec::new(),
+        }
+    }
 }
 
 /// Compare two scalar values. Only works for comparable types.
@@ -208,13 +434,74 @@ pub fn compare_scalars(a: &ScalarValue, b: &ScalarValue) -> std::cmp::Ordering {
 
 /// Evaluate a predicate against a scalar value.
 pub fn eval_predicate(op: &PredicateOp, col_val: &ScalarValue, pred_val: &ScalarValue) -> bool {
+    eval_predicate_with_values(op, col_val, pred_val, &[])
+}
+
+/// Evaluate a predicate with additional values (for In/Between).
+pub fn eval_predicate_with_values(op: &PredicateOp, col_val: &ScalarValue, pred_val: &ScalarValue, values: &[ScalarValue]) -> bool {
     if col_val.is_null() {
-        return false;
+        return matches!(op, PredicateOp::IsNull);
     }
-    match compare_scalars(col_val, pred_val) {
-        std::cmp::Ordering::Less => matches!(op, PredicateOp::Lt | PredicateOp::Le),
-        std::cmp::Ordering::Equal => matches!(op, PredicateOp::Eq | PredicateOp::Le | PredicateOp::Ge),
-        std::cmp::Ordering::Greater => matches!(op, PredicateOp::Gt | PredicateOp::Ge),
+    
+    match op {
+        PredicateOp::Eq => compare_scalars(col_val, pred_val) == std::cmp::Ordering::Equal,
+        PredicateOp::NotEq => compare_scalars(col_val, pred_val) != std::cmp::Ordering::Equal,
+        PredicateOp::Lt => compare_scalars(col_val, pred_val) == std::cmp::Ordering::Less,
+        PredicateOp::Le => compare_scalars(col_val, pred_val) != std::cmp::Ordering::Greater,
+        PredicateOp::Gt => compare_scalars(col_val, pred_val) == std::cmp::Ordering::Greater,
+        PredicateOp::Ge => compare_scalars(col_val, pred_val) != std::cmp::Ordering::Less,
+        PredicateOp::In => {
+            // Check if col_val is in the list of values
+            values.iter().any(|v| compare_scalars(col_val, v) == std::cmp::Ordering::Equal)
+        },
+        PredicateOp::NotIn => {
+            // Check if col_val is NOT in the list of values
+            !values.iter().any(|v| compare_scalars(col_val, v) == std::cmp::Ordering::Equal)
+        },
+        PredicateOp::Between => {
+            // Check if col_val is between pred_val (low) and values[0] (high)
+            if values.is_empty() {
+                return false;
+            }
+            let low_ord = compare_scalars(col_val, pred_val);
+            let high_ord = compare_scalars(col_val, &values[0]);
+            low_ord != std::cmp::Ordering::Less && high_ord != std::cmp::Ordering::Greater
+        },
+        PredicateOp::Like => {
+            // Simple LIKE implementation: % wildcard only
+            match pred_val {
+                ScalarValue::String(pattern) => eval_like(col_val, pattern),
+                _ => false,
+            }
+        },
+        PredicateOp::IsNull => col_val.is_null(),
+        PredicateOp::IsNotNull => !col_val.is_null(),
+    }
+}
+
+/// Evaluate LIKE predicate with simple % wildcard support.
+fn eval_like(col_val: &ScalarValue, pattern: &str) -> bool {
+    match col_val {
+        ScalarValue::String(s) => {
+            // Simple implementation: only support % wildcard
+            if pattern.starts_with('%') && pattern.ends_with('%') {
+                // Contains: %pattern%
+                let inner = &pattern[1..pattern.len()-1];
+                s.contains(inner)
+            } else if pattern.starts_with('%') {
+                // Ends with: %pattern
+                let suffix = &pattern[1..];
+                s.ends_with(suffix)
+            } else if pattern.ends_with('%') {
+                // Starts with: pattern%
+                let prefix = &pattern[..pattern.len()-1];
+                s.starts_with(prefix)
+            } else {
+                // Exact match
+                s == pattern
+            }
+        },
+        _ => false,
     }
 }
 
