@@ -327,26 +327,26 @@ pub struct HandshakeResponse {
 impl HandshakeResponse {
     /// Parse a handshake response from raw packet payload (after header).
     pub fn parse(payload: &[u8]) -> Result<Self, String> {
-        let mut cur = Cursor::new(payload);
+        // MySQL HandshakeResponse41 format:
+        // offset 0-3:   capability_flags (4 bytes LE)
+        // offset 4-7:   max_packet_size (4 bytes LE)
+        // offset 8:     charset (1 byte)
+        // offset 9-31:  23 bytes reserved
+        // offset 32+:  username (null-terminated string)
+        // after username: auth_response (length-encoded or null-terminated)
+        // after auth_response: database name (null-terminated, if CONNECT_WITH_DB)
+        // after database: auth_plugin_name (null-terminated, if PLUGIN_AUTH)
 
-        // Read all 4 bytes of capability_flags at once (offset 0-3)
-        if payload.len() < 4 {
+        if payload.len() < 33 {
             return Err("handshake response too short".to_string());
         }
+
         let capability_flags = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-
-        // Now set cursor position after the 4 capability bytes + 4 max_packet_size + 1 charset
-        let reserved_start = 9; // 4 capability + 4 max_packet + 1 charset
-        if payload.len() < reserved_start + 23 {
-            return Err("handshake response too short".to_string());
-        }
-        cur.set_position((reserved_start + 23) as u64);
-
         let max_packet_size = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
         let charset = payload[8];
 
-        // Username (null-terminated) - starts right after the 23 reserved bytes at offset 32
-        let username_start = (reserved_start + 23) as usize;
+        // Username starts at offset 32
+        let username_start = 32;
         let username_end = payload[username_start..]
             .iter()
             .position(|&b| b == 0)
