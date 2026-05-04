@@ -1,5 +1,5 @@
 use common::Result;
-use types::{Block, Bitmap, Vector, Schema};
+use types::{Block, Bitmap, Vector, Schema, ScalarValue};
 use std::sync::{Arc, Mutex};
 use be_storage::tablet::{Tablet, TabletSchema, truncate_tablet};
 
@@ -202,7 +202,7 @@ impl ExecNode for AggregateExecNode {
 }
 
 pub struct SortExecNode {
-    pub order_by: Vec<(String, bool)>,
+    pub order_by: Vec<(usize, bool)>,  // (column_index, ascending)
     pub child: Box<dyn ExecNode>,
     pub opened: bool,
     pub buffered: Vec<Block>,
@@ -228,16 +228,76 @@ impl ExecNode for SortExecNode {
             self.buffered.push(block);
         }
 
-        // TODO: Actually sort the blocks
-        // For now, return concatenated blocks
         if self.buffered.is_empty() {
             return Ok(None);
         }
 
+        // Concatenate all blocks
+        let combined = Block::concat(&self.buffered);
+        if combined.is_none() {
+            return Ok(None);
+        }
+        let mut block = combined.unwrap();
+
+        // If no sort keys, return as-is
+        if self.order_by.is_empty() {
+            self.returned = true;
+            return Ok(Some(block));
+        }
+
+        // Create sort indices: [0, 1, 2, ..., n-1]
+        let num_rows = block.num_rows();
+        let mut indices: Vec<usize> = (0..num_rows).collect();
+
+        // Multi-key comparator function
+        let order_by = self.order_by.clone();
+        let cmp_block = &block;
+        indices.sort_by(|&a, &b| {
+            for &(col_idx, ascending) in &order_by {
+                if col_idx >= cmp_block.num_columns() {
+                    continue;
+                }
+                if let Some(col) = cmp_block.column(col_idx) {
+                    let scalar_a = col.scalar_at(a);
+                    let scalar_b = col.scalar_at(b);
+                    // Compare scalars
+                    let ord = match (scalar_a, scalar_b) {
+                        (ScalarValue::Int64(va), ScalarValue::Int64(vb)) => {
+                            va.cmp(&vb)
+                        }
+                        (ScalarValue::Int32(va), ScalarValue::Int32(vb)) => {
+                            va.cmp(&vb)
+                        }
+                        (ScalarValue::Float64(va), ScalarValue::Float64(vb)) => {
+                            va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
+                        }
+                        (ScalarValue::String(va), ScalarValue::String(vb)) => {
+                            va.cmp(&vb)
+                        }
+                        _ => std::cmp::Ordering::Equal,
+                    };
+                    let ord = if ascending { ord } else { ord.reverse() };
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+
+        // Build sorted block by applying permutation
+        let mut sorted_block = Block::empty(block.schema().clone());
+        for &idx in &indices {
+            let row_block = block.slice(idx, 1);
+            if sorted_block.is_empty() {
+                sorted_block = row_block;
+            } else {
+                sorted_block.append_block(&row_block);
+            }
+        }
+
         self.returned = true;
-        Ok(Some(Block::concat(&self.buffered).unwrap_or_else(|| {
-            self.buffered.first().cloned().unwrap()
-        })))
+        Ok(Some(sorted_block))
     }
 
     fn close(&mut self) -> Result<()> {
