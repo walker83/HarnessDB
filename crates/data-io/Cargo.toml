@@ -14,3 +14,7 @@ common = { workspace = true }
 types = { workspace = true }
 chrono = { workspace = true }
 parquet = "58"
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"

@@ -398,6 +398,7 @@ mod tests {
         let plan = PlanNode {
             id: PlanNodeId(0),
             node_type: PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: "t1".into(),
                 database: None,
                 columns: vec!["a".into()],
@@ -420,6 +421,7 @@ mod tests {
         let plan = PlanNode {
             id: PlanNodeId(0),
             node_type: PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: "t1".into(),
                 database: None,
                 columns: vec![],

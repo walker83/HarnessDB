@@ -6,6 +6,8 @@ pub mod compaction;
 pub mod segment;
 pub mod index;
 pub mod codec;
+pub mod backup;
 
 pub use engine::StorageEngine;
 pub use tablet::Tablet;
+pub use backup::{TabletExporter, TabletExportMeta, RowsetExporter, RowsetExportMeta};

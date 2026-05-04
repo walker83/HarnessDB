@@ -134,6 +134,7 @@ fn create_mv_scan_plan(mv: &MaterializedView, _query: &QueryStmt) -> PlanNode {
     PlanNode {
         id: PlanNodeId(0),
         node_type: PlanNodeType::Scan(ScanNode {
+            catalog: None,
             table_name: mv.name.clone(),
             database: Some(mv.database.clone()),
             columns: mv.schema.iter().map(|c| c.name.clone()).collect(),

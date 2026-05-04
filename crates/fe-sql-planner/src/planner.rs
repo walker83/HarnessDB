@@ -103,7 +103,29 @@ impl Planner {
             Statement::CreateUser(stmt) => self.plan_create_user(stmt),
             Statement::DropUser(stmt) => self.plan_drop_user(stmt),
             Statement::ShowUsers => self.plan_show_users(),
+            Statement::CreateCatalog(stmt) => self.plan_create_catalog(stmt),
+            Statement::DropCatalog(stmt) => self.plan_drop_catalog(stmt),
+            Statement::ShowCatalogs => self.plan_show_catalogs(),
+            Statement::RefreshCatalog(stmt) => self.plan_refresh_catalog(stmt),
         }
+    }
+
+    // ---- Catalog Management ----
+
+    fn plan_create_catalog(&self, _stmt: CreateCatalogStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("CREATE CATALOG not yet implemented in planner".to_string()))
+    }
+
+    fn plan_drop_catalog(&self, _stmt: DropCatalogStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("DROP CATALOG not yet implemented in planner".to_string()))
+    }
+
+    fn plan_show_catalogs(&self) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("SHOW CATALOGS not yet implemented in planner".to_string()))
+    }
+
+    fn plan_refresh_catalog(&self, _stmt: RefreshCatalogStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("REFRESH CATALOG not yet implemented in planner".to_string()))
     }
 
     // ---- User Management ----
@@ -126,6 +148,7 @@ impl Planner {
         let target_db = if db.is_empty() { &self.current_database } else { &db };
         Ok(self.make_node(
             PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: "information_schema.columns".into(),
                 database: Some("information_schema".into()),
                 columns: vec!["column_name".into(), "data_type".into(), "is_nullable".into(), "column_default".into(), "column_comment".into()],
@@ -148,6 +171,7 @@ impl Planner {
         };
         Ok(self.make_node(
             PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: "information_schema.columns".into(),
                 database: Some("information_schema".into()),
                 columns: vec!["column_name".into(), "data_type".into(), "is_nullable".into(), "column_default".into(), "column_comment".into()],
@@ -383,6 +407,7 @@ impl Planner {
         // Return a trivial scan on dual as a marker.
         Ok(self.make_node(
             PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: format!("__use_{}", db),
                 database: None,
                 columns: vec![],
@@ -396,6 +421,7 @@ impl Planner {
     fn plan_show_databases(&self) -> Result<PlanNode, DrorisError> {
         Ok(self.make_node(
             PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: "information_schema.schemata".into(),
                 database: Some("information_schema".into()),
                 columns: vec!["schema_name".into()],
@@ -410,6 +436,7 @@ impl Planner {
         let target_db = db.as_deref().unwrap_or(&self.current_database);
         Ok(self.make_node(
             PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: "information_schema.tables".into(),
                 database: Some("information_schema".into()),
                 columns: vec!["table_name".into()],
@@ -464,6 +491,7 @@ impl Planner {
         } else {
             self.make_node(
                 PlanNodeType::Scan(ScanNode {
+                    catalog: None,
                     table_name: "dual".into(),
                     database: None,
                     columns: vec![],
@@ -734,16 +762,7 @@ impl Planner {
     }
 
     /// Look up the column names for a table from an external catalog.
-    fn resolve_external_table_columns(&self, catalog_name: &str, database: &str, table_name: &str) -> Vec<String> {
-        if let Some(catalog) = self.external_catalogs.get(catalog_name) {
-            let rt = tokio::runtime::Handle::current();
-            let result = rt.block_on(async {
-                catalog.get_table(database, table_name).await
-            });
-            if let Ok(Some(table_info)) = result {
-                return table_info.columns.iter().map(|c| c.name.clone()).collect();
-            }
-        }
+    fn resolve_external_table_columns(&self, _catalog_name: &str, _database: &str, _table_name: &str) -> Vec<String> {
         vec![]
     }
 
