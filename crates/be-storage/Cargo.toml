@@ -16,3 +16,6 @@ types = { workspace = true }
 be-common = { workspace = true }
 lz4_flex = "0.11"
 dashmap = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

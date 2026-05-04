@@ -1,6 +1,5 @@
 use be_storage::tablet::{Tablet, TabletSchema, TabletColumn};
 use types::{Block, DataType, Field, Schema, Vector, ScalarValue};
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 // ===========================================================================
@@ -63,7 +62,7 @@ fn test_memtable_insert_single_row() {
     let block = create_test_block();
     tablet.write(&block).unwrap();
 
-    assert_eq!(tablet.memtable.read().num_rows(), 3);
+    assert_eq!(tablet.memtable_num_rows(), 3);
 }
 
 #[test]
@@ -75,8 +74,8 @@ fn test_memtable_memory_size() {
     let block = create_test_block();
     tablet.write(&block).unwrap();
 
-    let memtable = tablet.memtable.read();
-    assert!(memtable.memory_size() > 0);
+    let memtable_size = tablet.memtable_memory_size();
+    assert!(memtable_size > 0);
 }
 
 #[test]
@@ -89,7 +88,7 @@ fn test_memtable_to_block() {
     tablet.write(&block).unwrap();
 
     let schema_ref = schema.to_schema();
-    let result_block = tablet.memtable.read().to_block(&schema_ref);
+    let result_block = tablet.memtable_to_block(&schema_ref);
 
     assert_eq!(result_block.num_rows(), 3);
     assert_eq!(result_block.num_columns(), 3);
@@ -101,13 +100,34 @@ fn test_memtable_insert_multiple_blocks() {
     let schema = create_test_schema();
     let tablet = Tablet::new(1, schema.clone(), temp_dir.path().to_path_buf());
 
-    let block1 = create_test_block();
-    let block2 = create_test_block();
+    let block1_schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::String, true),
+        Field::new("value", DataType::Int64, true),
+    ]);
+    let columns1 = vec![
+        Vector::Int64(types::vector::Int64Vector::from_vec(vec![1, 2, 3])),
+        Vector::String(types::vector::StringVector::from_vec(vec!["alice", "bob", "charlie"])),
+        Vector::Int64(types::vector::Int64Vector::from_vec(vec![100, 200, 300])),
+    ];
+    let block1 = Block::new(block1_schema, columns1);
+
+    let block2_schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::String, true),
+        Field::new("value", DataType::Int64, true),
+    ]);
+    let columns2 = vec![
+        Vector::Int64(types::vector::Int64Vector::from_vec(vec![4, 5, 6])),
+        Vector::String(types::vector::StringVector::from_vec(vec!["david", "eve", "frank"])),
+        Vector::Int64(types::vector::Int64Vector::from_vec(vec![400, 500, 600])),
+    ];
+    let block2 = Block::new(block2_schema, columns2);
     
     tablet.write(&block1).unwrap();
     tablet.write(&block2).unwrap();
 
-    assert_eq!(tablet.memtable.read().num_rows(), 6);
+    assert_eq!(tablet.memtable_num_rows(), 6);
 }
 
 #[test]
@@ -116,12 +136,12 @@ fn test_memtable_is_empty() {
     let schema = create_test_schema();
     let tablet = Tablet::new(1, schema.clone(), temp_dir.path().to_path_buf());
 
-    assert!(tablet.memtable.read().is_empty());
+    assert!(tablet.memtable_is_empty());
 
     let block = create_test_block();
     tablet.write(&block).unwrap();
 
-    assert!(!tablet.memtable.read().is_empty());
+    assert!(!tablet.memtable_is_empty());
 }
 
 #[test]
@@ -133,10 +153,10 @@ fn test_memtable_clear() {
     let block = create_test_block();
     tablet.write(&block).unwrap();
 
-    tablet.memtable.write().clear();
+    tablet.memtable_clear();
 
-    assert!(tablet.memtable.read().is_empty());
-    assert_eq!(tablet.memtable.read().memory_size(), 0);
+    assert!(tablet.memtable_is_empty());
+    assert_eq!(tablet.memtable_memory_size(), 0);
 }
 
 #[test]
@@ -148,7 +168,7 @@ fn test_memtable_should_flush() {
     let block = create_test_block();
     tablet.write(&block).unwrap();
 
-    assert!(!tablet.memtable.read().should_flush());
+    assert!(!tablet.memtable_should_flush());
 }
 
 #[test]
@@ -206,7 +226,7 @@ fn test_tablet_write_with_string_key() {
     let block = Block::new(block_schema, columns);
     tablet.write(&block).unwrap();
 
-    assert_eq!(tablet.memtable.read().num_rows(), 3);
+    assert_eq!(tablet.memtable_num_rows(), 3);
 }
 
 #[test]
@@ -250,5 +270,5 @@ fn test_tablet_write_with_int32_key() {
     let block = Block::new(block_schema, columns);
     tablet.write(&block).unwrap();
 
-    assert_eq!(tablet.memtable.read().num_rows(), 3);
+    assert_eq!(tablet.memtable_num_rows(), 3);
 }

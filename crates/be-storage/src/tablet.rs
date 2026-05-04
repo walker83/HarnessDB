@@ -504,6 +504,36 @@ impl Tablet {
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
+
+    /// Get memtable row count.
+    pub fn memtable_num_rows(&self) -> usize {
+        self.memtable.read().num_rows()
+    }
+
+    /// Get memtable memory size.
+    pub fn memtable_memory_size(&self) -> u64 {
+        self.memtable.read().memory_size()
+    }
+
+    /// Check if memtable is empty.
+    pub fn memtable_is_empty(&self) -> bool {
+        self.memtable.read().is_empty()
+    }
+
+    /// Check if memtable should flush.
+    pub fn memtable_should_flush(&self) -> bool {
+        self.memtable.read().should_flush()
+    }
+
+    /// Clear memtable.
+    pub fn memtable_clear(&self) {
+        self.memtable.write().clear()
+    }
+
+    /// Convert memtable to block.
+    pub fn memtable_to_block(&self, schema: &Schema) -> Block {
+        self.memtable.read().to_block(schema)
+    }
 }
 
 /// Estimate the memory size of a block.
