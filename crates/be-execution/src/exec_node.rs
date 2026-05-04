@@ -7,7 +7,8 @@ use types::vector::{
 };
 use std::sync::Arc;
 use be_storage::StorageEngine;
-use be_storage::index::{ColumnPredicate, PredicateOp};
+use be_storage::index::{ColumnPredicate, apply_predicates_to_block};
+use crate::predicate_parser::{parse_predicates, parse_set_value, make_affected_rows_block};
 
 #[async_trait]
 pub trait ExecNode: Send + Sync {
@@ -157,54 +158,11 @@ impl ScanExecNode {
     
     /// Build predicates for storage read.
     fn build_predicates(&self) -> Vec<ColumnPredicate> {
-        self.predicates.iter().filter_map(|p| Self::parse_predicate(p)).collect()
-    }
-    
-    /// Parse a simple predicate string like "col = value".
-    fn parse_predicate(pred_str: &str) -> Option<ColumnPredicate> {
-        // Simple predicate parsing: "column op value"
-        // Supported ops: =, <, <=, >, >=
-        let parts: Vec<&str> = pred_str.split_whitespace().collect();
-        if parts.len() != 3 {
-            return None;
+        let mut all_predicates = Vec::new();
+        for p in &self.predicates {
+            all_predicates.extend(parse_predicates(p));
         }
-        
-        let column_name = parts[0];
-        let op_str = parts[1];
-        let value_str = parts[2];
-        
-        let op = match op_str {
-            "=" | "==" => PredicateOp::Eq,
-            "<" => PredicateOp::Lt,
-            "<=" => PredicateOp::Le,
-            ">" => PredicateOp::Gt,
-            ">=" => PredicateOp::Ge,
-            _ => return None,
-        };
-        
-        // Parse value (simple type inference)
-        let value = if let Ok(n) = value_str.parse::<i64>() {
-            ScalarValue::Int64(n)
-        } else if let Ok(n) = value_str.parse::<i32>() {
-            ScalarValue::Int32(n)
-        } else if let Ok(f) = value_str.parse::<f64>() {
-            ScalarValue::Float64(f)
-        } else if value_str == "true" || value_str == "false" {
-            ScalarValue::Boolean(value_str == "true")
-        } else if value_str.starts_with("'") && value_str.ends_with("'") {
-            // String literal: 'value'
-            ScalarValue::String(value_str[1..value_str.len()-1].to_string())
-        } else {
-            // Treat as string
-            ScalarValue::String(value_str.to_string())
-        };
-        
-        Some(ColumnPredicate {
-            column_name: column_name.to_string(),
-            op,
-            value,
-            values: Vec::new(),
-        })
+        all_predicates
     }
 
     /// Read data from storage engine if configured.
@@ -1334,18 +1292,55 @@ impl ExecNode for UpdateExecNode {
         }
         self.executed = true;
 
-        if let (Some(tablet_id), Some(_storage)) = (self.tablet_id, &self.storage) {
-            // Note: Full predicate parsing and delete implementation requires
-            // expression evaluation infrastructure. For now, log the operation.
-            if let Some(predicate) = &self.selection_predicate {
-                tracing::info!("UPDATE on tablet {} with predicate: {}", tablet_id, predicate);
-            } else {
-                tracing::info!("UPDATE on tablet {} (full table)", tablet_id);
+        let Some(tablet_id) = self.tablet_id else {
+            tracing::warn!("UPDATE without tablet_id on {}.{}", self.database, self.table_name);
+            return Ok(Some(make_affected_rows_block(0)));
+        };
+        let Some(storage) = &self.storage else {
+            tracing::warn!("UPDATE without storage on {}.{}", self.database, self.table_name);
+            return Ok(Some(make_affected_rows_block(0)));
+        };
+
+        // Parse WHERE predicates
+        let predicates = match &self.selection_predicate {
+            Some(pred_str) => parse_predicates(pred_str),
+            None => vec![],
+        };
+
+        // Read all data from the tablet
+        let full_block = storage.read_tablet(tablet_id, None, &[])?;
+        if full_block.is_empty() {
+            return Ok(Some(make_affected_rows_block(0)));
+        }
+
+        // Find matching rows
+        let selection = apply_predicates_to_block(&full_block, &predicates);
+        let affected_count = selection.set_count();
+        if affected_count == 0 {
+            return Ok(Some(make_affected_rows_block(0)));
+        }
+
+        // Extract matching rows and apply SET clauses
+        let mut modified_block = full_block.filter(&selection);
+        let schema = modified_block.schema().clone();
+
+        for (col_name, value_str) in &self.set_clauses {
+            if let Some(col_idx) = schema.index_of(col_name) {
+                if let Some(field) = schema.field(col_idx) {
+                    let new_value = parse_set_value(value_str, &field.data_type);
+                    let num_rows = modified_block.num_rows();
+                    let new_col = Vector::from_scalar(&new_value, num_rows);
+                    modified_block.set_column(col_idx, new_col);
+                }
             }
         }
 
-        tracing::info!("UPDATE executed on {}.{}", self.database, self.table_name);
-        Ok(None)
+        // Delete old matching rows, then write back modified rows
+        storage.delete(tablet_id, &predicates)?;
+        storage.write_batch(tablet_id, &modified_block)?;
+
+        tracing::info!("UPDATE on {}.{}: {} rows affected", self.database, self.table_name, affected_count);
+        Ok(Some(make_affected_rows_block(affected_count)))
     }
 
     async fn close(&mut self) -> Result<()> {
@@ -1403,18 +1398,24 @@ impl ExecNode for DeleteExecNode {
         }
         self.executed = true;
 
-        if let (Some(tablet_id), Some(_storage)) = (self.tablet_id, &self.storage) {
-            // Note: Full predicate parsing and delete implementation requires
-            // expression evaluation infrastructure. For now, log the operation.
-            if let Some(predicate) = &self.selection_predicate {
-                tracing::info!("DELETE from tablet {} with predicate: {}", tablet_id, predicate);
-            } else {
-                tracing::info!("DELETE from tablet {} (full table)", tablet_id);
-            }
-        }
+        let Some(tablet_id) = self.tablet_id else {
+            tracing::warn!("DELETE without tablet_id on {}.{}", self.database, self.table_name);
+            return Ok(Some(make_affected_rows_block(0)));
+        };
+        let Some(storage) = &self.storage else {
+            tracing::warn!("DELETE without storage on {}.{}", self.database, self.table_name);
+            return Ok(Some(make_affected_rows_block(0)));
+        };
 
-        tracing::info!("DELETE executed on {}.{}", self.database, self.table_name);
-        Ok(None)
+        let predicates = match &self.selection_predicate {
+            Some(pred_str) => parse_predicates(pred_str),
+            None => vec![],
+        };
+
+        let affected = storage.delete(tablet_id, &predicates)?;
+
+        tracing::info!("DELETE from {}.{}: {} rows affected", self.database, self.table_name, affected);
+        Ok(Some(make_affected_rows_block(affected)))
     }
 
     async fn close(&mut self) -> Result<()> {
