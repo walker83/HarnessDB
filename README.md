@@ -62,8 +62,10 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **SQL Parser** | ✅ | MySQL-compatible SQL parsing via `sqlparser` crate |
 | **Query Planner** | ✅ | AST → Logical Plan → Physical Plan with rule-based optimization |
 | **Optimizer** | ✅ | Predicate pushdown, column pruning, limit pushdown, join reordering |
-| **Expression Engine** | ✅ | Vectorized batch evaluation, 20+ built-in scalar functions |
+| **Expression Engine** | ✅ | Vectorized batch evaluation, 30+ built-in scalar functions |
 | **Aggregate Functions** | ✅ | COUNT, SUM, AVG, MIN, MAX, COUNT DISTINCT, GROUP_CONCAT |
+| **Window Functions** | ✅ | ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD |
+| **Math Functions** | ✅ | sin, cos, tan, asin, acos, log, log10, exp, sqrt, pow, pi, rand |
 | **Vectorized Storage** | ✅ | Columnar memory layout with typed vectors (Int64, Float64, String, Date...) |
 | **Null Bitmap** | ✅ | Bit-set null tracking with fast AND/OR/NOT operations |
 | **Block** | ✅ | Batch columnar data (schema + vectors) with projection/filter/slice |
@@ -72,6 +74,13 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **BloomFilter Index** | ✅ | Probabilistic filter for high-cardinality column pruning |
 | **Compaction** | ✅ | Cumulative + Base compaction with priority queue scheduler |
 | **MySQL Protocol** | ✅ | MySQL wire protocol server (handshake, auth, COM_QUERY, result sets) |
+| **CTE (WITH)** | ✅ | Common Table Expressions with recursive support |
+| **UNION/INTERSECT/EXCEPT** | ✅ | Set operations on queries |
+| **Subqueries** | ✅ | IN, EXISTS, NOT IN, NOT EXISTS with SemiJoin/AntiSemiJoin |
+| **TRUNCATE TABLE** | ✅ | Fast table truncation |
+| **CREATE VIEW** | ✅ | View creation and metadata |
+| **SHOW CREATE TABLE** | ✅ | DDLShowCreate result |
+| **gRPC FE-BE** | ✅ | Backend service communication via tonic/prost |
 | **Distributed Query** | ✅ | Fragment planning, exchange operators (HashPartition/Broadcast/Gather) |
 | **Query Scheduler** | ✅ | Load-aware BE node selection, round-robin assignment, failure re-schedule |
 | **Query Coordinator** | ✅ | Full query lifecycle (plan → fragment → schedule → execute → collect) |
