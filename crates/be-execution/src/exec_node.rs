@@ -860,3 +860,334 @@ impl ExecNode for TruncateExecNode {
         self
     }
 }
+
+// Window function execution node
+pub struct WindowExecNode {
+    pub partition_by: Vec<usize>,  // column indices for PARTITION BY
+    pub order_by: Vec<(usize, bool)>,  // (column_index, ascending) for ORDER BY
+    pub window_func: String,  // "row_number", "rank", "dense_rank", "lead", "lag", "first_value", "last_value"
+    pub window_func_col: usize,  // column index to operate on
+    pub offset: i64,  // for lead/lag: how many rows to look ahead/behind
+    pub default_val: ScalarValue,  // for lead/lag: default value when out of bounds
+    pub child: Box<dyn ExecNode>,
+    pub opened: bool,
+    pub returned: bool,
+    pub buffered: Option<Block>,
+}
+
+impl WindowExecNode {
+    pub fn new(
+        window_func: String,
+        window_func_col: usize,
+        partition_by: Vec<usize>,
+        order_by: Vec<(usize, bool)>,
+        child: Box<dyn ExecNode>,
+    ) -> Self {
+        Self {
+            partition_by,
+            order_by,
+            window_func,
+            window_func_col,
+            offset: 1,
+            default_val: ScalarValue::Null,
+            child,
+            opened: false,
+            returned: false,
+            buffered: None,
+        }
+    }
+}
+
+impl ExecNode for WindowExecNode {
+    fn open(&mut self) -> Result<()> {
+        self.child.open()?;
+        self.opened = true;
+        self.returned = false;
+        self.buffered = None;
+        Ok(())
+    }
+
+    fn get_next(&mut self) -> Result<Option<Block>> {
+        if self.returned {
+            return Ok(None);
+        }
+
+        // Read all data from child
+        let mut all_blocks = Vec::new();
+        while let Some(block) = self.child.get_next()? {
+            all_blocks.push(block);
+        }
+
+        if all_blocks.is_empty() {
+            self.returned = true;
+            return Ok(None);
+        }
+
+        // Concatenate all blocks
+        let combined = Block::concat(&all_blocks);
+        if combined.is_none() {
+            self.returned = true;
+            return Ok(None);
+        }
+        let mut block = combined.unwrap();
+
+        // Group by partition
+        let num_rows = block.num_rows();
+        let mut partition_ranges: Vec<(usize, usize)> = Vec::new();  // (start, end) exclusive
+
+        if self.partition_by.is_empty() {
+            // Single partition covering all rows
+            partition_ranges.push((0, num_rows));
+        } else {
+            // Find partition boundaries
+            let mut partition_start = 0;
+            let mut prev_key = self.get_partition_key(&block, 0);
+
+            for i in 1..num_rows {
+                let curr_key = self.get_partition_key(&block, i);
+                if curr_key != prev_key {
+                    partition_ranges.push((partition_start, i));
+                    partition_start = i;
+                    prev_key = curr_key;
+                }
+            }
+            partition_ranges.push((partition_start, num_rows));
+        }
+
+        // Compute window function for each partition
+        let mut result_rows: Vec<Vec<ScalarValue>> = Vec::new();
+
+        for (start, end) in partition_ranges {
+            let partition_size = end - start;
+
+            // Compute window function values for this partition
+            let window_values = self.compute_window_over_block_for_partition(&block, start, partition_size)?;
+
+            // Add window values as scalar
+            for i in 0..partition_size {
+                let mut result_row = Vec::new();
+                for col_idx in 0..block.num_columns() {
+                    if let Some(col) = block.column(col_idx) {
+                        result_row.push(col.scalar_at(start + i));
+                    }
+                }
+                let window_val = match &window_values {
+                    Vector::Int64(v) => ScalarValue::Int64(*v.data().get(i).unwrap_or(&0)),
+                    Vector::Int32(v) => ScalarValue::Int32(*v.data().get(i).unwrap_or(&0)),
+                    Vector::Float64(v) => ScalarValue::Float64(*v.data().get(i).unwrap_or(&0.0)),
+                    Vector::String(v) => ScalarValue::String(v.get(i).unwrap_or("").to_string()),
+                    _ => ScalarValue::Null,
+                };
+                result_row.push(window_val);
+                result_rows.push(result_row);
+            }
+        }
+
+        // Build result block
+        if result_rows.is_empty() {
+            self.returned = true;
+            return Ok(None);
+        }
+
+        let num_cols = result_rows[0].len();
+        let num_result_rows = result_rows.len();
+
+        let mut columns: Vec<Vector> = Vec::new();
+        for col_idx in 0..num_cols {
+            let scalars: Vec<ScalarValue> = result_rows.iter()
+                .filter_map(|row| row.get(col_idx).cloned())
+                .collect();
+
+            let vector = match scalars.first().unwrap_or(&ScalarValue::Null) {
+                ScalarValue::Int64(_) => {
+                    let data: Vec<i64> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::Int64(i) = s { Some(*i) } else { None }
+                    }).collect();
+                    Vector::Int64(types::vector::Int64Vector::from_vec(data))
+                }
+                ScalarValue::Int32(_) => {
+                    let data: Vec<i32> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::Int32(i) = s { Some(*i) } else { None }
+                    }).collect();
+                    Vector::Int32(types::vector::Int32Vector::from_vec(data))
+                }
+                ScalarValue::Float64(_) => {
+                    let data: Vec<f64> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::Float64(f) = s { Some(*f) } else { None }
+                    }).collect();
+                    Vector::Float64(types::vector::Float64Vector::from_vec(data))
+                }
+                ScalarValue::String(_) => {
+                    let data: Vec<String> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::String(s) = s { Some(s.clone()) } else { None }
+                    }).collect();
+                    let data_refs: Vec<&str> = data.iter().map(|s| s.as_str()).collect();
+                    Vector::String(types::vector::StringVector::from_vec(data_refs))
+                }
+                _ => Vector::Null(types::vector::NullVector::new(num_result_rows)),
+            };
+            columns.push(vector);
+        }
+
+        // Schema for result - add window column
+        let mut schema_fields: Vec<types::Field> = block.schema().fields().to_vec();
+        schema_fields.push(types::Field::new("window_col", types::DataType::Int64, true));
+
+        self.returned = true;
+        Ok(Some(Block::new(Schema::new(schema_fields), columns)))
+    }
+
+    fn close(&mut self) -> Result<()> {
+        self.child.close()?;
+        self.opened = false;
+        self.buffered = None;
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl WindowExecNode {
+    fn get_partition_key(&self, block: &Block, row_idx: usize) -> String {
+        let mut key_parts = Vec::new();
+        for &col_idx in &self.partition_by {
+            if col_idx < block.num_columns() {
+                if let Some(col) = block.column(col_idx) {
+                    key_parts.push(format!("{:?}", col.scalar_at(row_idx)));
+                }
+            }
+        }
+        key_parts.join("|")
+    }
+
+    fn compute_window_over_block(&self, block: &Block) -> Result<Vector> {
+        let num_rows = block.num_rows();
+
+        match self.window_func.as_str() {
+            "row_number" => {
+                let data: Vec<i64> = (1..=num_rows as i64).collect();
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            "rank" | "dense_rank" => {
+                // Simplified: same as row_number for now
+                let data: Vec<i64> = (1..=num_rows as i64).collect();
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            "lead" | "lag" => {
+                let mut data: Vec<i64> = Vec::new();
+                if self.window_func_col < block.num_columns() {
+                    if let Some(col) = block.column(self.window_func_col) {
+                        for i in 0..num_rows {
+                            let target_idx = if self.window_func == "lead" {
+                                i + self.offset as usize
+                            } else {
+                                i.saturating_sub(self.offset as usize)
+                            };
+
+                            if target_idx < num_rows {
+                                if let ScalarValue::Int64(v) = col.scalar_at(target_idx) {
+                                    data.push(v);
+                                } else {
+                                    data.push(0);
+                                }
+                            } else {
+                                if let ScalarValue::Int64(v) = self.default_val {
+                                    data.push(v);
+                                } else {
+                                    data.push(0);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            "first_value" | "last_value" => {
+                let mut data: Vec<i64> = Vec::new();
+                if self.window_func_col < block.num_columns() {
+                    if let Some(col) = block.column(self.window_func_col) {
+                        let first_val = col.scalar_at(0);
+                        let last_val = col.scalar_at(num_rows.saturating_sub(1));
+                        let val = if self.window_func == "first_value" { first_val } else { last_val };
+                        if let ScalarValue::Int64(v) = val {
+                            data = vec![v; num_rows];
+                        }
+                    }
+                }
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            "count" | "sum" | "avg" | "min" | "max" => {
+                // Simplified: return count for all rows
+                let data: Vec<i64> = vec![num_rows as i64; num_rows];
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            _ => {
+                let data: Vec<i64> = vec![0; num_rows];
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+        }
+    }
+
+    fn compute_window_over_block_for_partition(&self, block: &Block, start: usize, size: usize) -> Result<Vector> {
+        match self.window_func.as_str() {
+            "row_number" => {
+                let data: Vec<i64> = (1..=size as i64).collect();
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            "rank" | "dense_rank" => {
+                let data: Vec<i64> = (1..=size as i64).collect();
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            "lead" | "lag" => {
+                let mut data: Vec<i64> = Vec::new();
+                if self.window_func_col < block.num_columns() {
+                    if let Some(col) = block.column(self.window_func_col) {
+                        for i in 0..size {
+                            let global_idx = start + i;
+                            let target_idx = if self.window_func == "lead" {
+                                global_idx + self.offset as usize
+                            } else {
+                                global_idx.saturating_sub(self.offset as usize)
+                            };
+
+                            if target_idx >= start && target_idx < start + size {
+                                if let ScalarValue::Int64(v) = col.scalar_at(target_idx) {
+                                    data.push(v);
+                                } else {
+                                    data.push(0);
+                                }
+                            } else {
+                                if let ScalarValue::Int64(v) = self.default_val {
+                                    data.push(v);
+                                } else {
+                                    data.push(0);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            "first_value" | "last_value" => {
+                let mut data: Vec<i64> = Vec::new();
+                if self.window_func_col < block.num_columns() {
+                    if let Some(col) = block.column(self.window_func_col) {
+                        let first_val = col.scalar_at(start);
+                        let last_val = col.scalar_at(start + size.saturating_sub(1));
+                        let val = if self.window_func == "first_value" { first_val } else { last_val };
+                        if let ScalarValue::Int64(v) = val {
+                            data = vec![v; size];
+                        }
+                    }
+                }
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+            _ => {
+                let data: Vec<i64> = vec![0; size];
+                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+            }
+        }
+    }
+}
