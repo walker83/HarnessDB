@@ -3,6 +3,8 @@ use common::Result;
 use types::{Block, Bitmap, Vector, Schema, ScalarValue};
 use std::sync::{Arc, Mutex};
 use be_storage::tablet::{Tablet, TabletSchema, truncate_tablet};
+use be_storage::StorageEngine;
+use be_storage::index::ColumnPredicate;
 
 #[async_trait]
 pub trait ExecNode: Send + Sync {
@@ -94,8 +96,12 @@ pub struct ScanExecNode {
     pub limit: Option<usize>,
     pub predicates: Vec<String>,
     pub data: Option<Block>,
-    pub opened: bool,
-    pub rows_consumed: usize,
+    /// Optional tablet ID for storage-backed scan
+    pub tablet_id: Option<u64>,
+    /// Optional storage engine for reading from persistent storage
+    pub storage: Option<Arc<StorageEngine>>,
+    opened: bool,
+    rows_consumed: usize,
 }
 
 impl ScanExecNode {
@@ -106,6 +112,8 @@ impl ScanExecNode {
             limit: None,
             predicates: Vec::new(),
             data: None,
+            tablet_id: None,
+            storage: None,
             opened: false,
             rows_consumed: 0,
         }
@@ -120,11 +128,62 @@ impl ScanExecNode {
         self.predicates = predicates;
         self
     }
+
+    /// Configure this scan to read from a storage engine using the given tablet_id.
+    pub fn with_storage(mut self, tablet_id: u64, storage: Arc<StorageEngine>) -> Self {
+        self.tablet_id = Some(tablet_id);
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Build column projection indices from column names.
+    fn build_projection(&self, schema: &Schema) -> Vec<usize> {
+        if self.columns.is_empty() {
+            (0..schema.num_fields()).collect()
+        } else {
+            self.columns.iter()
+                .filter_map(|name| schema.index_of(name))
+                .collect()
+        }
+    }
+
+    /// Build predicates for storage read.
+    fn build_predicates(&self) -> Vec<ColumnPredicate> {
+        // For now, parse simple predicates like "col = value"
+        // Full predicate parsing would be done by the planner
+        Vec::new()
+    }
+
+    /// Read data from storage engine if configured.
+    fn read_from_storage(&self) -> Result<Block> {
+        let Some(tablet_id) = self.tablet_id else {
+            return Ok(Block::empty(Schema::new(vec![])));
+        };
+        let Some(storage) = &self.storage else {
+            return Ok(Block::empty(Schema::new(vec![])));
+        };
+
+        let projection = None; // Let storage return all columns, filter later
+        let predicates = self.build_predicates();
+
+        match storage.read_tablet(tablet_id, projection, &predicates) {
+            Ok(block) => Ok(block),
+            Err(e) => {
+                tracing::warn!("Failed to read tablet {}: {}", tablet_id, e);
+                Ok(Block::empty(Schema::new(vec![])))
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl ExecNode for ScanExecNode {
     async fn open(&mut self) -> Result<()> {
+        // If no pre-loaded data but we have storage configured, read from storage now
+        if self.data.is_none() && self.storage.is_some() && self.tablet_id.is_some() {
+            tracing::debug!("ScanExecNode: reading from storage tablet_id={}", self.tablet_id.unwrap());
+            self.data = Some(self.read_from_storage()?);
+        }
         self.opened = true;
         self.rows_consumed = 0;
         Ok(())

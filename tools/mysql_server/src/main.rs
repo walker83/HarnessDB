@@ -2,6 +2,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use mysql_protocol::server::{MysqlServer, QueryHandler, QueryResult, ServerConfig, ColumnDef, ColumnType};
 use tpch_bench::TpchBenchmark;
+use types::Block;
+use types::ScalarValue;
 
 struct TpchQueryHandler {
     bench: TpchBenchmark,
@@ -49,71 +51,50 @@ impl QueryHandler for TpchQueryHandler {
             );
         }
 
-        // SELECT queries - run through planner
+        // SELECT queries - run through planner and storage
         if sql.starts_with("SELECT") || sql.starts_with("select") {
             // Extract query name if it's a numbered query (Q1, Q2, etc)
             if sql.contains("FROM LINEITEM") && sql.contains("SUM(") {
-                // Q1
                 return self.run_query(1);
             } else if sql.contains("FROM PART, SUPPLIER, PARTSUPP") && sql.contains("EUROPE") {
-                // Q2
                 return self.run_query(2);
             } else if sql.contains("FROM CUSTOMER, ORDERS, LINEITEM") && sql.contains("BUILDING") {
-                // Q3
                 return self.run_query(3);
             } else if sql.contains("FROM ORDERS") && sql.contains("O_ORDERPRIORITY") {
-                // Q4
                 return self.run_query(4);
             } else if sql.contains("FROM CUSTOMER, ORDERS, LINEITEM, SUPPLIER") && sql.contains("N_NAME") {
-                // Q5
                 return self.run_query(5);
             } else if sql.contains("FROM LINEITEM") && sql.contains("L_DISCOUNT") && sql.contains("L_QUANTITY") {
-                // Q6
                 return self.run_query(6);
             } else if sql.contains("FROM LINEITEM, ORDERS, CUSTOMER") && sql.contains("N_NAME") && sql.contains("1995") {
-                // Q7
                 return self.run_query(7);
             } else if sql.contains("FROM LINEITEM, ORDERS, CUSTOMER, SUPPLIER") && sql.contains("N_NAME") {
-                // Q8
                 return self.run_query(8);
             } else if sql.contains("FROM LINEITEM, PART, ORDERS, SUPPLIER") && sql.contains("P_NAME") {
-                // Q9
                 return self.run_query(9);
             } else if sql.contains("FROM CUSTOMER, ORDERS, LINEITEM") && sql.contains("C_MKTSEGMENT") {
-                // Q10
                 return self.run_query(10);
             } else if sql.contains("FROM PARTSUPP, SUPPLIER") && sql.contains("PS_SUPPLYCOST") {
-                // Q11
                 return self.run_query(11);
             } else if sql.contains("FROM LINEITEM, ORDERS") && sql.contains("L_RECEIPTDATE") {
-                // Q12
                 return self.run_query(12);
             } else if sql.contains("FROM ORDERS") && sql.contains("O_COMMENT") {
-                // Q13
                 return self.run_query(13);
             } else if sql.contains("FROM LINEITEM, PART") && sql.contains("P_BRAND") {
-                // Q14
                 return self.run_query(14);
             } else if sql.contains("FROM LINEITEM, SUPPLIER") && sql.contains("S_NATIONKEY") {
-                // Q16
                 return self.run_query(16);
             } else if sql.contains("FROM LINEITEM") && sql.contains("L_PARTKEY") && sql.contains("L_QUANTITY") {
-                // Q17
                 return self.run_query(17);
             } else if sql.contains("FROM CUSTOMER, ORDERS, LINEITEM") && sql.contains("O_ORDERKEY") {
-                // Q18
                 return self.run_query(18);
             } else if sql.contains("FROM LINEITEM") && sql.contains("BRAND") && sql.contains("AIR") {
-                // Q19
                 return self.run_query(19);
             } else if sql.contains("FROM SUPPLIER, LINEITEM, PARTSUPP") && sql.contains("S_NAME") {
-                // Q20
                 return self.run_query(20);
             } else if sql.contains("FROM SUPPLIER, LINEITEM, ORDERS") && sql.contains("S_NATIONKEY") {
-                // Q21
                 return self.run_query(21);
             } else if sql.contains("FROM CUSTOMER, ORDERS") && sql.contains("O_CUSTKEY") && sql.contains("I_NATIONKEY") {
-                // Q22
                 return self.run_query(22);
             }
 
@@ -122,7 +103,7 @@ impl QueryHandler for TpchQueryHandler {
         }
 
         // Other commands
-        if sql.starts_with("SET") || sql.starts_with("SET") {
+        if sql.starts_with("SET") {
             return QueryResult::ok();
         }
 
@@ -132,19 +113,79 @@ impl QueryHandler for TpchQueryHandler {
 
 impl TpchQueryHandler {
     fn run_query(&self, query_num: usize) -> QueryResult {
-        let result = self.bench.run_query(query_num);
+        // Execute the query through storage
+        let result = self.bench.execute_query(query_num);
 
-        if let Some(error) = result.error {
+        if let Some(error) = result.blocks.is_empty().then(|| {
+            // If blocks is empty, check if there was an error in planning
+            let plan_result = self.bench.run_query(query_num);
+            plan_result.error
+        }).flatten() {
             eprintln!("Query {} error: {}", query_num, error);
             return QueryResult::ok();
         }
 
-        // Return a simple result for now
-        // In a full implementation, we would serialize the actual result
-        QueryResult::with_rows(
-            vec![ColumnDef { name: "result".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some(format!("Query {} executed successfully", query_num))]],
-        )
+        // Convert blocks to QueryResult
+        self.blocks_to_result(result.blocks)
+    }
+
+    fn blocks_to_result(&self, blocks: Vec<Block>) -> QueryResult {
+        if blocks.is_empty() {
+            return QueryResult::ok();
+        }
+
+        // Get schema from first block
+        let schema = blocks[0].schema();
+        let columns: Vec<ColumnDef> = schema.fields().iter()
+            .map(|f| ColumnDef {
+                name: f.name.clone(),
+                col_type: data_type_to_column_type(&f.data_type),
+            })
+            .collect();
+
+        // Convert all blocks to rows
+        let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+        for block in &blocks {
+            for row_idx in 0..block.num_rows() {
+                let mut row: Vec<Option<String>> = Vec::new();
+                for col_idx in 0..block.num_columns() {
+                    if let Some(col) = block.column(col_idx) {
+                        let val = col.scalar_at(row_idx);
+                        row.push(scalar_value_to_string(&val));
+                    } else {
+                        row.push(None);
+                    }
+                }
+                rows.push(row);
+            }
+        }
+
+        QueryResult::with_rows(columns, rows)
+    }
+}
+
+fn data_type_to_column_type(dt: &types::DataType) -> ColumnType {
+    match dt {
+        types::DataType::Int8 | types::DataType::Int16 | types::DataType::Int32 | types::DataType::Int64 | types::DataType::Int128 => ColumnType::Int,
+        types::DataType::Float32 | types::DataType::Float64 => ColumnType::Double,
+        types::DataType::String => ColumnType::String,
+        types::DataType::Date | types::DataType::DateTime => ColumnType::DateTime,
+        types::DataType::Boolean => ColumnType::Int,
+        _ => ColumnType::String,
+    }
+}
+
+fn scalar_value_to_string(val: &ScalarValue) -> Option<String> {
+    match val {
+        ScalarValue::Int64(v) => Some(v.to_string()),
+        ScalarValue::Int32(v) => Some(v.to_string()),
+        ScalarValue::Int128(v) => Some(v.to_string()),
+        ScalarValue::Float64(v) => Some(v.to_string()),
+        ScalarValue::Float32(v) => Some(v.to_string()),
+        ScalarValue::String(s) => Some(s.clone()),
+        ScalarValue::Boolean(b) => Some(if *b { "1" } else { "0" }.to_string()),
+        ScalarValue::Null => None,
+        _ => Some(format!("{:?}", val)),
     }
 }
 
