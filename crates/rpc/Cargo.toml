@@ -11,6 +11,7 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
+tonic-build = { workspace = true }
 
 common = { workspace = true }
 proto = { workspace = true }

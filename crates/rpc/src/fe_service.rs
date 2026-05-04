@@ -1,9 +1,15 @@
-use proto::data::QueryResult;
-use proto::internal::PExecPlanFragmentRequest;
+use proto::{Status, RowBatch};
 
 pub trait FeService: Send + Sync + 'static {
-    fn execute_query(&self, query: &str) -> impl std::future::Future<Output = QueryResult> + Send;
-    fn get_query_status(&self, query_id: &str) -> impl std::future::Future<Output = QueryResult> + Send;
+    fn execute_query(&self, query: &str) -> impl std::future::Future<Output = FeQueryResult> + Send;
+    fn get_query_status(&self, query_id: &str) -> impl std::future::Future<Output = FeQueryResult> + Send;
+}
+
+#[derive(Debug, Clone)]
+pub struct FeQueryResult {
+    pub status: Status,
+    pub row_batch: Option<RowBatch>,
+    pub query_id: String,
 }
 
 pub struct FeServiceImpl {
@@ -23,18 +29,18 @@ impl Default for FeServiceImpl {
 }
 
 impl FeService for FeServiceImpl {
-    async fn execute_query(&self, _query: &str) -> QueryResult {
+    async fn execute_query(&self, _query: &str) -> FeQueryResult {
         // TODO: parse SQL -> plan -> schedule -> execute
-        QueryResult {
-            status: proto::status::Status::ok(),
+        FeQueryResult {
+            status: Status { code: 0, message: "OK".to_string(), details: vec![] },
             row_batch: None,
             query_id: uuid::Uuid::new_v4().to_string(),
         }
     }
 
-    async fn get_query_status(&self, query_id: &str) -> QueryResult {
-        QueryResult {
-            status: proto::status::Status::ok(),
+    async fn get_query_status(&self, query_id: &str) -> FeQueryResult {
+        FeQueryResult {
+            status: Status { code: 0, message: "OK".to_string(), details: vec![] },
             row_batch: None,
             query_id: query_id.to_string(),
         }

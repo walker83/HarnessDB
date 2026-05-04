@@ -224,9 +224,10 @@ impl StringVector {
     }
 
     pub fn filter(&self, selection: &Bitmap) -> Self {
+        let num_selected = selection.set_count();
         let mut offsets = vec![0u32];
-        let mut data = Vec::with_capacity(selection.len() * 16); // est 16 bytes avg
-        let mut validity = Bitmap::with_capacity(selection.len());
+        let mut data = Vec::with_capacity(num_selected * 16); // est 16 bytes avg
+        let mut validity = Bitmap::with_capacity(num_selected);
 
         // Optimized: use iter_set_bits for fast bitmap traversal
         for idx in selection.iter_set_bits() {

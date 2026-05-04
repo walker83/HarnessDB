@@ -106,10 +106,17 @@ impl Bitmap {
 
     /// Iterate over set bits efficiently using trailing_zeros
     pub fn iter_set_bits(&self) -> SetBitIter {
+        let first_word = self.data.first().copied().unwrap_or(0);
+        // Apply mask to first word to ignore bits beyond len
+        let masked_word = if self.len < 64 {
+            first_word & ((1u64 << self.len) - 1)
+        } else {
+            first_word
+        };
         SetBitIter {
             data: &self.data,
             word_idx: 0,
-            word: 0,
+            word: masked_word,
             len: self.len,
             consumed: 0,
         }
@@ -181,25 +188,25 @@ impl<'a> Iterator for SetBitIter<'a> {
                 return None;
             }
             if self.word != 0 {
-                let bit = self.word.trailing_zeros() as usize;
-                self.word &= !(1u64 << bit);
-                let result = self.consumed + bit;
+                let tz = self.word.trailing_zeros() as usize;
+                let global_pos = self.word_idx * 64 + tz;
+                self.word &= !(1u64 << tz);
                 self.consumed += 1;
-                return Some(result);
-            }
-            self.word_idx += 1;
-            if self.word_idx >= self.data.len() {
-                self.consumed = self.len;
-                return None;
-            }
-            self.word = self.data[self.word_idx];
-            let bits_in_this_word = (64).min(self.len.saturating_sub(self.consumed));
-            let mask = if bits_in_this_word < 64 {
-                (1u64 << bits_in_this_word) - 1
+                return Some(global_pos);
             } else {
-                u64::MAX
-            };
-            self.word &= mask;
+                // Advance to next word
+                self.word_idx += 1;
+                if self.word_idx >= self.data.len() {
+                    self.consumed = self.len;
+                    return None;
+                }
+                self.word = self.data[self.word_idx];
+                // Apply mask if less than 64 bits remain
+                let remaining = self.len.saturating_sub(self.word_idx * 64);
+                if remaining < 64 {
+                    self.word &= (1u64 << remaining) - 1;
+                }
+            }
         }
     }
 }

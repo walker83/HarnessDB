@@ -1,19 +1,18 @@
-use proto::heartbeat::{HeartbeatRequest, HeartbeatResponse};
-use proto::status::Status;
+use proto::{HeartbeatRequest, HeartbeatResponse};
 
 pub struct HeartbeatService;
 
 impl HeartbeatService {
     pub fn handle_heartbeat(&self, req: HeartbeatRequest) -> HeartbeatResponse {
         tracing::info!(
-            "Received heartbeat from BE {}:{} (version: {})",
-            req.be_host,
-            req.be_port,
-            req.be_version
+            "Received heartbeat from BE (timestamp: {})",
+            req.timestamp
         );
         HeartbeatResponse {
-            status: Status::ok(),
-            master_info: None,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
         }
     }
 }

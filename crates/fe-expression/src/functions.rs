@@ -46,6 +46,27 @@ impl FunctionRegistry {
             "quarter" => self.quarter(args),
             "monthname" => self.monthname(args),
             "dayname" => self.dayname(args),
+            // Math functions
+            "sin" => self.sin(args),
+            "cos" => self.cos(args),
+            "tan" => self.tan(args),
+            "asin" | "arcsin" => self.asin(args),
+            "acos" | "arccos" => self.acos(args),
+            "atan" | "arctan" => self.atan(args),
+            "log" | "ln" => self.log(args),
+            "log10" => self.log10(args),
+            "exp" => self.exp(args),
+            "sqrt" => self.sqrt(args),
+            "pow" | "power" => self.pow(args),
+            "pi" => self.pi(args),
+            "e" => self.e(args),
+            "rand" | "random" => self.rand(args),
+            // Window functions
+            "row_number" => self.row_number(args),
+            "rank" => self.rank(args),
+            "dense_rank" => self.dense_rank(args),
+            "lag" => self.lag(args),
+            "lead" => self.lead(args),
             _ => {
                 tracing::warn!("unknown function: {}", name);
                 args.first().cloned().unwrap_or_else(|| bool_vec(vec![]))
@@ -668,3 +689,216 @@ fn bool_vec(d: Vec<bool>) -> Vector { Vector::Boolean(types::vector::BooleanVect
 fn int64_vec(d: Vec<i64>) -> Vector { Vector::Int64(types::vector::Int64Vector::from_vec(d)) }
 fn float64_vec(d: Vec<f64>) -> Vector { Vector::Float64(types::vector::Float64Vector::from_vec(d)) }
 fn string_vec(d: Vec<Option<String>>) -> Vector { Vector::String(types::vector::StringVector::from_option_vec(d)) }
+
+// Mathematical functions (trigonometric, logarithmic, exponential)
+impl FunctionRegistry {
+    // Trigonometric functions
+    fn sin(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.to_radians().sin()).collect()),
+            Some(Vector::Int64(v)) => float64_vec(v.data().iter().map(|n| (*n as f64).to_radians().sin()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn cos(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.to_radians().cos()).collect()),
+            Some(Vector::Int64(v)) => float64_vec(v.data().iter().map(|n| (*n as f64).to_radians().cos()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn tan(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.to_radians().tan()).collect()),
+            Some(Vector::Int64(v)) => float64_vec(v.data().iter().map(|n| (*n as f64).to_radians().tan()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn asin(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.asin().to_degrees()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn acos(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.acos().to_degrees()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn atan(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.atan().to_degrees()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // Logarithmic functions
+    fn log(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.ln()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn log10(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.log10()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // Exponential function
+    fn exp(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.exp()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // Square root
+    fn sqrt(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Float64(v)) => float64_vec(v.data().iter().map(|n| n.sqrt()).collect()),
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // Power function
+    fn pow(&self, args: &[Vector]) -> Vector {
+        if args.len() < 2 {
+            return bool_vec(vec![]);
+        }
+        match (&args[0], &args[1]) {
+            (Vector::Float64(base), Vector::Float64(exp)) => {
+                let result: Vec<f64> = base.data().iter().zip(exp.data().iter())
+                    .map(|(b, e)| b.powf(*e))
+                    .collect();
+                float64_vec(result)
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    // Constants
+    fn pi(&self, _args: &[Vector]) -> Vector {
+        float64_vec(vec![std::f64::consts::PI])
+    }
+
+    fn e(&self, _args: &[Vector]) -> Vector {
+        float64_vec(vec![std::f64::consts::E])
+    }
+
+    // Random number (simple pseudo-random implementation)
+    fn rand(&self, args: &[Vector]) -> Vector {
+        let count = args.first().map(|v| v.len()).unwrap_or(1);
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+        float64_vec((0..count).enumerate().map(|(i, _)| {
+            // Simple linear congruential generator
+            let state = seed.wrapping_add(i as u64);
+            ((state as f64) / (u64::MAX as f64))
+        }).collect())
+    }
+
+    // Window functions (basic implementations)
+    fn row_number(&self, args: &[Vector]) -> Vector {
+        let count = args.first().map(|v| v.len()).unwrap_or(1);
+        int64_vec((1..=count as i64).collect())
+    }
+
+    fn rank(&self, args: &[Vector]) -> Vector {
+        // Simplified rank implementation - same as row_number for now
+        let count = args.first().map(|v| v.len()).unwrap_or(1);
+        int64_vec((1..=count as i64).collect())
+    }
+
+    fn dense_rank(&self, args: &[Vector]) -> Vector {
+        // Simplified dense_rank - same as row_number for now
+        let count = args.first().map(|v| v.len()).unwrap_or(1);
+        int64_vec((1..=count as i64).collect())
+    }
+
+    fn lag(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Int64(v)) => {
+                let offset = args.get(1).and_then(|a| {
+                    if let Vector::Int64(o) = a { o.data().first() } else { None }
+                }).unwrap_or(&1);
+                let default = args.get(2).and_then(|a| {
+                    if let Vector::Int64(d) = a { d.data().first() } else { None }
+                }).unwrap_or(&0);
+
+                int64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                    if i >= *offset as usize {
+                        v.data()[i - *offset as usize]
+                    } else {
+                        *default
+                    }
+                }).collect())
+            }
+            Some(Vector::Float64(v)) => {
+                let offset = args.get(1).and_then(|a| {
+                    if let Vector::Int64(o) = a { o.data().first() } else { None }
+                }).unwrap_or(&1);
+                let default = args.get(2).and_then(|a| {
+                    if let Vector::Float64(d) = a { d.data().first() } else { None }
+                }).unwrap_or(&0.0);
+
+                float64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                    if i >= *offset as usize {
+                        v.data()[i - *offset as usize]
+                    } else {
+                        *default
+                    }
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+
+    fn lead(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Int64(v)) => {
+                let offset = args.get(1).and_then(|a| {
+                    if let Vector::Int64(o) = a { o.data().first() } else { None }
+                }).unwrap_or(&1);
+                let default = args.get(2).and_then(|a| {
+                    if let Vector::Int64(d) = a { d.data().first() } else { None }
+                }).unwrap_or(&0);
+
+                int64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                    let next_idx = i + *offset as usize;
+                    if next_idx < v.data().len() {
+                        v.data()[next_idx]
+                    } else {
+                        *default
+                    }
+                }).collect())
+            }
+            Some(Vector::Float64(v)) => {
+                let offset = args.get(1).and_then(|a| {
+                    if let Vector::Int64(o) = a { o.data().first() } else { None }
+                }).unwrap_or(&1);
+                let default = args.get(2).and_then(|a| {
+                    if let Vector::Float64(d) = a { d.data().first() } else { None }
+                }).unwrap_or(&0.0);
+
+                float64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                    let next_idx = i + *offset as usize;
+                    if next_idx < v.data().len() {
+                        v.data()[next_idx]
+                    } else {
+                        *default
+                    }
+                }).collect())
+            }
+            _ => bool_vec(vec![]),
+        }
+    }
+}
