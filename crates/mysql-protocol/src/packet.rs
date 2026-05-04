@@ -622,6 +622,7 @@ pub fn scalar_to_column_type(val: &ScalarValue) -> u8 {
         ScalarValue::Binary(_) => column_type::BLOB,
         ScalarValue::Array(_) => column_type::BLOB,
         ScalarValue::Json(_) => column_type::VAR_STRING,
+        ScalarValue::Float32Array(_) => column_type::BLOB,
     }
 }
 
@@ -695,6 +696,10 @@ pub fn scalar_to_text_bytes(val: &ScalarValue) -> Option<Vec<u8>> {
         ScalarValue::Binary(b) => Some(b.clone()),
         ScalarValue::Array(_) => Some(b"[]".to_vec()),
         ScalarValue::Json(j) => Some(serde_json::to_string(j).unwrap_or_else(|_| "null".to_string()).into_bytes()),
+        ScalarValue::Float32Array(arr) => {
+            let items: Vec<String> = arr.iter().map(|f| f.to_string()).collect();
+            Some(format!("[{}]", items.join(",")).into_bytes())
+        }
     }
 }
 

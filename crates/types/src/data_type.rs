@@ -23,6 +23,8 @@ pub enum DataType {
     Map(Box<DataType>, Box<DataType>),
     Struct(Vec<Field>),
     Json,
+    /// Float32 vector with dimension
+    Float32Vector(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -55,6 +57,7 @@ impl DataType {
             Self::Varchar(_) | Self::Char(_) | Self::String | Self::Binary => 16, // offset + length
             Self::Decimal(_) => 16,
             Self::Json => 32,
+            Self::Float32Vector(dim) => dim * 4,
             Self::Array(_) | Self::Map(_, _) | Self::Struct(_) => 0,
         }
     }
@@ -96,6 +99,7 @@ impl fmt::Display for DataType {
             Self::Array(inner) => write!(f, "ARRAY({})", inner),
             Self::Map(k, v) => write!(f, "MAP({}, {})", k, v),
             Self::Json => write!(f, "JSON"),
+            Self::Float32Vector(dim) => write!(f, "FLOAT32_VECTOR({})", dim),
             Self::Struct(fields) => {
                 write!(f, "STRUCT(")?;
                 for (i, field) in fields.iter().enumerate() {

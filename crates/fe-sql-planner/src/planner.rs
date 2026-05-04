@@ -215,7 +215,14 @@ impl Planner {
         let children = if let Some(query) = stmt.query {
             vec![self.plan_query(query)?]
         } else if !stmt.values.is_empty() {
-            return Err(DrorisError::plan(PlanError::UnsupportedOperation, "INSERT VALUES not yet implemented"));
+            // VALUES case: create a Values plan node as child
+            let values_node = self.make_node(
+                PlanNodeType::Values(VirtualValuesNode {
+                    rows: stmt.values.clone(),
+                }),
+                vec![],
+            );
+            vec![values_node]
         } else {
             return Err(DrorisError::plan(PlanError::InvalidExpression, "INSERT must have VALUES or SELECT"));
         };

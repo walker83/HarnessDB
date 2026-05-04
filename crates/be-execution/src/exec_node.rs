@@ -7,7 +7,7 @@ use types::vector::{
 };
 use std::sync::Arc;
 use be_storage::StorageEngine;
-use be_storage::index::ColumnPredicate;
+use be_storage::index::{ColumnPredicate, PredicateOp};
 
 #[async_trait]
 pub trait ExecNode: Send + Sync {
@@ -157,9 +157,54 @@ impl ScanExecNode {
     
     /// Build predicates for storage read.
     fn build_predicates(&self) -> Vec<ColumnPredicate> {
-        // For now, parse simple predicates like "col = value"
-        // Full predicate parsing would be done by the planner
-        Vec::new()
+        self.predicates.iter().filter_map(|p| Self::parse_predicate(p)).collect()
+    }
+    
+    /// Parse a simple predicate string like "col = value".
+    fn parse_predicate(pred_str: &str) -> Option<ColumnPredicate> {
+        // Simple predicate parsing: "column op value"
+        // Supported ops: =, <, <=, >, >=
+        let parts: Vec<&str> = pred_str.split_whitespace().collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        
+        let column_name = parts[0];
+        let op_str = parts[1];
+        let value_str = parts[2];
+        
+        let op = match op_str {
+            "=" | "==" => PredicateOp::Eq,
+            "<" => PredicateOp::Lt,
+            "<=" => PredicateOp::Le,
+            ">" => PredicateOp::Gt,
+            ">=" => PredicateOp::Ge,
+            _ => return None,
+        };
+        
+        // Parse value (simple type inference)
+        let value = if let Ok(n) = value_str.parse::<i64>() {
+            ScalarValue::Int64(n)
+        } else if let Ok(n) = value_str.parse::<i32>() {
+            ScalarValue::Int32(n)
+        } else if let Ok(f) = value_str.parse::<f64>() {
+            ScalarValue::Float64(f)
+        } else if value_str == "true" || value_str == "false" {
+            ScalarValue::Boolean(value_str == "true")
+        } else if value_str.starts_with("'") && value_str.ends_with("'") {
+            // String literal: 'value'
+            ScalarValue::String(value_str[1..value_str.len()-1].to_string())
+        } else {
+            // Treat as string
+            ScalarValue::String(value_str.to_string())
+        };
+        
+        Some(ColumnPredicate {
+            column_name: column_name.to_string(),
+            op,
+            value,
+            values: Vec::new(),
+        })
     }
 
     /// Read data from storage engine if configured.
