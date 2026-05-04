@@ -1049,6 +1049,17 @@ impl FunctionRegistry {
                 }).collect();
                 TypesVector::Json(JsonVector::from_vec(results))
             }
+            (Some(Vector::String(json_vec)), Some(Vector::String(path_vec))) => {
+                let results: Vec<types::ScalarValue> = (0..json_vec.len()).map(|i| {
+                    if let (Some(json_str), Some(path)) = (json_vec.get(i), path_vec.get(i)) {
+                        let json_val = self.parse_json_string(json_str);
+                        self.json_extract(&json_val, path)
+                    } else {
+                        types::ScalarValue::Null
+                    }
+                }).collect();
+                TypesVector::Json(JsonVector::from_vec(results))
+            }
             _ => bool_vec(vec![]),
         }
     }
@@ -1095,22 +1106,47 @@ impl FunctionRegistry {
 
         match (args.first(), args.get(1)) {
             (Some(Vector::Json(json_vec)), Some(target)) => {
-                let target_val = match target.scalar_at(0) {
-                    types::ScalarValue::Json(JsonValue::String(s)) => s,
-                    types::ScalarValue::String(s) => s,
-                    types::ScalarValue::Json(JsonValue::Number(n)) => n.to_string(),
-                    types::ScalarValue::Json(JsonValue::Bool(b)) => b.to_string(),
-                    types::ScalarValue::Int64(n) => n.to_string(),
-                    types::ScalarValue::Float64(n) => n.to_string(),
-                    _ => return bool_vec(vec![]),
-                };
-
+                let target_len = target.len();
                 let results: Vec<bool> = (0..json_vec.len()).map(|i| {
+                    let target_val = target.scalar_at(i);
+                    let target_str = match target_val {
+                        types::ScalarValue::Json(JsonValue::String(s)) => s,
+                        types::ScalarValue::String(s) => s,
+                        types::ScalarValue::Json(JsonValue::Number(n)) => n.to_string(),
+                        types::ScalarValue::Json(JsonValue::Bool(b)) => b.to_string(),
+                        types::ScalarValue::Int64(n) => n.to_string(),
+                        types::ScalarValue::Float64(n) => n.to_string(),
+                        _ => return false,
+                    };
                     match json_vec.get(i) {
                         Some(types::ScalarValue::Json(json)) => {
-                            self.json_value_contains(&json, &target_val)
+                            self.json_value_contains(&json, &target_str)
                         }
                         _ => false,
+                    }
+                }).collect();
+                bool_vec(results)
+            }
+            (Some(Vector::String(json_vec)), Some(target)) => {
+                let results: Vec<bool> = (0..json_vec.len()).map(|i| {
+                    let target_val = target.scalar_at(i);
+                    let target_str = match target_val {
+                        types::ScalarValue::Json(JsonValue::String(s)) => s,
+                        types::ScalarValue::String(s) => s,
+                        types::ScalarValue::Json(JsonValue::Number(n)) => n.to_string(),
+                        types::ScalarValue::Json(JsonValue::Bool(b)) => b.to_string(),
+                        types::ScalarValue::Int64(n) => n.to_string(),
+                        types::ScalarValue::Float64(n) => n.to_string(),
+                        _ => return false,
+                    };
+                    if let Some(s) = json_vec.get(i) {
+                        if let types::ScalarValue::Json(json) = self.parse_json_string(s) {
+                            self.json_value_contains(&json, &target_str)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
                 }).collect();
                 bool_vec(results)
@@ -1195,6 +1231,20 @@ impl FunctionRegistry {
                 }).collect();
                 int64_vec(lengths)
             }
+            Some(Vector::String(v)) => {
+                let lengths: Vec<i64> = (0..v.len()).map(|i| {
+                    if let Some(s) = v.get(i) {
+                        if let types::ScalarValue::Json(json) = self.parse_json_string(s) {
+                            self.json_value_length(&json) as i64
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                }).collect();
+                int64_vec(lengths)
+            }
             _ => bool_vec(vec![]),
         }
     }
@@ -1213,6 +1263,7 @@ impl FunctionRegistry {
     fn json_keys(&self, args: &[Vector]) -> Vector {
         use types::{Vector as TypesVector, JsonVector, JsonValue};
 
+        // json_keys can take JSON string or direct JSON
         match args.first() {
             Some(Vector::Json(v)) => {
                 let key_arrays: Vec<types::ScalarValue> = (0..v.len()).map(|i| {
@@ -1222,6 +1273,21 @@ impl FunctionRegistry {
                             types::ScalarValue::Json(JsonValue::Array(keys))
                         }
                         _ => types::ScalarValue::Json(JsonValue::Array(vec![])),
+                    }
+                }).collect();
+                TypesVector::Json(JsonVector::from_vec(key_arrays))
+            }
+            Some(Vector::String(v)) => {
+                let key_arrays: Vec<types::ScalarValue> = (0..v.len()).map(|i| {
+                    if let Some(s) = v.get(i) {
+                        if let types::ScalarValue::Json(JsonValue::Object(pairs)) = self.parse_json_string(s) {
+                            let keys: Vec<JsonValue> = pairs.iter().map(|(k, _)| JsonValue::String(k.clone())).collect();
+                            types::ScalarValue::Json(JsonValue::Array(keys))
+                        } else {
+                            types::ScalarValue::Json(JsonValue::Array(vec![]))
+                        }
+                    } else {
+                        types::ScalarValue::Json(JsonValue::Array(vec![]))
                     }
                 }).collect();
                 TypesVector::Json(JsonVector::from_vec(key_arrays))
@@ -1706,23 +1772,25 @@ impl FunctionRegistry {
 
     fn locate(&self, args: &[Vector]) -> Vector {
         // locate(substring, string, [start_position])
-        match (args.get(1), args.first(), args.get(2)) {
-            (Some(Vector::String(v)), Some(Vector::String(sub)), None) => {
-                let len = v.len().min(sub.len());
+        // Returns 1-based position of first occurrence, or 0 if not found
+        // Note: SQL LOCATE(substring, string) - first arg is needle, second is haystack
+        match (args.get(0), args.get(1), args.get(2)) {
+            (Some(Vector::String(needle)), Some(Vector::String(haystack)), None) => {
+                let len = haystack.len();
                 int64_vec((0..len).map(|i| {
-                    let s = v.get(i).unwrap_or("");
-                    let sub_str = sub.get(i).unwrap_or("");
-                    s.find(sub_str).map(|pos| pos as i64 + 1).unwrap_or(0)
+                    let hay = haystack.get(i).unwrap_or("");
+                    let need = needle.get(i).unwrap_or("");
+                    hay.find(need).map(|pos| pos as i64 + 1).unwrap_or(0)
                 }).collect())
             }
-            (Some(Vector::String(v)), Some(Vector::String(sub)), Some(Vector::Int64(start))) => {
-                let len = v.len().min(sub.len()).min(start.len());
+            (Some(Vector::String(needle)), Some(Vector::String(haystack)), Some(Vector::Int64(start))) => {
+                let len = haystack.len();
                 int64_vec((0..len).map(|i| {
-                    let s = v.get(i).unwrap_or("");
-                    let sub_str = sub.get(i).unwrap_or("");
+                    let hay = haystack.get(i).unwrap_or("");
+                    let need = needle.get(i).unwrap_or("");
                     let start_pos = start.get(i).unwrap_or(1) as usize;
-                    if start_pos > 0 && start_pos <= s.len() {
-                        s[start_pos - 1..].find(sub_str).map(|pos| pos as i64 + start_pos as i64).unwrap_or(0)
+                    if start_pos > 0 && start_pos <= hay.len() {
+                        hay[start_pos - 1..].find(need).map(|pos| pos as i64 + start_pos as i64).unwrap_or(0)
                     } else {
                         0
                     }

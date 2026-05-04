@@ -82,25 +82,35 @@ fn test_left_right() {
 fn test_locate_functions() {
     let registry = FunctionRegistry::new();
 
-    // locate (same as instr but args in different order)
-    let args = vec![
-        string_vec(&["hello", "world", "test"]),
-        string_vec(&["el", "or", "xyz"]),
-    ];
+    // locate(substring, string) - first arg is needle, second is haystack
+    let needle_vec = string_vec(&["el", "or", "xyz"]);
+    let haystack_vec = string_vec(&["hello", "world", "test"]);
+    let args: Vec<Vector> = vec![needle_vec, haystack_vec];
+
     let result = registry.call("locate", &args);
 
     assert!(matches!(result, Vector::Int64(_)));
     if let Vector::Int64(v) = result {
+        // LOCATE("el", "hello") = 2 (1-based position)
+        // LOCATE("or", "world") = 2
+        // LOCATE("xyz", "test") = 0 (not found)
         assert_eq!(v.data()[0], 2);
         assert_eq!(v.data()[1], 2);
         assert_eq!(v.data()[2], 0);
     }
 
-    // instr
+    // instr(str, substr) - first arg is haystack, second is needle
+    let haystack_vec2 = string_vec(&["hello", "world", "test"]);
+    let needle_vec2 = string_vec(&["el", "or", "xyz"]);
+    let args: Vec<Vector> = vec![haystack_vec2, needle_vec2];
+
     let result = registry.call("instr", &args);
     assert!(matches!(result, Vector::Int64(_)));
     if let Vector::Int64(v) = result {
-        assert_eq!(v.data()[0], 3);
+        // INSTR("hello", "el") = 2
+        // INSTR("world", "or") = 2
+        // INSTR("test", "xyz") = 0
+        assert_eq!(v.data()[0], 2);
         assert_eq!(v.data()[1], 2);
         assert_eq!(v.data()[2], 0);
     }

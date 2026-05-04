@@ -134,6 +134,36 @@ impl MemTable {
     }
 }
 
+/// Truncate a tablet, removing all data but keeping the schema.
+pub fn truncate_tablet(tablet: &Tablet) -> Result<(), String> {
+    // Clear the memtable
+    {
+        let mut memtable = tablet.memtable.write();
+        memtable.clear();
+    }
+
+    // Remove all rowsets from memory
+    {
+        let mut rowsets = tablet.rowsets.write();
+        rowsets.clear();
+    }
+
+    // Delete all segment files on disk
+    let tablet_dir = tablet.data_dir.join(format!("tablet_{}", tablet.tablet_id));
+    if tablet_dir.exists() {
+        let entries = std::fs::read_dir(&tablet_dir).map_err(|e| e.to_string())?;
+        for entry in entries {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_file() {
+                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// A tablet manages in-memory writes (memtable) and persistent rowsets.
 pub struct Tablet {
     pub tablet_id: u64,
