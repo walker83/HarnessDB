@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 use be_storage::StorageEngine;
-use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, FilterNode, ProjectNode, AggregateNode, SortNode, LimitNode, JoinNode, UpdateNode, DeleteNode, AlterTableNode};
+use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, UpdateNode, DeleteNode, AlterTableNode};
 use fe_catalog::CatalogManager;
 use types::Schema;
 
@@ -88,7 +88,7 @@ impl ExecutionContext {
                     opened: false,
                 }))
             }
-            PlanNodeType::Aggregate(agg) => {
+            PlanNodeType::Aggregate(_agg) => {
                 if plan.children.is_empty() {
                     return Err(PlanExecutionError::UnsupportedNode("Aggregate without child".into()));
                 }
@@ -103,7 +103,7 @@ impl ExecutionContext {
                     returned: false,
                 }))
             }
-            PlanNodeType::Sort(sort) => {
+            PlanNodeType::Sort(_sort) => {
                 if plan.children.is_empty() {
                     return Err(PlanExecutionError::UnsupportedNode("Sort without child".into()));
                 }

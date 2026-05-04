@@ -1,8 +1,11 @@
 use async_trait::async_trait;
 use common::Result;
 use types::{Block, Bitmap, Vector, Schema, ScalarValue};
-use std::sync::{Arc, Mutex};
-use be_storage::tablet::{Tablet, TabletSchema, truncate_tablet};
+use types::vector::{
+    BooleanVector, Int8Vector, Int16Vector, Int32Vector, Int64Vector, Int128Vector,
+    Float32Vector, Float64Vector, StringVector, DateVector, DateTimeVector, NullVector,
+};
+use std::sync::Arc;
 use be_storage::StorageEngine;
 use be_storage::index::ColumnPredicate;
 
@@ -151,17 +154,7 @@ impl ScanExecNode {
         self
     }
 
-    /// Build column projection indices from column names.
-    fn build_projection(&self, schema: &Schema) -> Vec<usize> {
-        if self.columns.is_empty() {
-            (0..schema.num_fields()).collect()
-        } else {
-            self.columns.iter()
-                .filter_map(|name| schema.index_of(name))
-                .collect()
-        }
-    }
-
+    
     /// Build predicates for storage read.
     fn build_predicates(&self) -> Vec<ColumnPredicate> {
         // For now, parse simple predicates like "col = value"
@@ -576,7 +569,7 @@ impl ExecNode for SortExecNode {
         if combined.is_none() {
             return Ok(None);
         }
-        let mut block = combined.unwrap();
+        let block = combined.unwrap();
 
         if self.order_by.is_empty() {
             self.returned = true;
@@ -1027,7 +1020,7 @@ impl ExecNode for WindowExecNode {
             self.returned = true;
             return Ok(None);
         }
-        let mut block = combined.unwrap();
+        let block = combined.unwrap();
 
         let num_rows = block.num_rows();
         let mut partition_ranges: Vec<(usize, usize)> = Vec::new();
@@ -1152,69 +1145,23 @@ impl WindowExecNode {
         key_parts.join("|")
     }
 
-    fn compute_window_over_block(&self, block: &Block) -> Result<Vector> {
-        let num_rows = block.num_rows();
-
-        match self.window_func.as_str() {
-            "row_number" => {
-                let data: Vec<i64> = (1..=num_rows as i64).collect();
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+    fn scalar_to_vector(scalar: &ScalarValue, num_rows: usize) -> Vector {
+        match scalar {
+            ScalarValue::Boolean(v) => Vector::Boolean(BooleanVector::from_vec(vec![*v; num_rows])),
+            ScalarValue::Int8(v) => Vector::Int8(Int8Vector::from_vec(vec![*v; num_rows])),
+            ScalarValue::Int16(v) => Vector::Int16(Int16Vector::from_vec(vec![*v; num_rows])),
+            ScalarValue::Int32(v) => Vector::Int32(Int32Vector::from_vec(vec![*v; num_rows])),
+            ScalarValue::Int64(v) => Vector::Int64(Int64Vector::from_vec(vec![*v; num_rows])),
+            ScalarValue::Int128(v) => Vector::Int128(Int128Vector::from_vec(vec![*v; num_rows])),
+            ScalarValue::Float32(v) => Vector::Float32(Float32Vector::from_vec(vec![*v; num_rows])),
+            ScalarValue::Float64(v) => Vector::Float64(Float64Vector::from_vec(vec![*v; num_rows])),
+            ScalarValue::String(s) => {
+                let data_refs: Vec<&str> = vec![s.as_str(); num_rows];
+                Vector::String(StringVector::from_vec(data_refs))
             }
-            "rank" | "dense_rank" => {
-                let data: Vec<i64> = (1..=num_rows as i64).collect();
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
-            }
-            "lead" | "lag" => {
-                let mut data: Vec<i64> = Vec::new();
-                if self.window_func_col < block.num_columns() {
-                    if let Some(col) = block.column(self.window_func_col) {
-                        for i in 0..num_rows {
-                            let target_idx = if self.window_func == "lead" {
-                                i + self.offset as usize
-                            } else {
-                                i.saturating_sub(self.offset as usize)
-                            };
-
-                            if target_idx < num_rows {
-                                if let ScalarValue::Int64(v) = col.scalar_at(target_idx) {
-                                    data.push(v);
-                                } else {
-                                    data.push(0);
-                                }
-                            } else {
-                                if let ScalarValue::Int64(v) = self.default_val {
-                                    data.push(v);
-                                } else {
-                                    data.push(0);
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
-            }
-            "first_value" | "last_value" => {
-                let mut data: Vec<i64> = Vec::new();
-                if self.window_func_col < block.num_columns() {
-                    if let Some(col) = block.column(self.window_func_col) {
-                        let first_val = col.scalar_at(0);
-                        let last_val = col.scalar_at(num_rows.saturating_sub(1));
-                        let val = if self.window_func == "first_value" { first_val } else { last_val };
-                        if let ScalarValue::Int64(v) = val {
-                            data = vec![v; num_rows];
-                        }
-                    }
-                }
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
-            }
-            "count" | "sum" | "avg" | "min" | "max" => {
-                let data: Vec<i64> = vec![num_rows as i64; num_rows];
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
-            }
-            _ => {
-                let data: Vec<i64> = vec![0; num_rows];
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
-            }
+            ScalarValue::Date(v) => Vector::Date(DateVector::from_vec(vec![*v; num_rows])),
+            ScalarValue::DateTime(v) => Vector::DateTime(DateTimeVector::from_vec(vec![*v; num_rows])),
+            _ => Vector::Null(NullVector::new(num_rows)),
         }
     }
 
@@ -1222,11 +1169,11 @@ impl WindowExecNode {
         match self.window_func.as_str() {
             "row_number" => {
                 let data: Vec<i64> = (1..=size as i64).collect();
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+                Ok(Vector::Int64(Int64Vector::from_vec(data)))
             }
             "rank" | "dense_rank" => {
                 let data: Vec<i64> = (1..=size as i64).collect();
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+                Ok(Vector::Int64(Int64Vector::from_vec(data)))
             }
             "lead" | "lag" => {
                 let mut data: Vec<i64> = Vec::new();
@@ -1240,41 +1187,53 @@ impl WindowExecNode {
                                 global_idx.saturating_sub(self.offset as usize)
                             };
 
-                            if target_idx >= start && target_idx < start + size {
-                                if let ScalarValue::Int64(v) = col.scalar_at(target_idx) {
-                                    data.push(v);
-                                } else {
-                                    data.push(0);
-                                }
+                            let val = if target_idx >= start && target_idx < start + size {
+                                col.scalar_at(target_idx)
                             } else {
-                                if let ScalarValue::Int64(v) = self.default_val {
-                                    data.push(v);
-                                } else {
-                                    data.push(0);
-                                }
+                                self.default_val.clone()
+                            };
+                            if let ScalarValue::Int64(v) = val {
+                                data.push(v);
+                            } else {
+                                data.push(0);
                             }
                         }
                     }
                 }
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+                Ok(Vector::Int64(Int64Vector::from_vec(data)))
             }
             "first_value" | "last_value" => {
-                let mut data: Vec<i64> = Vec::new();
                 if self.window_func_col < block.num_columns() {
                     if let Some(col) = block.column(self.window_func_col) {
-                        let first_val = col.scalar_at(start);
-                        let last_val = col.scalar_at(start + size.saturating_sub(1));
-                        let val = if self.window_func == "first_value" { first_val } else { last_val };
-                        if let ScalarValue::Int64(v) = val {
-                            data = vec![v; size];
-                        }
+                        let val = if self.window_func == "first_value" {
+                            col.scalar_at(start)
+                        } else {
+                            col.scalar_at(start + size.saturating_sub(1))
+                        };
+                        return Ok(Self::scalar_to_vector(&val, size));
                     }
                 }
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+                Ok(Vector::Null(NullVector::new(size)))
+            }
+            "count" | "sum" | "avg" | "min" | "max" => {
+                if self.window_func_col < block.num_columns() {
+                    if let Some(col) = block.column(self.window_func_col) {
+                        let val = match self.window_func.as_str() {
+                            "count" => ScalarValue::Int64(col.count_batch() as i64),
+                            "sum" => col.sum_batch().unwrap_or(ScalarValue::Null),
+                            "avg" => col.avg_batch().unwrap_or(ScalarValue::Null),
+                            "min" => col.min_batch().unwrap_or(ScalarValue::Null),
+                            "max" => col.max_batch().unwrap_or(ScalarValue::Null),
+                            _ => ScalarValue::Null,
+                        };
+                        return Ok(Self::scalar_to_vector(&val, size));
+                    }
+                }
+                Ok(Vector::Null(NullVector::new(size)))
             }
             _ => {
                 let data: Vec<i64> = vec![0; size];
-                Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
+                Ok(Vector::Int64(Int64Vector::from_vec(data)))
             }
         }
     }
@@ -1330,7 +1289,7 @@ impl ExecNode for UpdateExecNode {
         }
         self.executed = true;
 
-        if let (Some(tablet_id), Some(storage)) = (self.tablet_id, &self.storage) {
+        if let (Some(tablet_id), Some(_storage)) = (self.tablet_id, &self.storage) {
             // Note: Full predicate parsing and delete implementation requires
             // expression evaluation infrastructure. For now, log the operation.
             if let Some(predicate) = &self.selection_predicate {
@@ -1399,7 +1358,7 @@ impl ExecNode for DeleteExecNode {
         }
         self.executed = true;
 
-        if let (Some(tablet_id), Some(storage)) = (self.tablet_id, &self.storage) {
+        if let (Some(tablet_id), Some(_storage)) = (self.tablet_id, &self.storage) {
             // Note: Full predicate parsing and delete implementation requires
             // expression evaluation infrastructure. For now, log the operation.
             if let Some(predicate) = &self.selection_predicate {

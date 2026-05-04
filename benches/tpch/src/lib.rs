@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fe_catalog::table::{TableColumn, Table};
-use fe_catalog::{CatalogManager, Table as CatalogTable};
+use fe_catalog::CatalogManager;
 use fe_sql_planner::{Planner, PlanNode};
 use types::Block;
 
