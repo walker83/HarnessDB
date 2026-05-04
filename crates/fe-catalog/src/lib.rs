@@ -3,6 +3,7 @@ pub mod database;
 pub mod materialized_view;
 pub mod partition;
 pub mod replica;
+pub mod stats;
 pub mod table;
 
 pub use catalog::CatalogManager;

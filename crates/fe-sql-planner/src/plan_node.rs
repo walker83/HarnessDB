@@ -43,8 +43,15 @@ pub enum PlanNodeType {
     ShowCreateTable(ShowCreateTableNode),
     AlterTable(AlterTableNode),
     Values(VirtualValuesNode),
-    AnalyzeTable(AnalyzeTableNode),
-    ShowStats(ShowStatsNode),
+    CreateRepository(CreateRepositoryNode),
+    DropRepository(DropRepositoryNode),
+    ShowRepositories(ShowRepositoriesNode),
+    BackupDatabase(BackupDatabaseNode),
+    RestoreDatabase(RestoreDatabaseNode),
+    CreateMaterializedView(CreateMaterializedViewNode),
+    DropMaterializedView(DropMaterializedViewNode),
+    AlterMaterializedView(AlterMaterializedViewNode),
+    RefreshMaterializedView(RefreshMaterializedViewNode),
 }
 
 // ---- Leaf / scan nodes ----
@@ -59,10 +66,6 @@ pub struct ScanNode {
     pub predicates: Vec<String>,
     /// Limit pushed into the scan (early termination).
     pub limit: Option<usize>,
-    /// Optional partition info for partition pruning.
-    pub partition_info: Option<String>,
-    /// Partition IDs to scan (empty = all partitions).
-    pub partition_ids: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,18 +116,6 @@ pub enum AlterOperationPlan {
     DropColumn { name: String },
     ModifyColumn { name: String, data_type: String },
     RenameTable { new_name: String },
-}
-
-#[derive(Debug, Clone)]
-pub struct AnalyzeTableNode {
-    pub database: Option<String>,
-    pub table_name: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ShowStatsNode {
-    pub database: Option<String>,
-    pub table_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +182,69 @@ pub struct CreateViewNode {
     pub if_not_exists: bool,
     pub query: String,
     pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateRepositoryNode {
+    pub name: String,
+    pub repo_type: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropRepositoryNode {
+    pub name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowRepositoriesNode;
+
+#[derive(Debug, Clone)]
+pub struct BackupDatabaseNode {
+    pub database: String,
+    pub repository: String,
+    pub backup_name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RestoreDatabaseNode {
+    pub database: String,
+    pub repository: String,
+    pub backup_name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateMaterializedViewNode {
+    pub database: Option<String>,
+    pub view_name: String,
+    pub if_not_exists: bool,
+    pub query: String,
+    pub columns: Vec<String>,
+    pub refresh_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropMaterializedViewNode {
+    pub database: Option<String>,
+    pub view_name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterMaterializedViewNode {
+    pub database: Option<String>,
+    pub view_name: String,
+    pub operation: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshMaterializedViewNode {
+    pub database: Option<String>,
+    pub view_name: String,
+    pub refresh_type: String,
 }
 
 // ---- Relational operators ----
@@ -272,6 +326,23 @@ pub struct HashJoinNode {
     pub build_keys: Vec<String>,
     pub probe_keys: Vec<String>,
     pub condition: Option<String>,
+    pub build_filters: Vec<RuntimeFilterPlan>,
+    pub probe_filters: Vec<RuntimeFilterPlan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeFilterPlan {
+    pub id: u64,
+    pub filter_type: RuntimeFilterTypePlan,
+    pub build_column: String,
+    pub probe_column: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RuntimeFilterTypePlan {
+    Bloom,
+    MinMax,
+    In,
 }
 
 /// Merge join: expects both inputs sorted on the join keys.
@@ -565,25 +636,30 @@ impl PlanNode {
             PlanNodeType::Values(vals) => {
                 format!("VirtualValuesNode: {} rows", vals.rows.len())
             }
-            PlanNodeType::AnalyzeTable(analyze) => {
-                let db_prefix = analyze
-                    .database
-                    .as_ref()
-                    .map(|d| format!("{}.", d))
-                    .unwrap_or_default();
-                format!("AnalyzeTableNode: {}{}", db_prefix, analyze.table_name)
+            PlanNodeType::CreateRepository(repo) => {
+                format!("CreateRepositoryNode: {} (type={})", repo.name, repo.repo_type)
             }
-            PlanNodeType::ShowStats(show) => {
-                let db_prefix = show
-                    .database
-                    .as_ref()
-                    .map(|d| format!("{}.", d))
-                    .unwrap_or_default();
-                let tbl = show
-                    .table_name
-                    .as_deref()
-                    .unwrap_or("*");
-                format!("ShowStatsNode: {}{}", db_prefix, tbl)
+            PlanNodeType::DropRepository(repo) => {
+                format!("DropRepositoryNode: {} (if_exists={})", repo.name, repo.if_exists)
+            }
+            PlanNodeType::ShowRepositories(_) => "ShowRepositoriesNode".to_string(),
+            PlanNodeType::BackupDatabase(backup) => {
+                format!("BackupDatabaseNode: {} TO {} (name={})", backup.database, backup.repository, backup.backup_name)
+            }
+            PlanNodeType::RestoreDatabase(restore) => {
+                format!("RestoreDatabaseNode: {} FROM {} (name={})", restore.database, restore.repository, restore.backup_name)
+            }
+            PlanNodeType::CreateMaterializedView(mv) => {
+                format!("CreateMaterializedViewNode: {}{}", mv.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), mv.view_name)
+            }
+            PlanNodeType::DropMaterializedView(mv) => {
+                format!("DropMaterializedViewNode: {}{}", mv.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), mv.view_name)
+            }
+            PlanNodeType::AlterMaterializedView(mv) => {
+                format!("AlterMaterializedViewNode: {}{}", mv.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), mv.view_name)
+            }
+            PlanNodeType::RefreshMaterializedView(mv) => {
+                format!("RefreshMaterializedViewNode: {}{}", mv.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), mv.view_name)
             }
         }
     }
@@ -651,8 +727,15 @@ impl PlanNode {
             | PlanNodeType::TruncateTable(_)
             | PlanNodeType::ShowCreateTable(_)
             | PlanNodeType::Values(_)
-            | PlanNodeType::AnalyzeTable(_)
-            | PlanNodeType::ShowStats(_) => vec![],
+            | PlanNodeType::CreateRepository(_)
+            | PlanNodeType::DropRepository(_)
+            | PlanNodeType::ShowRepositories(_)
+            | PlanNodeType::BackupDatabase(_)
+            | PlanNodeType::RestoreDatabase(_)
+            | PlanNodeType::CreateMaterializedView(_)
+            | PlanNodeType::DropMaterializedView(_)
+            | PlanNodeType::AlterMaterializedView(_)
+            | PlanNodeType::RefreshMaterializedView(_) => vec![],
         }
     }
 }
