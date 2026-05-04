@@ -22,7 +22,7 @@
 | ALTER TABLE | ✅ | ✅ | 已完成 |
 | CREATE INDEX | ✅ | ❌ | 缺失 |
 | DROP INDEX | ✅ | ❌ | 缺失 |
-| CREATE MATERIALIZED VIEW | ✅ | 🚧 | 进行中 |
+| CREATE MATERIALIZED VIEW | ✅ | 🚧 | 数据结构已定义，无 DDL/查询改写 |
 | DROP MATERIALIZED VIEW | ✅ | ❌ | 缺失 |
 | CREATE VIEW | ✅ | ✅ | 已完成 |
 | DROP VIEW | ✅ | ✅ | 已完成 |
@@ -39,8 +39,8 @@
 |------|-------------|---------|------|
 | INSERT | ✅ | ✅ | 已完成 |
 | INSERT OVERWRITE | ✅ | ✅ | 已完成 |
-| UPDATE | ✅ | ✅ | 已完成 |
-| DELETE | ✅ | ✅ | 已完成 |
+| UPDATE | ✅ | 🚧 | AST/计划层已实现，执行层仅打日志 |
+| DELETE | ✅ | 🚧 | AST/计划层已实现，执行层仅打日志 |
 | Stream Load | ✅ | ✅ | 已完成 |
 | Broker Load | ✅ | ❌ | 缺失 |
 | Routine Load | ✅ | ❌ | 缺失 |
@@ -91,25 +91,26 @@
 | 列式存储 (Vectorized) | ✅ | ✅ | 已完成 |
 | Alpha Rowset (Legacy) | ✅ | ❌ | 缺失 |
 | Beta Rowset (New) | ✅ | ❌ | 缺失 |
-| Primary Key Index | ✅ | ❌ | 缺失 |
+| Primary Key Index | ✅ | ✅ | 已完成 |
 
 ### 2.2 索引类型
 
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
 | ZoneMap Index | ✅ | ✅ | 已完成 |
-| BloomFilter Index | ✅ | ✅ | 已完成 |
-| Bitmap Index | ✅ | ❌ | 缺失 |
-| Inverted Index | ✅ | ❌ | 缺失 |
+| BloomFilter Index | ✅ | ✅ | 已成 |
+| Bitmap Index | ✅ | ✅ | 已完成 |
+| Inverted Index | ✅ | ✅ | 已完成 |
 | NGram Bloom Filter | ✅ | ❌ | 缺失 |
-| ANN Index (向量检索) | ✅ | ❌ | 缺失 |
+| ANN Index (向量检索) | ✅ | ✅ | 已完成 |
 
 ### 2.3 压缩算法
 
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
 | LZ4 | ✅ | ✅ | 已完成 |
-| zstd | ✅ | ❌ | 缺失 |
+| zstd | ✅ | ✅ | 已完成 |
+| Snappy | ✅ | ✅ | 已完成 |
 | Zlib | ✅ | ❌ | 缺失 |
 | RLE | ✅ | ✅ | 已完成 |
 
@@ -119,7 +120,7 @@
 |------|-------------|---------|------|
 | Base Compaction | ✅ | ✅ | 已完成 |
 | Cumulative Compaction | ✅ | ✅ | 已完成 |
-| Full Compaction | ✅ | ❌ | 缺失 |
+| Full Compaction | ✅ | ✅ | 已完成 |
 | Single Replica Compaction | ✅ | ❌ | 缺失 |
 | Segment Compaction | ✅ | ❌ | 缺失 |
 | 时间序列 Compaction | ✅ | ❌ | 缺失 |
@@ -134,11 +135,11 @@
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
 | RBO (基于规则) | ✅ | ✅ | 已完成 |
-| CBO (基于代价) | ✅ (Nereids) | ❌ | 缺失 |
-| 统计信息管理 | ✅ | ❌ | 缺失 |
-| 列统计信息 | ✅ | ❌ | 缺失 |
+| CBO (基于代价) | ✅ (Nereids) | 🚧 | 框架存在，无实际代价模型 |
+| 统计信息管理 | ✅ | 🚧 | 结构已定义，无收集机制 |
+| 列统计信息 | ✅ | 🚧 | ColumnStats 结构存在 |
 | 直方图 | ✅ | ❌ | 缺失 |
-| NDV (独立值数量) | ✅ | ❌ | 缺失 |
+| NDV (独立值数量) | ✅ | 🚧 | 字段存在 |
 
 ### 3.2 优化规则
 
@@ -149,7 +150,7 @@
 | Limit 下推 | ✅ | ✅ | 已完成 |
 | Join 重排序 | ✅ | ✅ | 已完成 |
 | 子查询解嵌套 | ✅ | ✅ | 已完成 |
-| 常量折叠 | ✅ | ❌ | 缺失 |
+| 常量折叠 | ✅ | ✅ | 已完成 |
 | Runtime Filter | ✅ | ❌ | 缺失 |
 | Partition Pruning | ✅ | ❌ | 缺失 |
 | Short Circuit Query | ✅ | ❌ | 缺失 |
@@ -164,7 +165,7 @@
 | Shuffle Join | ✅ | ✅ | 已完成 |
 | Colocate Join | ✅ | ❌ | 缺失 |
 | Bucket Shuffle Join | ✅ | ❌ | 缺失 |
-| 物化视图透明改写 | ✅ | 🚧 | 进行中 |
+| 物化视图透明改写 | ✅ | 🚧 | 数据结构存在，逻辑未实现 |
 | DPP (分布式处理) | ✅ | ✅ | 已完成 |
 
 ---
@@ -178,7 +179,7 @@
 | Range Partition | ✅ | ❌ | 缺失 |
 | List Partition | ✅ | ❌ | 缺失 |
 | Hash Partition | ✅ | ❌ | 缺失 |
-| 二級分区 (Composite) | ✅ | ❌ | 缺失 |
+| 二级分区 (Composite) | ✅ | ❌ | 缺失 |
 | 动态分区 | ✅ | ❌ | 缺失 |
 | Auto Partition | ✅ | ❌ | 缺失 |
 
@@ -197,7 +198,7 @@
 
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
-| Tablet Scheduler | ✅ | ❌ | 缺失 |
+| Tablet scheduler | ✅ | ❌ | 缺失 |
 | BeLoadRebalancer | ✅ | ❌ | 缺失 |
 | DiskRebalancer | ✅ | ❌ | 缺失 |
 | PartitionRebalancer | ✅ | ❌ | 缺失 |
@@ -238,30 +239,29 @@
 | SMALLINT | ✅ | ✅ | 已完成 |
 | INT | ✅ | ✅ | 已完成 |
 | BIGINT | ✅ | ✅ | 已完成 |
-| LARGEINT | ✅ | ❌ | 缺失 |
+| LARGEINT | ✅ | ✅ | 已完成 (Int128) |
 | FLOAT | ✅ | ✅ | 已完成 |
 | DOUBLE | ✅ | ✅ | 已完成 |
-| DECIMAL | ✅ | ❌ | 缺失 |
-| CHAR | ✅ | ❌ | 缺失 |
+| DECIMAL | ✅ | ✅ | 已完成 |
+| CHAR | ✅ | ✅ | 已完成 |
 | VARCHAR | ✅ | ✅ | 已完成 |
 | STRING | ✅ | ✅ | 已完成 |
 | DATE | ✅ | ✅ | 已完成 |
 | DATETIME | ✅ | ✅ | 已完成 |
 | TIME | ✅ | ❌ | 缺失 |
-| TIMESTAMP | ✅ | ❌ | 缺失 |
 | BOOLEAN | ✅ | ✅ | 已完成 |
 
 ### 6.2 复杂类型
 
 | 类型 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
-| ARRAY | ✅ | ❌ | 缺失 |
-| MAP | ✅ | ❌ | 缺失 |
-| STRUCT | ✅ | ❌ | 缺失 |
-| JSON | ✅ | ❌ | 缺失 |
+| ARRAY | ✅ | ✅ | 已完成 |
+| MAP | ✅ | ✅ | 已完成 |
+| STRUCT | ✅ | ✅ | 已完成 |
+| JSON | ✅ | ✅ | 已完成 |
+| BITMAP | ✅ | ✅ | 已完成 |
 | VARIANT | ✅ | ❌ | 缺失 |
 | HLL (HyperLogLog) | ✅ | ❌ | 缺失 |
-| BITMAP | ✅ | ❌ | 缺失 |
 | IPV4 | ✅ | ❌ | 缺失 |
 | IPV6 | ✅ | ❌ | 缺失 |
 | BINARY | ✅ | ❌ | 缺失 |
@@ -273,13 +273,11 @@
 
 ## 7. 外部表和集成
 
-### 7.1 外部 Catalog
-
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
-| Hive Catalog | ✅ | 🚧 | 进行中 |
-| Iceberg Catalog | ✅ | 🚧 | 进行中 |
-| Hudi Catalog | ✅ | 🚧 | 进行中 |
+| Hive Catalog | ✅ | ❌ | 缺失 |
+| Iceberg Catalog | ✅ | ❌ | 缺失 |
+| Hudi Catalog | ✅ | ❌ | 缺失 |
 | Paimon Catalog | ✅ | ❌ | 缺失 |
 | JDBC Catalog | ✅ | ❌ | 缺失 |
 | MaxCompute | ✅ | ❌ | 缺失 |
@@ -296,9 +294,9 @@
 
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
-| BDBJE 共识 | ✅ | 🚧 | 进行中 (Raft) |
-| Master 选举 | ✅ | 🚧 | 进行中 |
-| Quorum 协议 | ✅ | 🚧 | 进行中 |
+| BDBJE 共识 | ✅ | ❌ | 缺失 (无 Raft 实现) |
+| Master 选举 | ✅ | ❌ | 缺失 |
+| Quorum 协议 | ✅ | ❌ | 缺失 |
 | 事务协调器 | ✅ | ❌ | 缺失 |
 
 ### 8.2 Backend HA
@@ -326,11 +324,11 @@
 
 | 功能 | Apache Doris | RorisDB | 状态 |
 |------|-------------|---------|------|
-| Information Schema | ✅ | ❌ | 缺失 |
-| Metrics API (Prometheus) | ✅ | ❌ | 缺失 |
-| FE/BE Metrics | ✅ | ❌ | 缺失 |
-| Query Profile | ✅ | ❌ | 缺失 |
-| Audit Log | ✅ | ❌ | 缺失 |
+| Information Schema | ✅ | ✅ | 已完成 |
+| Metrics API (Prometheus) | ✅ | ✅ | 已完成 |
+| FE/BE Metrics | ✅ | ✅ | 已完成 |
+| Query Profile | ✅ | ✅ | 已完成 |
+| Audit Log | ✅ | ✅ | 已完成 |
 
 ### 9.2 备份恢复
 
@@ -374,31 +372,29 @@
 
 ### P0 (核心缺失，影响基本使用)
 
-1. **UPDATE / DELETE** - 行级数据修改
-2. **ALTER TABLE** - 表结构变更
-3. **分区支持** - Range/List/Hash Partition
-4. **CBO 优化器** - 基于代价的查询优化
-5. **统计信息** - 列统计、直方图
+1. **UPDATE/DELETE 执行层** - AST/计划已有，执行层未实现
+2. **分区支持** - Range/List/Hash Partition
+3. **FE 高可用 (Raft)** - Master 选举与 Quorum
 
 ### P1 (重要功能，影响性能)
 
-1. **物化视图** - 查询加速
-2. **Bitmap/HLL 类型** - 精确去重和计数
-3. **Inverted Index** - 全文搜索
-4. **Runtime Filter** - Join 优化
-5. **备份恢复** - 数据安全
+1. **物化视图** - DDL + 查询透明改写
+2. **Runtime Filter** - Join 优化
+3. **CBO 代价模型** - 完成统计信息收集 + 代价估算
+4. **备份恢复** - 数据安全
+5. **RBAC 权限** - 基本角色权限控制
 
 ### P2 (完善功能，企业级)
 
-1. **外部表** - Hive/Iceberg/Hudi
+1. **外部表** - Hive/Iceberg/Hudi Catalog
 2. **LDAP 认证** - 企业集成
-3. **Information Schema** - 系统监控
-4. **UDF/UDAF** - 可扩展性
-5. **多租户** - 资源隔离
+3. **UDF/UDAF** - 可扩展性
+4. **多租户** - 资源隔离
+5. **窗口函数补全** - FIRST_VALUE/LAST_VALUE/聚合窗口
 
 ### P3 (长期规划)
 
-1. **向量检索 (ANN)** - AI 应用
+1. **向量检索增强** - ANN 索引优化（已有基础实现）
 2. **存储过程** - 复杂业务逻辑
 3. **Kubernetes Operator** - 云原生部署
 4. **Binlog CDC** - 数据同步
