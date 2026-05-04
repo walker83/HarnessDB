@@ -1861,7 +1861,7 @@ args.iter().filter_map(|v| {
                 if let Vector::Int64(sv) = v {
                     sv.get(i).map(|n| {
                         let ch = (n.clamp(0, 255) as u8) as char;
-                        if ch.is_ascii() { Some(ch) } else { Some('') }
+                        if ch.is_ascii() { Some(ch) } else { Some('\u{FFFD}') }
                     }).flatten()
                 } else {
                     None
