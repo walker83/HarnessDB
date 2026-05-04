@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use parking_lot::RwLock;
-use types::{Block, DataType, Field, Schema};
+use types::{Block, DataType, Field, Schema, Vector, ScalarValue};
 
 use crate::rowset::{Rowset, RowsetMeta, SegmentRef, RowsetState};
 use crate::segment::{SegmentWriter, SegmentReader};
@@ -57,47 +58,167 @@ impl MemTableKey {
 /// In-memory write buffer for a tablet.
 /// Stores rows in sorted order by key for efficient flushing.
 pub struct MemTable {
-    /// Sorted map of key -> row data (serialized Block rows).
-    /// Each entry is a single row stored as a mini-Block.
-    rows: BTreeMap<MemTableKey, Block>,
-    /// Approximate memory size in bytes.
+    rows: BTreeMap<MemTableKey, ColumnarRow>,
     memory_size: u64,
-    /// Maximum memory before flush is triggered.
     capacity: u64,
+    schema: TabletSchema,
+}
+
+#[derive(Clone)]
+struct ColumnarRow {
+    columns: Vec<ScalarValue>,
+}
+
+impl ColumnarRow {
+    fn new(columns: Vec<ScalarValue>) -> Self {
+        Self { columns }
+    }
+
+    fn memory_size(&self) -> u64 {
+        let mut size = 0u64;
+        for val in &self.columns {
+            size += match val {
+                ScalarValue::Boolean(_) => 1,
+                ScalarValue::Int8(_) => 1,
+                ScalarValue::Int16(_) => 2,
+                ScalarValue::Int32(_) => 4,
+                ScalarValue::Int64(_) => 8,
+                ScalarValue::Int128(_) => 16,
+                ScalarValue::Float32(_) => 4,
+                ScalarValue::Float64(_) => 8,
+                ScalarValue::String(s) => s.len() as u64 + 8,
+                ScalarValue::Date(_) => 4,
+                ScalarValue::DateTime(_) => 8,
+                ScalarValue::Json(_) => 64,
+                ScalarValue::Null => 0,
+                ScalarValue::Binary(b) => b.len() as u64 + 8,
+                ScalarValue::Array(a) => a.len() as u64 * 8 + 8,
+            };
+        }
+        size
+    }
 }
 
 impl MemTable {
-    pub fn new(capacity: u64) -> Self {
+    pub fn new(capacity: u64, schema: TabletSchema) -> Self {
         Self {
             rows: BTreeMap::new(),
             memory_size: 0,
             capacity,
+            schema,
         }
     }
 
-    /// Insert a block of rows into the memtable.
-    /// Each row is extracted from the block and stored individually.
     pub fn insert(&mut self, block: &Block, key_column_idx: usize) -> Result<(), String> {
         for row_idx in 0..block.num_rows() {
             let key = self.extract_key(block, row_idx, key_column_idx)?;
-            let row_block = block.slice(row_idx, 1);
-            self.memory_size += estimate_block_size(&row_block);
-            self.rows.insert(key, row_block);
+            let row_values: Vec<ScalarValue> = (0..block.num_columns())
+                .map(|col_idx| {
+                    if let Some(col) = block.column(col_idx) {
+                        col.scalar_at(row_idx)
+                    } else {
+                        ScalarValue::Null
+                    }
+                })
+                .collect();
+            
+            let row = ColumnarRow::new(row_values);
+            self.memory_size += row.memory_size();
+            self.rows.insert(key, row);
         }
         Ok(())
     }
 
-    /// Convert the memtable to a single Block by concatenating all rows.
     pub fn to_block(&self, schema: &Schema) -> Block {
         if self.rows.is_empty() {
             return Block::empty(schema.clone());
         }
-        let blocks: Vec<&Block> = self.rows.values().collect();
-        let mut result = blocks[0].clone();
-        for b in &blocks[1..] {
-            result.append_block(b);
+
+        let num_rows = self.rows.len();
+        let num_cols = schema.fields().len();
+        
+        let mut columns: Vec<Vector> = Vec::with_capacity(num_cols);
+        
+        for col_idx in 0..num_cols {
+            let field = &schema.fields()[col_idx];
+            let scalars: Vec<ScalarValue> = self.rows.values()
+                .map(|row| row.columns.get(col_idx).cloned().unwrap_or(ScalarValue::Null))
+                .collect();
+            
+            let vector = match field.data_type {
+                DataType::Boolean => {
+                    let data: Vec<bool> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Boolean(b) = s { Some(*b) } else { None })
+                        .collect();
+                    Vector::Boolean(types::vector::BooleanVector::from_vec(data))
+                }
+                DataType::Int8 => {
+                    let data: Vec<i8> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Int8(i) = s { Some(*i) } else { None })
+                        .collect();
+                    Vector::Int8(types::vector::Int8Vector::from_vec(data))
+                }
+                DataType::Int16 => {
+                    let data: Vec<i16> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Int16(i) = s { Some(*i) } else { None })
+                        .collect();
+                    Vector::Int16(types::vector::Int16Vector::from_vec(data))
+                }
+                DataType::Int32 => {
+                    let data: Vec<i32> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Int32(i) = s { Some(*i) } else { None })
+                        .collect();
+                    Vector::Int32(types::vector::Int32Vector::from_vec(data))
+                }
+                DataType::Int64 => {
+                    let data: Vec<i64> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Int64(i) = s { Some(*i) } else { None })
+                        .collect();
+                    Vector::Int64(types::vector::Int64Vector::from_vec(data))
+                }
+                DataType::Int128 => {
+                    let data: Vec<i128> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Int128(i) = s { Some(*i) } else { None })
+                        .collect();
+                    Vector::Int128(types::vector::Int128Vector::from_vec(data))
+                }
+                DataType::Float32 => {
+                    let data: Vec<f32> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Float32(f) = s { Some(*f) } else { None })
+                        .collect();
+                    Vector::Float32(types::vector::Float32Vector::from_vec(data))
+                }
+                DataType::Float64 => {
+                    let data: Vec<f64> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Float64(f) = s { Some(*f) } else { None })
+                        .collect();
+                    Vector::Float64(types::vector::Float64Vector::from_vec(data))
+                }
+                DataType::String => {
+                    let data: Vec<String> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::String(s) = s { Some(s.clone()) } else { None })
+                        .collect();
+                    let data_refs: Vec<&str> = data.iter().map(|s| s.as_str()).collect();
+                    Vector::String(types::vector::StringVector::from_vec(data_refs))
+                }
+                DataType::Date => {
+                    let data: Vec<i32> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::Date(d) = s { Some(*d) } else { None })
+                        .collect();
+                    Vector::Date(types::vector::DateVector::from_vec(data))
+                }
+                DataType::DateTime => {
+                    let data: Vec<i64> = scalars.iter()
+                        .filter_map(|s| if let ScalarValue::DateTime(d) = s { Some(*d) } else { None })
+                        .collect();
+                    Vector::DateTime(types::vector::DateTimeVector::from_vec(data))
+                }
+                _ => Vector::Null(types::vector::NullVector::new(num_rows)),
+            };
+            columns.push(vector);
         }
-        result
+        
+        Block::new(schema.clone(), columns)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -183,7 +304,7 @@ impl Tablet {
             tablet_id,
             schema: schema.clone(),
             max_version: AtomicU64::new(0),
-            memtable: RwLock::new(MemTable::new(memtable_capacity)),
+            memtable: RwLock::new(MemTable::new(memtable_capacity, schema)),
             rowsets: RwLock::new(Vec::new()),
             data_dir,
             next_segment_id: AtomicU64::new(0),

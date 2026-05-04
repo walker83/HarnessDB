@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::DrorisError;
+use dashmap::DashMap;
 use fe_catalog::CatalogManager;
 use fe_sql_parser::Statement;
 use fe_sql_planner::optimizer::Optimizer;
@@ -14,6 +15,7 @@ use types::Block;
 
 use crate::cluster::ClusterManager;
 use crate::fragment::FragmentTree;
+use crate::memory::MemoryTracker;
 use crate::scheduler::{QueryLimits, Scheduler};
 use crate::timeline::{QueryId, QueryState, QueryTimeline};
 
@@ -30,6 +32,8 @@ pub struct CoordinatorConfig {
     pub default_query_timeout: Duration,
     /// Interval at which to check for timed-out queries.
     pub timeout_check_interval: Duration,
+    /// Memory quota for the coordinator (bytes).
+    pub memory_quota: u64,
 }
 
 impl Default for CoordinatorConfig {
@@ -38,6 +42,7 @@ impl Default for CoordinatorConfig {
             node_id: "fe-0".into(),
             default_query_timeout: Duration::from_secs(300),
             timeout_check_interval: Duration::from_secs(5),
+            memory_quota: 1024 * 1024 * 1024, // 1GB
         }
     }
 }
@@ -95,7 +100,9 @@ pub struct Coordinator {
     scheduler: Scheduler,
     timeline: Arc<RwLock<QueryTimeline>>,
     /// Queries that are currently in Running state.
-    running_queries: Arc<RwLock<HashMap<QueryId, RunningQuery>>>,
+    running_queries: DashMap<QueryId, RunningQuery>,
+    /// Memory tracker for query execution.
+    memory_tracker: Arc<MemoryTracker>,
 }
 
 impl Coordinator {
@@ -103,6 +110,7 @@ impl Coordinator {
     pub fn new(cluster: Arc<ClusterManager>, catalog: Arc<CatalogManager>, config: CoordinatorConfig) -> Self {
         let scheduler = Scheduler::new(cluster);
         let timeline = QueryTimeline::new(config.node_id.clone());
+        let memory_tracker = Arc::new(MemoryTracker::new(config.memory_quota));
 
         Self {
             config,
@@ -110,7 +118,8 @@ impl Coordinator {
             optimizer: Optimizer::new(),
             scheduler,
             timeline: Arc::new(RwLock::new(timeline)),
-            running_queries: Arc::new(RwLock::new(HashMap::new())),
+            running_queries: DashMap::new(),
+            memory_tracker,
         }
     }
 
@@ -135,7 +144,7 @@ impl Coordinator {
         info!("Coordinator executing query {}: {}", query_id, sql);
 
         // Step 2: Check cluster limits.
-        let running_count = self.running_queries.read().await.len();
+        let running_count = self.running_queries.len();
         self.scheduler.check_cluster_limits(running_count).await?;
 
         // Step 3: Plan.
@@ -162,23 +171,20 @@ impl Coordinator {
                 e
             })?;
 
-        // Step 6: Track the running query.
-        {
-            let mut running = self.running_queries.write().await;
-            running.insert(
-                query_id.clone(),
-                RunningQuery {
-                    query_id: query_id.clone(),
-                    sql: sql.clone(),
-                    scheduled_at: std::time::Instant::now(),
-                    timeout: self.config.default_query_timeout,
-                    fragment_tree,
-                    result_blocks: Vec::new(),
-                    rows_scanned: 0,
-                    bytes_processed: 0,
-                },
-            );
-        }
+// Step 6: Track the running query.
+        self.running_queries.insert(
+            query_id.clone(),
+            RunningQuery {
+                query_id: query_id.clone(),
+                sql: sql.clone(),
+                scheduled_at: std::time::Instant::now(),
+                timeout: self.config.default_query_timeout,
+                fragment_tree,
+                result_blocks: Vec::new(),
+                rows_scanned: 0,
+                bytes_processed: 0,
+            },
+        );
 
         // Step 7: Execute (dispatch to BE nodes).
         // In a real implementation this would send RPCs and await responses.
@@ -198,6 +204,15 @@ impl Coordinator {
         self.optimizer.optimize(plan)
     }
 
+    /// Get current memory statistics.
+    pub fn memory_stats(&self) -> (u64, u64, u64) {
+        (
+            self.memory_tracker.current_usage(),
+            self.memory_tracker.max_usage(),
+            self.memory_tracker.quota(),
+        )
+    }
+
     // -----------------------------------------------------------------------
     // Execution dispatch and result collection
     // -----------------------------------------------------------------------
@@ -211,15 +226,14 @@ impl Coordinator {
     ///
     /// Here we simulate the process and return an empty result set.
     async fn dispatch_and_collect(&self, query_id: &QueryId) -> Result<QueryResult, DrorisError> {
-        let mut running = self.running_queries.write().await;
-        let running_query = running
+        let running_query_ref = self.running_queries
             .get_mut(query_id)
             .ok_or_else(|| DrorisError::Internal(format!("query {} not in running tracker", query_id)))?;
 
         // Simulate: in a real system we would dispatch RPCs here.
         // For each fragment instance in topological order (leaves first),
         // send an execution request to the assigned BE node.
-        let topological = running_query.fragment_tree.topological_order();
+        let topological = running_query_ref.fragment_tree.topological_order();
         debug!(
             "Query {}: dispatching {} fragments",
             query_id,
@@ -239,24 +253,26 @@ impl Coordinator {
 
         // Simulate collecting results (empty for now).
         let blocks: Vec<Block> = vec![];
-        let elapsed = running_query.scheduled_at.elapsed();
+        let elapsed = running_query_ref.scheduled_at.elapsed();
         let rows_produced: u64 = blocks.iter().map(|b| b.num_rows() as u64).sum();
+        let rows_scanned = running_query_ref.rows_scanned;
+        let bytes_processed = running_query_ref.bytes_processed;
+
+        // Remove from running tracker.
+        self.running_queries.remove(query_id);
 
         // Record metrics in the timeline.
         {
             let mut timeline = self.timeline.write().await;
             if let Some(handle) = timeline.get_mut(query_id) {
                 handle.accumulate_metrics(
-                    running_query.rows_scanned,
-                    running_query.bytes_processed,
+                    rows_scanned,
+                    bytes_processed,
                     0,
                 );
                 let _ = handle.finish(blocks.clone());
             }
         }
-
-        // Remove from running tracker.
-        running.remove(query_id);
 
         Ok(QueryResult {
             query_id: query_id.clone(),
@@ -275,8 +291,7 @@ impl Coordinator {
         info!("Cancelling query {}", query_id);
 
         // Remove from running queries tracker.
-        let mut running = self.running_queries.write().await;
-        if let Some(rq) = running.remove(query_id) {
+        if let Some((_, rq)) = self.running_queries.remove(query_id) {
             // In a real system, send cancellation RPCs to all BE nodes with
             // instances for this query.
             for fragment in rq.fragment_tree.topological_order() {
@@ -305,14 +320,14 @@ impl Coordinator {
         let mut timed_out = Vec::new();
         let now = std::time::Instant::now();
 
-        let running = self.running_queries.read().await;
-        for (query_id, rq) in running.iter() {
+        for entry in self.running_queries.iter() {
+            let query_id = entry.key();
+            let rq = entry.value();
             if now.duration_since(rq.scheduled_at) > rq.timeout {
                 warn!("Query {} timed out after {:?}", query_id, rq.timeout);
                 timed_out.push(query_id.clone());
             }
         }
-        drop(running);
 
         for query_id in &timed_out {
             let _ = self.cancel(query_id).await;
@@ -367,7 +382,7 @@ impl Coordinator {
 
     /// Number of currently running queries.
     pub async fn running_query_count(&self) -> usize {
-        self.running_queries.read().await.len()
+        self.running_queries.len()
     }
 
     // -----------------------------------------------------------------------
@@ -381,18 +396,17 @@ impl Coordinator {
     ) -> Result<(), DrorisError> {
         warn!("Handling BE node failure: {}", failed_node_id);
 
-        let mut running = self.running_queries.write().await;
-        for (_query_id, rq) in running.iter_mut() {
-            let query_id_str = rq.query_id.to_string();
+        for mut entry in self.running_queries.iter_mut() {
+            let query_id_str = entry.query_id.to_string();
             let limits = QueryLimits {
-                timeout_ms: rq.timeout.as_millis() as u64,
+                timeout_ms: entry.timeout.as_millis() as u64,
                 ..QueryLimits::default()
             };
 
             let reassigned = self
                 .scheduler
                 .reschedule_on_failure(
-                    &mut rq.fragment_tree,
+                    &mut entry.fragment_tree,
                     failed_node_id,
                     &query_id_str,
                     &limits,

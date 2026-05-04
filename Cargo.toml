@@ -71,6 +71,7 @@ hashbrown = "0.15"
 indexmap = "2"
 bytes = "1"
 tokio-stream = { version = "0.1", features = ["fs"] }
+dashmap = "6"
 
 # Date/time handling
 chrono = "0.4"
@@ -88,6 +89,9 @@ sha2 = "0.10"
 
 # Testing
 mockall = "0.13"
+
+# Async traits
+async-trait = "0.1"
 
 # Internal crates
 fe-sql-parser = { path = "crates/fe-sql-parser" }

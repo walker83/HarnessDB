@@ -1,6 +1,7 @@
 use proto::{Status, ExecPlanFragmentRequest, ExecPlanFragmentResponse, CancelPlanFragmentRequest, FetchDataRequest, FetchDataResponse, HeartbeatRequest, HeartbeatResponse, BackendService};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use dashmap::DashMap;
 use tonic::{Request, Response, Status as TonicStatus, Code};
 
 // Fragment execution state
@@ -20,13 +21,13 @@ enum ExecutionStatus {
 
 // gRPC server implementation
 pub struct BeGrpcServer {
-    fragments: Arc<RwLock<HashMap<String, FragmentState>>>,
+    fragments: DashMap<String, FragmentState>,
 }
 
 impl BeGrpcServer {
     pub fn new() -> Self {
         Self {
-            fragments: Arc::new(RwLock::new(HashMap::new())),
+            fragments: DashMap::new(),
         }
     }
 
@@ -38,17 +39,11 @@ impl BeGrpcServer {
             status: ExecutionStatus::Running,
         };
 
-        {
-            let mut fragments = self.fragments.write().unwrap();
-            fragments.insert(fragment_id.clone(), state);
-        }
+        self.fragments.insert(fragment_id.clone(), state);
 
         // Mark as completed
-        {
-            let mut fragments = self.fragments.write().unwrap();
-            if let Some(fragment) = fragments.get_mut(&fragment_id) {
-                fragment.status = ExecutionStatus::Completed;
-            }
+        if let Some(mut fragment_ref) = self.fragments.get_mut(&fragment_id) {
+            fragment_ref.status = ExecutionStatus::Completed;
         }
 
         Ok(ExecPlanFragmentResponse {
@@ -62,9 +57,8 @@ impl BeGrpcServer {
     }
 
     async fn cancel_plan_fragment_internal(&self, fragment_id: String) -> Result<Status, TonicStatus> {
-        let mut fragments = self.fragments.write().unwrap();
-        if let Some(fragment) = fragments.get_mut(&fragment_id) {
-            fragment.status = ExecutionStatus::Cancelled;
+        if let Some(mut fragment_ref) = self.fragments.get_mut(&fragment_id) {
+            fragment_ref.status = ExecutionStatus::Cancelled;
             Ok(Status {
                 code: 0,
                 message: "Fragment cancelled".to_string(),
@@ -76,8 +70,7 @@ impl BeGrpcServer {
     }
 
     async fn fetch_data_internal(&self, req: FetchDataRequest) -> Result<FetchDataResponse, TonicStatus> {
-        let fragments = self.fragments.read().unwrap();
-        if let Some(fragment) = fragments.get(&req.fragment_id) {
+        if let Some(fragment_ref) = self.fragments.get(&req.fragment_id) {
             Ok(FetchDataResponse {
                 status: Some(Status {
                     code: 0,
@@ -85,7 +78,7 @@ impl BeGrpcServer {
                     details: vec![],
                 }),
                 row_batch: None,
-                query_id: fragment.query_id.clone(),
+                query_id: fragment_ref.query_id.clone(),
             })
         } else {
             Err(TonicStatus::new(Code::NotFound, "Fragment not found"))

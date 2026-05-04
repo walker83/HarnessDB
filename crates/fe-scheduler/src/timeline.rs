@@ -1,4 +1,4 @@
-use common::DrorisError;
+use common::{DrorisError, QueryError};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -250,7 +250,7 @@ impl QueryTimeline {
         if let Some(handle) = self.handles.get_mut(id) {
             handle.cancel()
         } else {
-            Err(DrorisError::Query(format!(
+            Err(DrorisError::query(QueryError::NotFound, format!(
                 "query {} not found",
                 id
             )))

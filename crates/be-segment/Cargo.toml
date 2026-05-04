@@ -9,3 +9,6 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }
+lz4 = "1.28"
+zstd = "0.13"
+snap = "1.1"

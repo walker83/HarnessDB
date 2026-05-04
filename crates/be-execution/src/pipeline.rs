@@ -1,35 +1,35 @@
-use crate::exec_node::ExecNode;
+use crate::exec_node::{ExecNode, ExecutionPlan};
 use common::Result;
 use types::Block;
 
 pub struct Pipeline {
-    root: Box<dyn ExecNode>,
+    root: Box<ExecutionPlan>,
 }
 
 impl Pipeline {
-    pub fn new(root: Box<dyn ExecNode>) -> Self {
+    pub fn new(root: Box<ExecutionPlan>) -> Self {
         Self { root }
     }
 
-    pub fn open(&mut self) -> Result<()> {
-        self.root.open()
+    pub async fn open(&mut self) -> Result<()> {
+        self.root.open().await
     }
 
-    pub fn get_next(&mut self) -> Result<Option<Block>> {
-        self.root.get_next()
+    pub async fn get_next(&mut self) -> Result<Option<Block>> {
+        self.root.get_next().await
     }
 
-    pub fn close(&mut self) -> Result<()> {
-        self.root.close()
+    pub async fn close(&mut self) -> Result<()> {
+        self.root.close().await
     }
 
-    pub fn execute(mut self) -> Result<Vec<Block>> {
-        self.open()?;
+    pub async fn execute(mut self) -> Result<Vec<Block>> {
+        self.open().await?;
         let mut results = Vec::new();
-        while let Some(block) = self.get_next()? {
+        while let Some(block) = self.get_next().await? {
             results.push(block);
         }
-        self.close()?;
+        self.close().await?;
         Ok(results)
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use common::DrorisError;
+use common::{DrorisError, QueryError};
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -406,7 +406,7 @@ impl Scheduler {
     /// Check cluster-level resource limits before admitting a new query.
     pub async fn check_cluster_limits(&self, running_queries: usize) -> Result<(), DrorisError> {
         if running_queries >= self.limits.max_concurrent_queries {
-            return Err(DrorisError::Query(format!(
+            return Err(DrorisError::query(QueryError::ResourceExhausted, format!(
                 "cluster concurrent query limit reached ({}/{})",
                 running_queries, self.limits.max_concurrent_queries
             )));
