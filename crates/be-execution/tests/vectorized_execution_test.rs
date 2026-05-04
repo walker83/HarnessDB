@@ -1,8 +1,6 @@
 use be_execution::exec_node::{AggregateExecNode, SortExecNode, ScanExecNode, ExecNode, ExecutionPlan};
 use types::{Block, Schema, Field, DataType, Vector, ScalarValue};
 
-// Helper functions
-
 fn create_block_with_columns(schema: Schema, columns: Vec<Vector>) -> Block {
     Block::new(schema, columns)
 }
@@ -14,12 +12,8 @@ fn create_scan_node(table_name: &str, columns: &[&str]) -> ScanExecNode {
     )
 }
 
-// ===========================================================================
-// P1 Optimization: Vectorized Aggregation Tests
-// ===========================================================================
-
-#[test]
-fn test_aggregate_sum_batch() {
+#[tokio::test]
+async fn test_aggregate_sum_batch() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("value", DataType::Int64, true),
@@ -44,8 +38,8 @@ fn test_aggregate_sum_batch() {
         returned: false,
     };
 
-    agg_node.open().unwrap();
-    let result = agg_node.get_next().unwrap();
+    agg_node.open().await.unwrap();
+    let result = agg_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -56,8 +50,8 @@ fn test_aggregate_sum_batch() {
     assert_eq!(col.scalar_at(0), ScalarValue::Int64(150));
 }
 
-#[test]
-fn test_aggregate_count_batch() {
+#[tokio::test]
+async fn test_aggregate_count_batch() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("value", DataType::Int64, true),
@@ -80,8 +74,8 @@ fn test_aggregate_count_batch() {
         returned: false,
     };
 
-    agg_node.open().unwrap();
-    let result = agg_node.get_next().unwrap();
+    agg_node.open().await.unwrap();
+    let result = agg_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -91,8 +85,8 @@ fn test_aggregate_count_batch() {
     assert_eq!(col.scalar_at(0), ScalarValue::Int64(5));
 }
 
-#[test]
-fn test_aggregate_min_max_batch() {
+#[tokio::test]
+async fn test_aggregate_min_max_batch() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("value", DataType::Int64, true),
@@ -115,8 +109,8 @@ fn test_aggregate_min_max_batch() {
         returned: false,
     };
 
-    agg_node.open().unwrap();
-    let result = agg_node.get_next().unwrap();
+    agg_node.open().await.unwrap();
+    let result = agg_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -129,8 +123,8 @@ fn test_aggregate_min_max_batch() {
     assert_eq!(col1.scalar_at(0), ScalarValue::Int64(50));
 }
 
-#[test]
-fn test_aggregate_avg_batch() {
+#[tokio::test]
+async fn test_aggregate_avg_batch() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("value", DataType::Int64, true),
@@ -153,8 +147,8 @@ fn test_aggregate_avg_batch() {
         returned: false,
     };
 
-    agg_node.open().unwrap();
-    let result = agg_node.get_next().unwrap();
+    agg_node.open().await.unwrap();
+    let result = agg_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -163,8 +157,8 @@ fn test_aggregate_avg_batch() {
     assert_eq!(col.scalar_at(0), ScalarValue::Float64(20.0));
 }
 
-#[test]
-fn test_aggregate_float_values() {
+#[tokio::test]
+async fn test_aggregate_float_values() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("score", DataType::Float64, true),
@@ -187,8 +181,8 @@ fn test_aggregate_float_values() {
         returned: false,
     };
 
-    agg_node.open().unwrap();
-    let result = agg_node.get_next().unwrap();
+    agg_node.open().await.unwrap();
+    let result = agg_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -197,12 +191,8 @@ fn test_aggregate_float_values() {
     assert_eq!(col.scalar_at(0), ScalarValue::Float64(17.5));
 }
 
-// ===========================================================================
-// P1 Optimization: Vectorized Sorting Tests
-// ===========================================================================
-
-#[test]
-fn test_sort_single_column_asc() {
+#[tokio::test]
+async fn test_sort_single_column_asc() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("name", DataType::String, false),
@@ -227,8 +217,8 @@ fn test_sort_single_column_asc() {
         returned: false,
     };
 
-    sort_node.open().unwrap();
-    let result = sort_node.get_next().unwrap();
+    sort_node.open().await.unwrap();
+    let result = sort_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -242,8 +232,8 @@ fn test_sort_single_column_asc() {
     assert_eq!(ids.scalar_at(4), ScalarValue::Int64(5));
 }
 
-#[test]
-fn test_sort_single_column_desc() {
+#[tokio::test]
+async fn test_sort_single_column_desc() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
     ]);
@@ -264,8 +254,8 @@ fn test_sort_single_column_desc() {
         returned: false,
     };
 
-    sort_node.open().unwrap();
-    let result = sort_node.get_next().unwrap();
+    sort_node.open().await.unwrap();
+    let result = sort_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -278,8 +268,8 @@ fn test_sort_single_column_desc() {
     assert_eq!(ids.scalar_at(4), ScalarValue::Int64(1));
 }
 
-#[test]
-fn test_sort_float_column() {
+#[tokio::test]
+async fn test_sort_float_column() {
     let schema = Schema::new(vec![
         Field::new("score", DataType::Float64, false),
     ]);
@@ -300,8 +290,8 @@ fn test_sort_float_column() {
         returned: false,
     };
 
-    sort_node.open().unwrap();
-    let result = sort_node.get_next().unwrap();
+    sort_node.open().await.unwrap();
+    let result = sort_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -314,8 +304,8 @@ fn test_sort_float_column() {
     assert_eq!(scores.scalar_at(4), ScalarValue::Float64(95.0));
 }
 
-#[test]
-fn test_sort_multi_column() {
+#[tokio::test]
+async fn test_sort_multi_column() {
     let schema = Schema::new(vec![
         Field::new("group", DataType::Int64, false),
         Field::new("value", DataType::Int64, false),
@@ -338,8 +328,8 @@ fn test_sort_multi_column() {
         returned: false,
     };
 
-    sort_node.open().unwrap();
-    let result = sort_node.get_next().unwrap();
+    sort_node.open().await.unwrap();
+    let result = sort_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();
@@ -363,8 +353,8 @@ fn test_sort_multi_column() {
     assert_eq!(values.scalar_at(4), ScalarValue::Int64(40));
 }
 
-#[test]
-fn test_sort_empty_block() {
+#[tokio::test]
+async fn test_sort_empty_block() {
     let schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
     let block = Block::empty(schema);
     let mut scan_node = create_scan_node("test_table", &["id"]);
@@ -378,16 +368,15 @@ fn test_sort_empty_block() {
         returned: false,
     };
 
-    sort_node.open().unwrap();
-    let result = sort_node.get_next().unwrap();
-    // Empty block might return None or an empty block
+    sort_node.open().await.unwrap();
+    let result = sort_node.get_next().await.unwrap();
     if let Some(result_block) = result {
         assert_eq!(result_block.num_rows(), 0);
     }
 }
 
-#[test]
-fn test_sort_no_order_keys() {
+#[tokio::test]
+async fn test_sort_no_order_keys() {
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
     ]);
@@ -408,8 +397,8 @@ fn test_sort_no_order_keys() {
         returned: false,
     };
 
-    sort_node.open().unwrap();
-    let result = sort_node.get_next().unwrap();
+    sort_node.open().await.unwrap();
+    let result = sort_node.get_next().await.unwrap();
 
     assert!(result.is_some());
     let result_block = result.unwrap();

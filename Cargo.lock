@@ -194,6 +194,7 @@ dependencies = [
 name = "be-execution"
 version = "0.1.3"
 dependencies = [
+ "async-trait",
  "be-storage",
  "common",
  "thiserror",

@@ -1,12 +1,14 @@
+use async_trait::async_trait;
 use common::Result;
 use types::{Block, Bitmap, Vector, Schema, ScalarValue};
 use std::sync::{Arc, Mutex};
 use be_storage::tablet::{Tablet, TabletSchema, truncate_tablet};
 
+#[async_trait]
 pub trait ExecNode: Send + Sync {
-    fn open(&mut self) -> Result<()>;
-    fn get_next(&mut self) -> Result<Option<Block>>;
-    fn close(&mut self) -> Result<()>;
+    async fn open(&mut self) -> Result<()>;
+    async fn get_next(&mut self) -> Result<Option<Block>>;
+    async fn close(&mut self) -> Result<()>;
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
@@ -23,49 +25,50 @@ pub enum ExecutionPlan {
     Window(WindowExecNode),
 }
 
+#[async_trait]
 impl ExecNode for ExecutionPlan {
-    fn open(&mut self) -> Result<()> {
+    async fn open(&mut self) -> Result<()> {
         match self {
-            ExecutionPlan::Scan(node) => node.open(),
-            ExecutionPlan::Filter(node) => node.open(),
-            ExecutionPlan::Project(node) => node.open(),
-            ExecutionPlan::Aggregate(node) => node.open(),
-            ExecutionPlan::Sort(node) => node.open(),
-            ExecutionPlan::Limit(node) => node.open(),
-            ExecutionPlan::HashJoin(node) => node.open(),
-            ExecutionPlan::Union(node) => node.open(),
-            ExecutionPlan::Truncate(node) => node.open(),
-            ExecutionPlan::Window(node) => node.open(),
+            ExecutionPlan::Scan(node) => node.open().await,
+            ExecutionPlan::Filter(node) => node.open().await,
+            ExecutionPlan::Project(node) => node.open().await,
+            ExecutionPlan::Aggregate(node) => node.open().await,
+            ExecutionPlan::Sort(node) => node.open().await,
+            ExecutionPlan::Limit(node) => node.open().await,
+            ExecutionPlan::HashJoin(node) => node.open().await,
+            ExecutionPlan::Union(node) => node.open().await,
+            ExecutionPlan::Truncate(node) => node.open().await,
+            ExecutionPlan::Window(node) => node.open().await,
         }
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         match self {
-            ExecutionPlan::Scan(node) => node.get_next(),
-            ExecutionPlan::Filter(node) => node.get_next(),
-            ExecutionPlan::Project(node) => node.get_next(),
-            ExecutionPlan::Aggregate(node) => node.get_next(),
-            ExecutionPlan::Sort(node) => node.get_next(),
-            ExecutionPlan::Limit(node) => node.get_next(),
-            ExecutionPlan::HashJoin(node) => node.get_next(),
-            ExecutionPlan::Union(node) => node.get_next(),
-            ExecutionPlan::Truncate(node) => node.get_next(),
-            ExecutionPlan::Window(node) => node.get_next(),
+            ExecutionPlan::Scan(node) => node.get_next().await,
+            ExecutionPlan::Filter(node) => node.get_next().await,
+            ExecutionPlan::Project(node) => node.get_next().await,
+            ExecutionPlan::Aggregate(node) => node.get_next().await,
+            ExecutionPlan::Sort(node) => node.get_next().await,
+            ExecutionPlan::Limit(node) => node.get_next().await,
+            ExecutionPlan::HashJoin(node) => node.get_next().await,
+            ExecutionPlan::Union(node) => node.get_next().await,
+            ExecutionPlan::Truncate(node) => node.get_next().await,
+            ExecutionPlan::Window(node) => node.get_next().await,
         }
     }
 
-    fn close(&mut self) -> Result<()> {
+    async fn close(&mut self) -> Result<()> {
         match self {
-            ExecutionPlan::Scan(node) => node.close(),
-            ExecutionPlan::Filter(node) => node.close(),
-            ExecutionPlan::Project(node) => node.close(),
-            ExecutionPlan::Aggregate(node) => node.close(),
-            ExecutionPlan::Sort(node) => node.close(),
-            ExecutionPlan::Limit(node) => node.close(),
-            ExecutionPlan::HashJoin(node) => node.close(),
-            ExecutionPlan::Union(node) => node.close(),
-            ExecutionPlan::Truncate(node) => node.close(),
-            ExecutionPlan::Window(node) => node.close(),
+            ExecutionPlan::Scan(node) => node.close().await,
+            ExecutionPlan::Filter(node) => node.close().await,
+            ExecutionPlan::Project(node) => node.close().await,
+            ExecutionPlan::Aggregate(node) => node.close().await,
+            ExecutionPlan::Sort(node) => node.close().await,
+            ExecutionPlan::Limit(node) => node.close().await,
+            ExecutionPlan::HashJoin(node) => node.close().await,
+            ExecutionPlan::Union(node) => node.close().await,
+            ExecutionPlan::Truncate(node) => node.close().await,
+            ExecutionPlan::Window(node) => node.close().await,
         }
     }
 
@@ -119,17 +122,16 @@ impl ScanExecNode {
     }
 }
 
+#[async_trait]
 impl ExecNode for ScanExecNode {
-    fn open(&mut self) -> Result<()> {
+    async fn open(&mut self) -> Result<()> {
         self.opened = true;
         self.rows_consumed = 0;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
-        // Return the data if available
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         if let Some(data) = self.data.take() {
-            // Apply limit if set
             if let Some(limit) = self.limit {
                 let rows_to_take = limit.saturating_sub(self.rows_consumed);
                 if rows_to_take == 0 {
@@ -145,7 +147,7 @@ impl ExecNode for ScanExecNode {
         }
     }
 
-    fn close(&mut self) -> Result<()> {
+    async fn close(&mut self) -> Result<()> {
         self.opened = false;
         self.rows_consumed = 0;
         Ok(())
@@ -162,21 +164,18 @@ pub struct FilterExecNode {
     pub opened: bool,
 }
 
+#[async_trait]
 impl ExecNode for FilterExecNode {
-    fn open(&mut self) -> Result<()> {
-        self.child.open()?;
+    async fn open(&mut self) -> Result<()> {
+        self.child.open().await?;
         self.opened = true;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
-        while let Some(block) = self.child.get_next()? {
-            // Create a selection bitmap based on the predicate
-            // For now, we'll implement a simple true/false filter
+    async fn get_next(&mut self) -> Result<Option<Block>> {
+        while let Some(block) = self.child.get_next().await? {
             let mut selection = Bitmap::with_capacity(block.num_rows());
 
-            // TODO: Actually evaluate the predicate expression
-            // For now, pass all rows through
             for _ in 0..block.num_rows() {
                 selection.push(true);
             }
@@ -189,8 +188,8 @@ impl ExecNode for FilterExecNode {
         Ok(None)
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.child.close()?;
+    async fn close(&mut self) -> Result<()> {
+        self.child.close().await?;
         self.opened = false;
         Ok(())
     }
@@ -206,19 +205,20 @@ pub struct ProjectExecNode {
     pub opened: bool,
 }
 
+#[async_trait]
 impl ExecNode for ProjectExecNode {
-    fn open(&mut self) -> Result<()> {
-        self.child.open()?;
+    async fn open(&mut self) -> Result<()> {
+        self.child.open().await?;
         self.opened = true;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
-        self.child.get_next()
+    async fn get_next(&mut self) -> Result<Option<Block>> {
+        self.child.get_next().await
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.child.close()?;
+    async fn close(&mut self) -> Result<()> {
+        self.child.close().await?;
         self.opened = false;
         Ok(())
     }
@@ -298,22 +298,22 @@ impl AggregateExecNode {
     }
 }
 
+#[async_trait]
 impl ExecNode for AggregateExecNode {
-    fn open(&mut self) -> Result<()> {
-        self.child.open()?;
+    async fn open(&mut self) -> Result<()> {
+        self.child.open().await?;
         self.opened = true;
         self.returned = false;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         if self.returned {
             return Ok(None);
         }
 
-        // Consume all input blocks
         let mut all_blocks = Vec::new();
-        while let Some(block) = self.child.get_next()? {
+        while let Some(block) = self.child.get_next().await? {
             all_blocks.push(block);
         }
 
@@ -321,7 +321,6 @@ impl ExecNode for AggregateExecNode {
             return Ok(None);
         }
 
-        // Concatenate all blocks
         let combined = Block::concat(&all_blocks);
         if combined.is_none() {
             self.returned = true;
@@ -334,7 +333,6 @@ impl ExecNode for AggregateExecNode {
             return Ok(Some(block));
         }
 
-        // If no group by, aggregate entire block
         if self.group_by.is_empty() {
             let mut result_columns: Vec<Vector> = Vec::new();
             let mut result_schema_fields: Vec<types::Field> = Vec::new();
@@ -359,11 +357,9 @@ impl ExecNode for AggregateExecNode {
             return Ok(Some(Block::new(Schema::new(result_schema_fields), result_columns)));
         }
 
-        // With group by - build hash map of groups
         let mut groups: std::collections::HashMap<String, Vec<Vec<ScalarValue>>> = std::collections::HashMap::new();
 
         for row_idx in 0..block.num_rows() {
-            // Build group key
             let mut key_parts = Vec::new();
             for &col_idx in &self.group_by {
                 if col_idx < block.num_columns() {
@@ -374,7 +370,6 @@ impl ExecNode for AggregateExecNode {
             }
             let group_key = key_parts.join("|");
 
-            // Collect row values for aggregation
             let row_values: Vec<ScalarValue> = (0..block.num_columns())
                 .map(|col_idx| {
                     if let Some(col) = block.column(col_idx) {
@@ -388,7 +383,6 @@ impl ExecNode for AggregateExecNode {
             groups.entry(group_key).or_insert_with(Vec::new).push(row_values);
         }
 
-        // Build result block
         let mut result_rows: Vec<Vec<ScalarValue>> = Vec::new();
         for (_group_key, group_rows) in &groups {
             let mut result_row = Vec::new();
@@ -409,7 +403,6 @@ impl ExecNode for AggregateExecNode {
             result_rows.push(result_row);
         }
 
-        // Convert to block
         if result_rows.is_empty() {
             self.returned = true;
             return Ok(None);
@@ -463,8 +456,8 @@ impl ExecNode for AggregateExecNode {
         Ok(Some(Block::new(Schema::new(schema_fields), columns)))
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.child.close()?;
+    async fn close(&mut self) -> Result<()> {
+        self.child.close().await?;
         self.opened = false;
         Ok(())
     }
@@ -482,22 +475,22 @@ pub struct SortExecNode {
     pub returned: bool,
 }
 
+#[async_trait]
 impl ExecNode for SortExecNode {
-    fn open(&mut self) -> Result<()> {
-        self.child.open()?;
+    async fn open(&mut self) -> Result<()> {
+        self.child.open().await?;
         self.opened = true;
         self.returned = false;
         self.buffered.clear();
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         if self.returned {
             return Ok(None);
         }
 
-        // Buffer all input blocks
-        while let Some(block) = self.child.get_next()? {
+        while let Some(block) = self.child.get_next().await? {
             self.buffered.push(block);
         }
 
@@ -505,24 +498,20 @@ impl ExecNode for SortExecNode {
             return Ok(None);
         }
 
-        // Concatenate all blocks
         let combined = Block::concat(&self.buffered);
         if combined.is_none() {
             return Ok(None);
         }
         let mut block = combined.unwrap();
 
-        // If no sort keys, return as-is
         if self.order_by.is_empty() {
             self.returned = true;
             return Ok(Some(block));
         }
 
-        // Create sort indices: [0, 1, 2, ..., n-1]
         let num_rows = block.num_rows();
         let mut indices: Vec<usize> = (0..num_rows).collect();
 
-        // Multi-key comparator function
         let order_by = self.order_by.clone();
         let cmp_block = &block;
         indices.sort_unstable_by(|&a, &b| {
@@ -541,7 +530,6 @@ impl ExecNode for SortExecNode {
             std::cmp::Ordering::Equal
         });
 
-        // Build sorted block by applying permutation
         let mut sorted_block = Block::empty(block.schema().clone());
         for &idx in &indices {
             let row_block = block.slice(idx, 1);
@@ -556,8 +544,8 @@ impl ExecNode for SortExecNode {
         Ok(Some(sorted_block))
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.child.close()?;
+    async fn close(&mut self) -> Result<()> {
+        self.child.close().await?;
         self.opened = false;
         self.buffered.clear();
         Ok(())
@@ -587,26 +575,24 @@ impl LimitExecNode {
     }
 }
 
+#[async_trait]
 impl ExecNode for LimitExecNode {
-    fn open(&mut self) -> Result<()> {
-        self.child.open()?;
+    async fn open(&mut self) -> Result<()> {
+        self.child.open().await?;
         self.rows_returned = 0;
         self.rows_skipped = 0;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
-        // Skip offset rows first
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         while self.rows_skipped < self.offset {
-            if let Some(block) = self.child.get_next()? {
+            if let Some(block) = self.child.get_next().await? {
                 let remaining = self.offset - self.rows_skipped;
                 if block.num_rows() <= remaining {
                     self.rows_skipped += block.num_rows();
                 } else {
-                    // Return the part after skipping
                     self.rows_skipped = self.offset;
                     let to_return = block.slice(remaining, block.num_rows() - remaining);
-                    // Check against limit
                     let can_return = self.limit.saturating_sub(self.rows_returned);
                     if can_return == 0 {
                         return Ok(None);
@@ -624,12 +610,11 @@ impl ExecNode for LimitExecNode {
             }
         }
 
-        // Return rows up to limit
         if self.rows_returned >= self.limit {
             return Ok(None);
         }
 
-        if let Some(block) = self.child.get_next()? {
+        if let Some(block) = self.child.get_next().await? {
             let can_return = self.limit - self.rows_returned;
             if block.num_rows() <= can_return {
                 self.rows_returned += block.num_rows();
@@ -643,8 +628,8 @@ impl ExecNode for LimitExecNode {
         }
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.child.close()?;
+    async fn close(&mut self) -> Result<()> {
+        self.child.close().await?;
         self.rows_returned = 0;
         self.rows_skipped = 0;
         Ok(())
@@ -654,8 +639,6 @@ impl ExecNode for LimitExecNode {
         self
     }
 }
-
-// New node types
 
 pub struct HashJoinExecNode {
     pub join_type: String,
@@ -718,10 +701,11 @@ impl HashJoinExecNode {
     }
 }
 
+#[async_trait]
 impl ExecNode for HashJoinExecNode {
-    fn open(&mut self) -> Result<()> {
-        self.build_child.open()?;
-        self.probe_child.open()?;
+    async fn open(&mut self) -> Result<()> {
+        self.build_child.open().await?;
+        self.probe_child.open().await?;
         self.opened = true;
         self.build_complete = false;
         self.probe_consumed = false;
@@ -732,15 +716,13 @@ impl ExecNode for HashJoinExecNode {
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
-        // Build phase: read all build blocks and populate hash table
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         if !self.build_complete {
             let mut build_blocks = Vec::new();
-            while let Some(block) = self.build_child.get_next()? {
+            while let Some(block) = self.build_child.get_next().await? {
                 build_blocks.push(block);
             }
 
-            // Build hash table: key -> blocks
             for block in &build_blocks {
                 let keys = Self::extract_keys_from_block(block, &self.build_keys);
                 for (row_idx, key) in keys.iter().enumerate() {
@@ -753,14 +735,12 @@ impl ExecNode for HashJoinExecNode {
             tracing::debug!("HashJoin build complete: {} keys in hash table", self.hash_table.len());
         }
 
-        // Probe phase: read probe blocks and join with hash table
-        while let Some(block) = self.probe_child.get_next()? {
+        while let Some(block) = self.probe_child.get_next().await? {
             let keys = Self::extract_keys_from_block(&block, &self.probe_keys);
             let mut result_blocks = Vec::new();
 
             for (row_idx, key) in keys.iter().enumerate() {
                 if let Some(build_blocks) = self.hash_table.get(key) {
-                    // Found match - concatenate probe row with each matching build row
                     self.matched_build_keys.insert(key.clone());
                     let probe_row = block.slice(row_idx, 1);
                     for build_row in build_blocks {
@@ -769,27 +749,22 @@ impl ExecNode for HashJoinExecNode {
                         result_blocks.push(joined);
                     }
                 }
-                // For INNER join: only output rows with matches
-                // For LEFT OUTER join: would need to track unmatched rows - simplified for now
             }
 
             if !result_blocks.is_empty() {
-                // Concatenate all result blocks
                 return Ok(Some(Block::concat(&result_blocks).unwrap_or_else(|| block)));
             }
         }
 
-        // For LEFT OUTER join - output unmatched build rows
         if self.join_type == "LEFT" && !self.matched_build_keys.is_empty() {
-            // This would need to track unmatched build keys - simplified for now
         }
 
         Ok(None)
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.build_child.close()?;
-        self.probe_child.close()?;
+    async fn close(&mut self) -> Result<()> {
+        self.build_child.close().await?;
+        self.probe_child.close().await?;
         self.opened = false;
         self.build_complete = false;
         self.probe_consumed = false;
@@ -821,19 +796,20 @@ impl UnionExecNode {
     }
 }
 
+#[async_trait]
 impl ExecNode for UnionExecNode {
-    fn open(&mut self) -> Result<()> {
+    async fn open(&mut self) -> Result<()> {
         for (i, child) in self.children.iter_mut().enumerate() {
-            child.open()?;
+            child.open().await?;
             self.opened[i] = true;
         }
         self.current_child = 0;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         while self.current_child < self.children.len() {
-            if let Some(block) = self.children[self.current_child].get_next()? {
+            if let Some(block) = self.children[self.current_child].get_next().await? {
                 return Ok(Some(block));
             }
             self.current_child += 1;
@@ -841,10 +817,10 @@ impl ExecNode for UnionExecNode {
         Ok(None)
     }
 
-    fn close(&mut self) -> Result<()> {
+    async fn close(&mut self) -> Result<()> {
         for (child, opened) in self.children.iter_mut().zip(self.opened.iter()) {
             if *opened {
-                child.close()?;
+                child.close().await?;
             }
         }
         self.opened = vec![false; self.children.len()];
@@ -856,8 +832,6 @@ impl ExecNode for UnionExecNode {
         self
     }
 }
-
-// DDL execution nodes
 
 pub struct TruncateExecNode {
     pub database: String,
@@ -881,40 +855,30 @@ impl TruncateExecNode {
     }
 }
 
+#[async_trait]
 impl ExecNode for TruncateExecNode {
-    fn open(&mut self) -> Result<()> {
+    async fn open(&mut self) -> Result<()> {
         self.executed = false;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         if self.executed {
             return Ok(None);
         }
 
         self.executed = true;
 
-        // In a real implementation, this would:
-        // 1. Look up the tablet for the given database.table
-        // 2. Call truncate_tablet(&tablet) to clear all data
-        //
-        // The tablet lookup would go through the catalog/table service:
-        // let tablet = catalog.get_table(&self.database, &self.table_name)?;
-        // let tablet = tablet.read()?;
-        // truncate_tablet(&tablet)?;
-        //
-        // For now, we log the truncate operation
         if self.if_exists {
             tracing::info!("TRUNCATE TABLE IF EXISTS {}.{} executed", self.database, self.table_name);
         } else {
             tracing::info!("TRUNCATE TABLE {}.{}", self.database, self.table_name);
         }
 
-        // Return an empty result block
         Ok(None)
     }
 
-    fn close(&mut self) -> Result<()> {
+    async fn close(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -923,7 +887,6 @@ impl ExecNode for TruncateExecNode {
     }
 }
 
-// Window function execution node
 pub struct WindowExecNode {
     pub partition_by: Vec<usize>,
     pub order_by: Vec<(usize, bool)>,
@@ -960,23 +923,23 @@ impl WindowExecNode {
     }
 }
 
+#[async_trait]
 impl ExecNode for WindowExecNode {
-    fn open(&mut self) -> Result<()> {
-        self.child.open()?;
+    async fn open(&mut self) -> Result<()> {
+        self.child.open().await?;
         self.opened = true;
         self.returned = false;
         self.buffered = None;
         Ok(())
     }
 
-    fn get_next(&mut self) -> Result<Option<Block>> {
+    async fn get_next(&mut self) -> Result<Option<Block>> {
         if self.returned {
             return Ok(None);
         }
 
-        // Read all data from child
         let mut all_blocks = Vec::new();
-        while let Some(block) = self.child.get_next()? {
+        while let Some(block) = self.child.get_next().await? {
             all_blocks.push(block);
         }
 
@@ -985,7 +948,6 @@ impl ExecNode for WindowExecNode {
             return Ok(None);
         }
 
-        // Concatenate all blocks
         let combined = Block::concat(&all_blocks);
         if combined.is_none() {
             self.returned = true;
@@ -993,15 +955,12 @@ impl ExecNode for WindowExecNode {
         }
         let mut block = combined.unwrap();
 
-        // Group by partition
         let num_rows = block.num_rows();
-        let mut partition_ranges: Vec<(usize, usize)> = Vec::new();  // (start, end) exclusive
+        let mut partition_ranges: Vec<(usize, usize)> = Vec::new();
 
         if self.partition_by.is_empty() {
-            // Single partition covering all rows
             partition_ranges.push((0, num_rows));
         } else {
-            // Find partition boundaries
             let mut partition_start = 0;
             let mut prev_key = self.get_partition_key(&block, 0);
 
@@ -1016,16 +975,13 @@ impl ExecNode for WindowExecNode {
             partition_ranges.push((partition_start, num_rows));
         }
 
-        // Compute window function for each partition
         let mut result_rows: Vec<Vec<ScalarValue>> = Vec::new();
 
         for (start, end) in partition_ranges {
             let partition_size = end - start;
 
-            // Compute window function values for this partition
             let window_values = self.compute_window_over_block_for_partition(&block, start, partition_size)?;
 
-            // Add window values as scalar
             for i in 0..partition_size {
                 let mut result_row = Vec::new();
                 for col_idx in 0..block.num_columns() {
@@ -1045,7 +1001,6 @@ impl ExecNode for WindowExecNode {
             }
         }
 
-        // Build result block
         if result_rows.is_empty() {
             self.returned = true;
             return Ok(None);
@@ -1091,7 +1046,6 @@ impl ExecNode for WindowExecNode {
             columns.push(vector);
         }
 
-        // Schema for result - add window column
         let mut schema_fields: Vec<types::Field> = block.schema().fields().to_vec();
         schema_fields.push(types::Field::new("window_col", types::DataType::Int64, true));
 
@@ -1099,8 +1053,8 @@ impl ExecNode for WindowExecNode {
         Ok(Some(Block::new(Schema::new(schema_fields), columns)))
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.child.close()?;
+    async fn close(&mut self) -> Result<()> {
+        self.child.close().await?;
         self.opened = false;
         self.buffered = None;
         Ok(())
@@ -1133,7 +1087,6 @@ impl WindowExecNode {
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
             "rank" | "dense_rank" => {
-                // Simplified: same as row_number for now
                 let data: Vec<i64> = (1..=num_rows as i64).collect();
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
@@ -1181,7 +1134,6 @@ impl WindowExecNode {
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
             "count" | "sum" | "avg" | "min" | "max" => {
-                // Simplified: return count for all rows
                 let data: Vec<i64> = vec![num_rows as i64; num_rows];
                 Ok(Vector::Int64(types::vector::Int64Vector::from_vec(data)))
             }
