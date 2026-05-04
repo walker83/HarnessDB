@@ -15,6 +15,10 @@ common = { workspace = true }
 types = { workspace = true }
 be-common = { workspace = true }
 lz4_flex = "0.11"
+lz4 = { workspace = true }
+zstd = { workspace = true }
+snap = { workspace = true }
+roaring = { workspace = true }
 dashmap = { workspace = true }
 
 [dev-dependencies]

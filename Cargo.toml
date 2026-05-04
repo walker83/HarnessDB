@@ -88,6 +88,12 @@ sqlparser = "0.53"
 
 # Storage
 rocksdb = "0.23"
+lz4 = "1.28"
+zstd = "0.13"
+snap = "1.1"
+
+# Indexing
+roaring = "0.10"
 
 # Cryptography
 md5 = "0.7"

@@ -192,6 +192,9 @@ impl SegmentReader {
                 let est_size = data_type.size().max(1) * page_meta.num_rows as usize;
                 codec::lz4_decompress(encoded_data, est_size)?
             }
+            codec::EncodingType::Zstd => {
+                codec::zstd_decompress(encoded_data)?
+            }
             _ => encoded_data.to_vec(),
         };
 

@@ -33,6 +33,7 @@ pub enum Vector {
     DateTime(DateTimeVector),
     Json(JsonVector),
     Null(NullVector),
+    Float32Array(Float32ArrayVector),
 }
 
 macro_rules! impl_typed_vector {
@@ -944,6 +945,89 @@ impl TypedVector for NullVector {
     }
 }
 
+/// Vector of f32 arrays for ANN Index support.
+#[derive(Clone)]
+pub struct Float32ArrayVector {
+    data: Vec<Vec<f32>>,
+    validity: Bitmap,
+}
+
+impl Float32ArrayVector {
+    pub fn new() -> Self {
+        Self { data: Vec::new(), validity: Bitmap::new() }
+    }
+
+    pub fn from_vec(data: Vec<Vec<f32>>) -> Self {
+        let len = data.len();
+        Self { data, validity: Bitmap::all_set(len) }
+    }
+
+    pub fn push(&mut self, val: Option<Vec<f32>>) {
+        match val {
+            Some(v) => {
+                self.data.push(v);
+                self.validity.push(true);
+            }
+            None => {
+                self.data.push(Vec::new());
+                self.validity.push(false);
+            }
+        }
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&[f32]> {
+        if self.validity.is_valid(idx) {
+            Some(&self.data[idx])
+        } else {
+            None
+        }
+    }
+
+    pub fn data(&self) -> &[Vec<f32>] {
+        &self.data
+    }
+
+    pub fn validity(&self) -> &Bitmap {
+        &self.validity
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    pub fn null_count(&self) -> usize {
+        self.validity.null_count()
+    }
+
+    pub fn filter(&self, selection: &Bitmap) -> Self {
+        let mut new_data = Vec::new();
+        let mut new_validity = Bitmap::with_capacity(selection.set_count());
+        for i in 0..self.len() {
+            if self.validity.is_valid(i) && selection.is_valid(i) {
+                new_data.push(self.data[i].clone());
+                new_validity.push(true);
+            } else if !self.validity.is_valid(i) && selection.is_valid(i) {
+                new_data.push(Vec::new());
+                new_validity.push(false);
+            }
+        }
+        Self { data: new_data, validity: new_validity }
+    }
+
+    pub fn slice(&self, offset: usize, len: usize) -> Self {
+        let end = (offset + len).min(self.len());
+        if offset >= self.len() {
+            return Self::new();
+        }
+        let data = self.data[offset..end].to_vec();
+        Self::from_vec(data)
+    }
+}
+
 // Vector enum dispatch methods
 impl Vector {
     pub fn data_type(&self) -> DataType {
@@ -961,6 +1045,7 @@ impl Vector {
             Self::DateTime(_) => DataType::DateTime,
             Self::Json(_) => DataType::Json,
             Self::Null(_) => DataType::Null,
+            Self::Float32Array(_) => DataType::Float32Vector(0),
         }
     }
 
@@ -979,6 +1064,7 @@ impl Vector {
             Self::DateTime(v) => v.len(),
             Self::Json(v) => v.len(),
             Self::Null(v) => v.len(),
+            Self::Float32Array(v) => v.len(),
         }
     }
 
@@ -1036,6 +1122,10 @@ impl Vector {
             Some(j) => j,
             None => ScalarValue::Null,
         },
+            Self::Float32Array(v) => match v.get(idx) {
+                Some(arr) => ScalarValue::Float32Array(arr.to_vec()),
+                None => ScalarValue::Null,
+            },
             Self::Null(_) => ScalarValue::Null,
         }
     }
@@ -1057,6 +1147,7 @@ impl Vector {
             Self::Null(v) => Self::Null(NullVector::new(
                 (0..v.len()).filter(|&i| selection.get(i)).count()
             )),
+            Self::Float32Array(v) => Self::Float32Array(v.filter(selection)),
         }
     }
 
@@ -1075,6 +1166,7 @@ impl Vector {
             Self::DateTime(v) => Self::DateTime(v.slice(start, len)),
             Self::Json(v) => Self::Json(v.slice(start, len)),
             Self::Null(v) => Self::Null(NullVector::new(len.min(v.len().saturating_sub(start)))),
+            Self::Float32Array(v) => Self::Float32Array(v.slice(start, len)),
         }
     }
 
@@ -1093,6 +1185,7 @@ impl Vector {
             Self::DateTime(v) => v.null_count(),
             Self::Json(v) => v.null_count(),
             Self::Null(v) => v.len(),
+            Self::Float32Array(v) => v.null_count(),
         }
     }
 
@@ -1162,6 +1255,7 @@ impl Vector {
             Self::DateTime(v) => v.count_batch(),
             Self::Json(v) => v.count_batch(),
             Self::Null(v) => v.len(),
+            Self::Float32Array(v) => v.validity().set_count(),
         }
     }
 
@@ -1391,7 +1485,7 @@ impl Vector {
                     (None, None) => std::cmp::Ordering::Equal,
                 }
             }
-            Self::Json(_) | Self::Null(_) => std::cmp::Ordering::Equal,
+            Self::Json(_) | Self::Null(_) | Self::Float32Array(_) => std::cmp::Ordering::Equal,
         }
     }
 }

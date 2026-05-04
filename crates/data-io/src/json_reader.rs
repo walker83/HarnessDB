@@ -361,7 +361,7 @@ fn push_scalar_to_vector(vector: &mut Vector, scalar: &types::ScalarValue) {
                 v.push(Some(ScalarValue::Json(j.clone())));
             }
         }
-        ScalarValue::Null | ScalarValue::Binary(_) | ScalarValue::Array(_) => {
+        ScalarValue::Null | ScalarValue::Binary(_) | ScalarValue::Array(_) | ScalarValue::Float32Array(_) => {
             push_null_to_vector(vector);
         }
     }
@@ -382,6 +382,7 @@ fn push_null_to_vector(vector: &mut Vector) {
         Vector::String(v) => v.push(None),
         Vector::Json(v) => v.push(None),
         Vector::Null(_) => {}
+        Vector::Float32Array(v) => v.push(None),
     }
 }
 
