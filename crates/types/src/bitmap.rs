@@ -85,16 +85,136 @@ impl Bitmap {
     pub fn is_valid(&self, idx: usize) -> bool {
         self.get(idx)
     }
+
+    /// Get raw word at word index for batch operations
+    pub fn word_at(&self, word_idx: usize) -> u64 {
+        self.data.get(word_idx).copied().unwrap_or(0)
+    }
+
+    /// Get number of words in the bitmap
+    pub fn words(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Clear all bits
+    pub fn clear(&mut self) {
+        for word in &mut self.data {
+            *word = 0;
+        }
+        self.len = 0;
+    }
+
+    /// Iterate over set bits efficiently using trailing_zeros
+    pub fn iter_set_bits(&self) -> SetBitIter {
+        SetBitIter {
+            data: &self.data,
+            word_idx: 0,
+            word: 0,
+            len: self.len,
+            consumed: 0,
+        }
+    }
+
+    /// Batch AND operation - optimized with early termination
+    pub fn and_inplace(&mut self, other: &Bitmap) {
+        let len = self.len.min(other.len);
+        self.len = len;
+        for i in 0..self.data.len().min(other.data.len()) {
+            self.data[i] &= other.data[i];
+        }
+        for i in self.data.len()..other.data.len() {
+            if i < self.data.len() {
+                self.data[i] = 0;
+            }
+        }
+    }
+
+    /// Batch OR operation - optimized
+    pub fn or_inplace(&mut self, other: &Bitmap) {
+        let len = self.len.max(other.len);
+        if other.data.len() > self.data.len() {
+            self.data.resize(other.data.len(), 0);
+        }
+        for i in 0..other.data.len() {
+            self.data[i] |= other.data[i];
+        }
+        self.len = len;
+    }
+
+    /// Batch NOT operation - optimized
+    pub fn not_inplace(&mut self) {
+        for word in &mut self.data {
+            *word = !*word;
+        }
+        if self.len % 64 != 0 && !self.data.is_empty() {
+            if let Some(last) = self.data.last_mut() {
+                *last &= (1u64 << (self.len % 64)) - 1;
+            }
+        }
+    }
+
+    /// In-place AND with another bitmap
+    pub fn and_with(&mut self, other: &Bitmap) {
+        self.and_inplace(other);
+    }
+
+    /// In-place OR with another bitmap
+    pub fn or_with(&mut self, other: &Bitmap) {
+        self.or_inplace(other);
+    }
+}
+
+pub struct SetBitIter<'a> {
+    data: &'a Vec<u64>,
+    word_idx: usize,
+    word: u64,
+    len: usize,
+    consumed: usize,
+}
+
+impl<'a> Iterator for SetBitIter<'a> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.consumed >= self.len {
+                return None;
+            }
+            if self.word != 0 {
+                let bit = self.word.trailing_zeros() as usize;
+                self.word &= !(1u64 << bit);
+                let result = self.consumed + bit;
+                self.consumed += 1;
+                return Some(result);
+            }
+            self.word_idx += 1;
+            if self.word_idx >= self.data.len() {
+                self.consumed = self.len;
+                return None;
+            }
+            self.word = self.data[self.word_idx];
+            let bits_in_this_word = (64).min(self.len.saturating_sub(self.consumed));
+            let mask = if bits_in_this_word < 64 {
+                (1u64 << bits_in_this_word) - 1
+            } else {
+                u64::MAX
+            };
+            self.word &= mask;
+        }
+    }
 }
 
 impl BitAnd for &Bitmap {
     type Output = Bitmap;
     fn bitand(self, rhs: &Bitmap) -> Bitmap {
         let len = self.len.min(rhs.len);
-        let data: Vec<u64> = self.data.iter()
-            .zip(rhs.data.iter())
-            .map(|(a, b)| a & b)
-            .collect();
+        let words = (len + 63) / 64;
+        let mut data = Vec::with_capacity(words);
+        for i in 0..words {
+            let left = if i < self.data.len() { self.data[i] } else { 0 };
+            let right = if i < rhs.data.len() { rhs.data[i] } else { 0 };
+            data.push(left & right);
+        }
         Bitmap { data, len }
     }
 }
@@ -103,9 +223,12 @@ impl BitOr for &Bitmap {
     type Output = Bitmap;
     fn bitor(self, rhs: &Bitmap) -> Bitmap {
         let len = self.len.max(rhs.len);
-        let mut data = self.data.clone();
-        for (i, &v) in rhs.data.iter().enumerate() {
-            if i < data.len() { data[i] |= v; } else { data.push(v); }
+        let words = (len + 63) / 64;
+        let mut data = Vec::with_capacity(words);
+        for i in 0..words {
+            let left = if i < self.data.len() { self.data[i] } else { 0 };
+            let right = if i < rhs.data.len() { rhs.data[i] } else { 0 };
+            data.push(left | right);
         }
         Bitmap { data, len }
     }
@@ -114,7 +237,17 @@ impl BitOr for &Bitmap {
 impl Not for &Bitmap {
     type Output = Bitmap;
     fn not(self) -> Bitmap {
-        let data: Vec<u64> = self.data.iter().map(|w| !w).collect();
-        Bitmap { data: data.clone(), len: self.len }
+        let words = (self.len + 63) / 64;
+        let mut data = Vec::with_capacity(words);
+        for i in 0..words {
+            let word = if i < self.data.len() { self.data[i] } else { 0 };
+            data.push(!word);
+        }
+        if self.len % 64 != 0 && !data.is_empty() {
+            if let Some(last) = data.last_mut() {
+                *last &= (1u64 << (self.len % 64)) - 1;
+            }
+        }
+        Bitmap { data, len: self.len }
     }
 }

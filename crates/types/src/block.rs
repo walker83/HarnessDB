@@ -65,9 +65,15 @@ impl Block {
     }
 
     pub fn filter(&self, selection: &crate::Bitmap) -> Self {
-        let columns = self.columns.iter()
+        // Pre-count selected rows for preallocation
+        let num_selected = selection.set_count();
+        let num_cols = self.columns.len();
+
+        // Preallocate all columns
+        let columns: Vec<Vector> = self.columns.iter()
             .map(|c| c.filter(selection))
             .collect();
+
         Self { schema: self.schema.clone(), columns }
     }
 

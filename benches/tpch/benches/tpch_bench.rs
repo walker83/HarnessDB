@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use tpch_bench::{TpchBenchmark, data_gen, queries};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use tpch_bench::{data_gen::TpchData, queries, TpchBenchmark};
 
 // ---------------------------------------------------------------------------
 // Data generation benchmarks
@@ -10,15 +10,15 @@ fn bench_data_generation(c: &mut Criterion) {
 
     group.bench_function("generate_sf001", |b| {
         b.iter(|| {
-            let data = black_box(TpchData::generate_sf001());
-            black_box(&data.lineitem.num_rows());
+            let data = TpchData::generate_sf001();
+            black_box(data.lineitem.num_rows());
         });
     });
 
     group.bench_function("generate_tiny", |b| {
         b.iter(|| {
-            let data = black_box(TpchData::generate_tiny());
-            black_box(&data.lineitem.num_rows());
+            let data = TpchData::generate_tiny();
+            black_box(data.lineitem.num_rows());
         });
     });
 
@@ -53,7 +53,7 @@ fn bench_tpch_queries(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn bench_lineitem_filter(c: &mut Criterion) {
-    let data = data_gen::TpchData::generate_sf001();
+    let data = TpchData::generate_sf001();
     let lineitem = &data.lineitem;
 
     // Filter on returnflag = 'R'
@@ -76,7 +76,7 @@ fn bench_lineitem_filter(c: &mut Criterion) {
 }
 
 fn bench_lineitem_projection(c: &mut Criterion) {
-    let data = data_gen::TpchData::generate_sf001();
+    let data = TpchData::generate_sf001();
     let lineitem = &data.lineitem;
 
     // Project down to a few columns (simulating Q6: shipdate, discount, quantity, extendedprice)
@@ -101,7 +101,7 @@ fn bench_lineitem_projection(c: &mut Criterion) {
 }
 
 fn bench_orders_slice(c: &mut Criterion) {
-    let data = data_gen::TpchData::generate_sf001();
+    let data = TpchData::generate_sf001();
     let orders = &data.orders;
 
     c.bench_function("tpch_orders_slice_1000", |b| {

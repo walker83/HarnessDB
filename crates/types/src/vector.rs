@@ -112,13 +112,15 @@ macro_rules! impl_typed_vector {
             }
 
             pub fn filter(&self, selection: &Bitmap) -> Self {
-                let mut data = Vec::new();
-                let mut validity = Bitmap::with_capacity(selection.len());
-                for i in 0..selection.len() {
-                    if selection.get(i) {
-                        data.push(self.data[i]);
-                        validity.push(self.validity.is_valid(i));
-                    }
+                // Use set_count for preallocation (faster than iterating)
+                let len = selection.set_count();
+                let mut data = Vec::with_capacity(len);
+                let mut validity = Bitmap::with_capacity(len);
+
+                // Optimized: use iter_set_bits for fast bitmap traversal
+                for idx in selection.iter_set_bits() {
+                    data.push(self.data[idx]);
+                    validity.push(self.validity.is_valid(idx));
                 }
                 Self { data, validity }
             }
@@ -223,18 +225,18 @@ impl StringVector {
 
     pub fn filter(&self, selection: &Bitmap) -> Self {
         let mut offsets = vec![0u32];
-        let mut data = Vec::new();
+        let mut data = Vec::with_capacity(selection.len() * 16); // est 16 bytes avg
         let mut validity = Bitmap::with_capacity(selection.len());
-        for i in 0..selection.len() {
-            if selection.get(i) {
-                if let Some(s) = self.get(i) {
-                    data.extend_from_slice(s.as_bytes());
-                    offsets.push(data.len() as u32);
-                    validity.push(true);
-                } else {
-                    offsets.push(data.len() as u32);
-                    validity.push(false);
-                }
+
+        // Optimized: use iter_set_bits for fast bitmap traversal
+        for idx in selection.iter_set_bits() {
+            if let Some(s) = self.get(idx) {
+                data.extend_from_slice(s.as_bytes());
+                offsets.push(data.len() as u32);
+                validity.push(self.validity.is_valid(idx));
+            } else {
+                offsets.push(data.len() as u32);
+                validity.push(false);
             }
         }
         Self { offsets, data, validity }
