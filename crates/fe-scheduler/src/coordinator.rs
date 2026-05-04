@@ -15,6 +15,7 @@ use types::Block;
 
 use crate::cluster::ClusterManager;
 use crate::fragment::FragmentTree;
+use crate::memory::MemoryTracker;
 use crate::scheduler::{QueryLimits, Scheduler};
 use crate::timeline::{QueryId, QueryState, QueryTimeline};
 
@@ -31,6 +32,8 @@ pub struct CoordinatorConfig {
     pub default_query_timeout: Duration,
     /// Interval at which to check for timed-out queries.
     pub timeout_check_interval: Duration,
+    /// Memory quota for the coordinator (bytes).
+    pub memory_quota: u64,
 }
 
 impl Default for CoordinatorConfig {
@@ -39,6 +42,7 @@ impl Default for CoordinatorConfig {
             node_id: "fe-0".into(),
             default_query_timeout: Duration::from_secs(300),
             timeout_check_interval: Duration::from_secs(5),
+            memory_quota: 1024 * 1024 * 1024, // 1GB
         }
     }
 }
@@ -97,6 +101,8 @@ pub struct Coordinator {
     timeline: Arc<RwLock<QueryTimeline>>,
     /// Queries that are currently in Running state.
     running_queries: DashMap<QueryId, RunningQuery>,
+    /// Memory tracker for query execution.
+    memory_tracker: Arc<MemoryTracker>,
 }
 
 impl Coordinator {
@@ -104,6 +110,7 @@ impl Coordinator {
     pub fn new(cluster: Arc<ClusterManager>, catalog: Arc<CatalogManager>, config: CoordinatorConfig) -> Self {
         let scheduler = Scheduler::new(cluster);
         let timeline = QueryTimeline::new(config.node_id.clone());
+        let memory_tracker = Arc::new(MemoryTracker::new(config.memory_quota));
 
         Self {
             config,
@@ -112,6 +119,7 @@ impl Coordinator {
             scheduler,
             timeline: Arc::new(RwLock::new(timeline)),
             running_queries: DashMap::new(),
+            memory_tracker,
         }
     }
 
@@ -194,6 +202,15 @@ impl Coordinator {
     /// Apply optimizer rules to a logical plan.
     pub fn optimize(&self, plan: PlanNode) -> PlanNode {
         self.optimizer.optimize(plan)
+    }
+
+    /// Get current memory statistics.
+    pub fn memory_stats(&self) -> (u64, u64, u64) {
+        (
+            self.memory_tracker.current_usage(),
+            self.memory_tracker.max_usage(),
+            self.memory_tracker.quota(),
+        )
     }
 
     // -----------------------------------------------------------------------
