@@ -154,11 +154,62 @@ impl ExecNode for ProjectExecNode {
 }
 
 pub struct AggregateExecNode {
-    pub group_by: Vec<String>,
-    pub aggregates: Vec<String>,
+    pub group_by: Vec<usize>,  // column indices
+    pub aggregates: Vec<(String, usize)>,  // (function_name, column_index)
     pub child: Box<dyn ExecNode>,
     pub opened: bool,
     pub returned: bool,
+}
+
+impl AggregateExecNode {
+    fn compute_aggregate(values: &[ScalarValue], func: &str) -> ScalarValue {
+        match func {
+            "count" => ScalarValue::Int64(values.len() as i64),
+            "sum" => {
+                let mut sum: i64 = 0;
+                for v in values {
+                    if let ScalarValue::Int64(i) = v {
+                        sum += i;
+                    }
+                }
+                ScalarValue::Int64(sum)
+            }
+            "min" => {
+                let mut min: Option<i64> = None;
+                for v in values {
+                    if let ScalarValue::Int64(i) = v {
+                        min = Some(min.map(|m| m.min(*i)).unwrap_or(*i));
+                    }
+                }
+                min.map(ScalarValue::Int64).unwrap_or(ScalarValue::Null)
+            }
+            "max" => {
+                let mut max: Option<i64> = None;
+                for v in values {
+                    if let ScalarValue::Int64(i) = v {
+                        max = Some(max.map(|m| m.max(*i)).unwrap_or(*i));
+                    }
+                }
+                max.map(ScalarValue::Int64).unwrap_or(ScalarValue::Null)
+            }
+            "avg" => {
+                let mut sum: i64 = 0;
+                let mut count: i64 = 0;
+                for v in values {
+                    if let ScalarValue::Int64(i) = v {
+                        sum += i;
+                        count += 1;
+                    }
+                }
+                if count > 0 {
+                    ScalarValue::Float64(sum as f64 / count as f64)
+                } else {
+                    ScalarValue::Null
+                }
+            }
+            _ => ScalarValue::Null,
+        }
+    }
 }
 
 impl ExecNode for AggregateExecNode {
@@ -184,10 +235,153 @@ impl ExecNode for AggregateExecNode {
             return Ok(None);
         }
 
+        // Concatenate all blocks
+        let combined = Block::concat(&all_blocks);
+        if combined.is_none() {
+            self.returned = true;
+            return Ok(None);
+        }
+        let block = combined.unwrap();
+
+        if self.group_by.is_empty() && self.aggregates.is_empty() {
+            self.returned = true;
+            return Ok(Some(block));
+        }
+
+        // If no group by, aggregate entire block
+        if self.group_by.is_empty() {
+            let mut result_columns: Vec<Vector> = Vec::new();
+            let mut result_schema_fields: Vec<types::Field> = Vec::new();
+
+            // Compute aggregates
+            for (func, col_idx) in &self.aggregates {
+                if *col_idx < block.num_columns() {
+                    if let Some(col) = block.column(*col_idx) {
+                        let values: Vec<ScalarValue> = (0..block.num_rows())
+                            .map(|i| col.scalar_at(i))
+                            .collect();
+                        let agg_value = Self::compute_aggregate(&values, func);
+                        // Create single-value column
+                        let vector = match agg_value {
+                            ScalarValue::Int64(v) => Vector::Int64(types::vector::Int64Vector::from_vec(vec![v])),
+                            ScalarValue::Float64(v) => Vector::Float64(types::vector::Float64Vector::from_vec(vec![v])),
+                            ScalarValue::Int32(v) => Vector::Int32(types::vector::Int32Vector::from_vec(vec![v])),
+                            _ => Vector::Null(types::vector::NullVector::new(1)),
+                        };
+                        result_columns.push(vector);
+                        result_schema_fields.push(types::Field::new("", types::DataType::Null, true));
+                    }
+                }
+            }
+
+            self.returned = true;
+            return Ok(Some(Block::new(Schema::new(result_schema_fields), result_columns)));
+        }
+
+        // With group by - build hash map of groups
+        let mut groups: std::collections::HashMap<String, Vec<Vec<ScalarValue>>> = std::collections::HashMap::new();
+
+        for row_idx in 0..block.num_rows() {
+            // Build group key
+            let mut key_parts = Vec::new();
+            for &col_idx in &self.group_by {
+                if col_idx < block.num_columns() {
+                    if let Some(col) = block.column(col_idx) {
+                        key_parts.push(format!("{:?}", col.scalar_at(row_idx)));
+                    }
+                }
+            }
+            let group_key = key_parts.join("|");
+
+            // Collect row values for aggregation
+            let row_values: Vec<ScalarValue> = (0..block.num_columns())
+                .map(|col_idx| {
+                    if let Some(col) = block.column(col_idx) {
+                        col.scalar_at(row_idx)
+                    } else {
+                        ScalarValue::Null
+                    }
+                })
+                .collect();
+
+            groups.entry(group_key).or_insert_with(Vec::new).push(row_values);
+        }
+
+        // Build result block
+        let mut result_rows: Vec<Vec<ScalarValue>> = Vec::new();
+        for (_group_key, group_rows) in &groups {
+            let mut result_row = Vec::new();
+
+            // Add group by columns (first row's values)
+            if !group_rows.is_empty() {
+                for &col_idx in &self.group_by {
+                    result_row.push(group_rows[0].get(col_idx).cloned().unwrap_or(ScalarValue::Null));
+                }
+            }
+
+            // Compute aggregates
+            for (func, col_idx) in &self.aggregates {
+                let values: Vec<ScalarValue> = group_rows.iter()
+                    .filter_map(|row| row.get(*col_idx).cloned())
+                    .collect();
+                result_row.push(Self::compute_aggregate(&values, func));
+            }
+
+            result_rows.push(result_row);
+        }
+
+        // Convert to block
+        if result_rows.is_empty() {
+            self.returned = true;
+            return Ok(None);
+        }
+
+        let num_result_cols = self.group_by.len() + self.aggregates.len();
+        let num_result_rows = result_rows.len();
+
+        let mut columns: Vec<Vector> = Vec::new();
+        for col_idx in 0..num_result_cols {
+            let scalars: Vec<ScalarValue> = result_rows.iter()
+                .filter_map(|row| row.get(col_idx).cloned())
+                .collect();
+
+            let vector = match scalars.first().unwrap_or(&ScalarValue::Null) {
+                ScalarValue::Int64(_) => {
+                    let data: Vec<i64> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::Int64(i) = s { Some(*i) } else { None }
+                    }).collect();
+                    Vector::Int64(types::vector::Int64Vector::from_vec(data))
+                }
+                ScalarValue::Float64(_) => {
+                    let data: Vec<f64> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::Float64(f) = s { Some(*f) } else { None }
+                    }).collect();
+                    Vector::Float64(types::vector::Float64Vector::from_vec(data))
+                }
+                ScalarValue::Int32(_) => {
+                    let data: Vec<i32> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::Int32(i) = s { Some(*i) } else { None }
+                    }).collect();
+                    Vector::Int32(types::vector::Int32Vector::from_vec(data))
+                }
+                ScalarValue::String(_) => {
+                    let data: Vec<String> = scalars.iter().filter_map(|s| {
+                        if let ScalarValue::String(s) = s { Some(s.clone()) } else { None }
+                    }).collect();
+                    let data_refs: Vec<&str> = data.iter().map(|s| s.as_str()).collect();
+                    Vector::String(types::vector::StringVector::from_vec(data_refs))
+                }
+                _ => Vector::Null(types::vector::NullVector::new(num_result_rows)),
+            };
+            columns.push(vector);
+        }
+
+        let schema_fields: Vec<types::Field> = (0..num_result_cols)
+            .map(|_| types::Field::new("", types::DataType::Null, true))
+            .collect();
+
         self.returned = true;
-        // TODO: Actually implement aggregation
-        // For now, return the first block
-        Ok(Some(all_blocks.into_iter().next().unwrap()))
+        Ok(Some(Block::new(Schema::new(schema_fields), columns)))
     }
 
     fn close(&mut self) -> Result<()> {
