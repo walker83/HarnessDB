@@ -136,6 +136,53 @@ fn convert_statement(
                 verbose,
             }))
         }
+        sqlparser::ast::Statement::Truncate { table_names, .. } => {
+            let first_table = table_names.first();
+            if let Some(table) = first_table {
+                let name_str = table.name.to_string();
+                let parts: Vec<&str> = name_str.split('.').collect();
+                let (database, table) = if parts.len() == 2 {
+                    (Some(parts[0].to_string()), parts[1].to_string())
+                } else {
+                    (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
+                };
+                Ok(Statement::TruncateTable {
+                    database,
+                    table,
+                    if_exists: false,
+                })
+            } else {
+                Err(ParseError::SyntaxError {
+                    position: 0,
+                    message: "TRUNCATE requires at least one table".to_string(),
+                })
+            }
+        }
+        sqlparser::ast::Statement::CreateView {
+            or_replace: _,
+            materialized: _,
+            name,
+            columns,
+            query,
+            if_not_exists,
+            ..
+        } => {
+            let name_str = name.to_string();
+            let parts: Vec<&str> = name_str.split('.').collect();
+            let (database, view_name) = if parts.len() == 2 {
+                (Some(parts[0].to_string()), parts[1].to_string())
+            } else {
+                (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
+            };
+            let col_names: Vec<String> = columns.iter().map(|c: &sqlparser::ast::ViewColumnDef| c.name.value.clone()).collect();
+            Ok(Statement::CreateView {
+                database,
+                name: view_name,
+                if_not_exists,
+                query: query.to_string(),
+                columns: col_names,
+            })
+        }
         _ => Err(ParseError::Unsupported(format!(
             "statement type: {:?}",
             stmt

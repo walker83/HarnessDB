@@ -73,14 +73,16 @@ impl Planner {
             Statement::SetVariable(_) => Err(DrorisError::Plan(
                 "SET variable is not yet supported".into(),
             )),
-            Statement::ShowCreateTable(..) => Err(DrorisError::Plan(
-                "SHOW CREATE TABLE is not yet supported".into(),
-            )),
             Statement::Describe(db, table) => self.plan_describe(db, table),
             Statement::ShowColumns(db, table) => self.plan_show_columns(db, table),
-            Statement::Union(_) => Err(DrorisError::Plan(
-                "UNION is not yet supported".into(),
-            )),
+            Statement::Union(union) => self.plan_union(union),
+            Statement::TruncateTable { database, table, if_exists } => {
+                self.plan_truncate_table(database, table, if_exists)
+            }
+            Statement::ShowCreateTable(db, table) => self.plan_show_create_table(db, table),
+            Statement::CreateView { database, name, if_not_exists, query, columns } => {
+                self.plan_create_view(database, name, if_not_exists, query, columns)
+            }
         }
     }
 
@@ -283,6 +285,41 @@ impl Planner {
     // ---- Query planning ----
 
     fn plan_query(&self, query: QueryStmt) -> Result<PlanNode, DrorisError> {
+        // 0. CTE (WITH clause) - plan the CTE first if present
+        if let Some(cte) = &query.with {
+            let cte_plan = self.plan_query((*cte.query).clone())?;
+            let cte_name = cte.name.clone();
+            let cte_columns = if cte.columns.is_empty() {
+                cte_plan.output_columns()
+            } else {
+                cte.columns.clone()
+            };
+
+            // Wrap the CTE in a CteNode that registers it as a temporary result
+            let cte_wrapper = self.make_node(
+                PlanNodeType::Cte(CteNode {
+                    name: cte_name.clone(),
+                    columns: cte_columns.clone(),
+                }),
+                vec![cte_plan],
+            );
+
+            // Plan the main query
+            let main_plan = self.plan_query_body(&query, Some(&cte_name))?;
+
+            // Combine CTE wrapper with main query
+            Ok(self.make_node(
+                PlanNodeType::Project(ProjectNode {
+                    exprs: main_plan.output_columns(),
+                }),
+                vec![cte_wrapper, main_plan],
+            ))
+        } else {
+            self.plan_query_body(&query, None)
+        }
+    }
+
+    fn plan_query_body(&self, query: &QueryStmt, cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
         // 1. FROM clause (table references, joins, subqueries).
         let mut plan = if let Some(table_ref) = &query.from {
             self.plan_table_ref(table_ref)?
@@ -299,14 +336,9 @@ impl Planner {
             )
         };
 
-        // 2. WHERE clause.
+        // 2. WHERE clause - handle subqueries (IN/EXISTS)
         if let Some(where_expr) = &query.r#where {
-            plan = self.make_node(
-                PlanNodeType::Filter(FilterNode {
-                    predicate: expression::expr_to_string(where_expr),
-                }),
-                vec![plan],
-            );
+            plan = self.plan_where_clause(where_expr, plan)?;
         }
 
         // 3. GROUP BY + aggregate functions.
@@ -422,9 +454,78 @@ impl Planner {
         })
     }
 
+    /// Plan WHERE clause, handling subqueries (IN/EXISTS) by converting to semi-joins
+    fn plan_where_clause(&self, where_expr: &fe_sql_parser::ast::Expr, mut plan: PlanNode) -> Result<PlanNode, DrorisError> {
+        match where_expr {
+            fe_sql_parser::ast::Expr::Exists(subquery) => {
+                // EXISTS subquery -> SemiJoin
+                let subquery_plan = self.plan_query(*subquery.clone())?;
+
+                // For EXISTS, we check if any row exists from the subquery
+                // Use a simple column comparison (can be enhanced later)
+                let left_col = plan.output_columns().first().cloned().unwrap_or_else(|| "*".to_string());
+                let right_col = subquery_plan.output_columns().first().cloned().unwrap_or_else(|| "*".to_string());
+
+                Ok(self.make_node(
+                    PlanNodeType::SemiJoin(SemiJoinNode {
+                        left_key: left_col,
+                        right_key: right_col,
+                        condition: None,
+                    }),
+                    vec![plan, subquery_plan],
+                ))
+            }
+            fe_sql_parser::ast::Expr::InSubquery { expr: _, query, negated } => {
+                // IN subquery -> SemiJoin or AntiSemiJoin
+                let subquery_plan = self.plan_query(*query.clone())?;
+
+                let left_col = plan.output_columns().first().cloned().unwrap_or_else(|| "*".to_string());
+                let right_col = subquery_plan.output_columns().first().cloned().unwrap_or_else(|| "*".to_string());
+
+                if *negated {
+                    // NOT IN -> AntiSemiJoin
+                    Ok(self.make_node(
+                        PlanNodeType::AntiSemiJoin(AntiSemiJoinNode {
+                            left_key: left_col,
+                            right_key: right_col,
+                            condition: None,
+                        }),
+                        vec![plan, subquery_plan],
+                    ))
+                } else {
+                    // IN -> SemiJoin
+                    Ok(self.make_node(
+                        PlanNodeType::SemiJoin(SemiJoinNode {
+                            left_key: left_col,
+                            right_key: right_col,
+                            condition: None,
+                        }),
+                        vec![plan, subquery_plan],
+                    ))
+                }
+            }
+            _ => {
+                // Regular WHERE clause - use Filter node
+                Ok(self.make_node(
+                    PlanNodeType::Filter(FilterNode {
+                        predicate: expression::expr_to_string(where_expr),
+                    }),
+                    vec![plan],
+                ))
+            }
+        }
+    }
+
     fn plan_table_ref(&self, table_ref: &TableRef) -> Result<PlanNode, DrorisError> {
+        self.plan_table_ref_with_cte(table_ref, None)
+    }
+
+    fn plan_table_ref_with_cte(&self, table_ref: &TableRef, _cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
         match table_ref {
             TableRef::Table { name, alias: _ } => {
+                // Check if this is a reference to a CTE
+                // For now, we'll resolve it normally and handle CTE references in the execution layer
+
                 let (database, table_name) = self.resolve_table_name(name);
                 let columns = self.resolve_table_columns(&database, &table_name);
 
@@ -489,6 +590,79 @@ impl Planner {
             .get_table(database, table_name)
             .map(|t| t.column_names().into_iter().map(|s| s.to_string()).collect())
             .unwrap_or_default()
+    }
+
+    // ---- Additional DDL/DML planning ----
+
+    fn plan_union(&self, union: fe_sql_parser::ast::UnionStmt) -> Result<PlanNode, DrorisError> {
+        let left_plan = self.plan_query(*union.left)?;
+        let right_plan = self.plan_query(*union.right)?;
+
+        let union_type = match union.op {
+            fe_sql_parser::ast::UnionOperator::Union => {
+                if union.all { "UNION ALL" } else { "UNION" }
+            }
+            fe_sql_parser::ast::UnionOperator::Except => {
+                if union.all { "EXCEPT ALL" } else { "EXCEPT" }
+            }
+            fe_sql_parser::ast::UnionOperator::Intersect => {
+                if union.all { "INTERSECT ALL" } else { "INTERSECT" }
+            }
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::Union(UnionNode {
+                input_count: 2,
+            }),
+            vec![left_plan, right_plan],
+        ))
+    }
+
+    fn plan_truncate_table(
+        &self,
+        database: Option<String>,
+        table_name: String,
+        if_exists: bool,
+    ) -> Result<PlanNode, DrorisError> {
+        let target_db = database.unwrap_or_else(|| self.current_database.clone());
+        Ok(self.make_node(
+            PlanNodeType::TruncateTable(TruncateTableNode {
+                database: Some(target_db),
+                table_name,
+                if_exists,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_create_table(&self, db: String, table: String) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::ShowCreateTable(ShowCreateTableNode {
+                database: db,
+                table_name: table,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_create_view(
+        &self,
+        database: Option<String>,
+        name: String,
+        if_not_exists: bool,
+        query: String,
+        columns: Vec<String>,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::CreateView(CreateViewNode {
+                database,
+                view_name: name,
+                if_not_exists,
+                query,
+                columns,
+            }),
+            vec![],
+        ))
     }
 }
 

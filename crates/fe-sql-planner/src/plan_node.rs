@@ -24,15 +24,21 @@ pub enum PlanNodeType {
     Sort(SortNode),
     Limit(LimitNode),
     Join(JoinNode),
+    SemiJoin(SemiJoinNode),
+    AntiSemiJoin(AntiSemiJoinNode),
     HashJoin(HashJoinNode),
     MergeJoin(MergeJoinNode),
     Exchange(ExchangeNode),
     Union(UnionNode),
+    Cte(CteNode),
     Insert(InsertNode),
     CreateTable(CreateTableNode),
     CreateDatabase(CreateDatabaseNode),
+    CreateView(CreateViewNode),
     DropTable(DropTableNode),
     DropDatabase(DropDatabaseNode),
+    TruncateTable(TruncateTableNode),
+    ShowCreateTable(ShowCreateTableNode),
 }
 
 // ---- Leaf / scan nodes ----
@@ -92,6 +98,34 @@ pub struct DropTableNode {
 pub struct DropDatabaseNode {
     pub name: String,
     pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TruncateTableNode {
+    pub database: Option<String>,
+    pub table_name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CteNode {
+    pub name: String,
+    pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowCreateTableNode {
+    pub database: String,
+    pub table_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateViewNode {
+    pub database: Option<String>,
+    pub view_name: String,
+    pub if_not_exists: bool,
+    pub query: String,
+    pub columns: Vec<String>,
 }
 
 // ---- Relational operators ----
@@ -181,6 +215,24 @@ pub struct MergeJoinNode {
     pub join_type: JoinTypePlan,
     pub left_keys: Vec<String>,
     pub right_keys: Vec<String>,
+    pub condition: Option<String>,
+}
+
+/// Semi join: returns rows from the left side that have a match in the right side.
+/// Used for EXISTS and IN subqueries.
+#[derive(Debug, Clone)]
+pub struct SemiJoinNode {
+    pub left_key: String,
+    pub right_key: String,
+    pub condition: Option<String>,
+}
+
+/// Anti semi join: returns rows from the left side that do NOT have a match in the right side.
+/// Used for NOT EXISTS and NOT IN subqueries.
+#[derive(Debug, Clone)]
+pub struct AntiSemiJoinNode {
+    pub left_key: String,
+    pub right_key: String,
     pub condition: Option<String>,
 }
 
@@ -321,6 +373,28 @@ impl PlanNode {
                     .unwrap_or_default();
                 format!("JoinNode: {}{}", join.join_type, cond)
             }
+            PlanNodeType::SemiJoin(sj) => {
+                let cond = sj
+                    .condition
+                    .as_deref()
+                    .map(|c| format!(" filter={}", c))
+                    .unwrap_or_default();
+                format!(
+                    "SemiJoinNode: left=[{}] right=[{}]{}",
+                    sj.left_key, sj.right_key, cond
+                )
+            }
+            PlanNodeType::AntiSemiJoin(asj) => {
+                let cond = asj
+                    .condition
+                    .as_deref()
+                    .map(|c| format!(" filter={}", c))
+                    .unwrap_or_default();
+                format!(
+                    "AntiSemiJoinNode: left=[{}] right=[{}]{}",
+                    asj.left_key, asj.right_key, cond
+                )
+            }
             PlanNodeType::HashJoin(hj) => {
                 let cond = hj
                     .condition
@@ -406,6 +480,20 @@ impl PlanNode {
             PlanNodeType::Union(union) => {
                 format!("UnionNode: inputs={}", union.input_count)
             }
+            PlanNodeType::Cte(cte) => {
+                format!("CteNode: {}({})", cte.name, cte.columns.join(", "))
+            }
+            PlanNodeType::TruncateTable(tt) => {
+                let db_prefix = tt
+                    .database
+                    .as_ref()
+                    .map(|d| format!("{}.", d))
+                    .unwrap_or_default();
+                let ife = if tt.if_exists { " IF EXISTS" } else { "" };
+                format!("TruncateTableNode:{} {}{}", ife, db_prefix, tt.table_name)
+            }
+            PlanNodeType::ShowCreateTable(_) => "ShowCreateTableNode".to_string(),
+            PlanNodeType::CreateView(_) => "CreateViewNode".to_string(),
         }
     }
 
@@ -443,6 +531,8 @@ impl PlanNode {
                     .unwrap_or_default()
             }
             PlanNodeType::Join(_)
+            | PlanNodeType::SemiJoin(_)
+            | PlanNodeType::AntiSemiJoin(_)
             | PlanNodeType::HashJoin(_)
             | PlanNodeType::MergeJoin(_) => {
                 let mut cols = Vec::new();
@@ -456,12 +546,16 @@ impl PlanNode {
                 .first()
                 .map(|c| c.output_columns())
                 .unwrap_or_default(),
+            PlanNodeType::Cte(cte) => cte.columns.clone(),
             // DDL / DML nodes don't produce query columns.
             PlanNodeType::Insert(_)
             | PlanNodeType::CreateTable(_)
             | PlanNodeType::CreateDatabase(_)
+            | PlanNodeType::CreateView(_)
             | PlanNodeType::DropTable(_)
-            | PlanNodeType::DropDatabase(_) => vec![],
+            | PlanNodeType::DropDatabase(_)
+            | PlanNodeType::TruncateTable(_)
+            | PlanNodeType::ShowCreateTable(_) => vec![],
         }
     }
 }
