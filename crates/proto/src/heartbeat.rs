@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use super::Status;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HeartbeatRequest {
     pub be_host: String,
     pub be_port: i32,
@@ -8,8 +8,8 @@ pub struct HeartbeatRequest {
     pub be_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HeartbeatResponse {
-    pub status: super::status::Status,
+    pub status: Status,
     pub master_info: Option<String>,
 }

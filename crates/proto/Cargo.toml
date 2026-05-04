@@ -5,3 +5,8 @@ edition.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+prost = { workspace = true }
+tonic = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.12"
