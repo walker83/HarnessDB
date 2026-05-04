@@ -298,6 +298,7 @@ impl BitmapIndex {
             ScalarValue::Array(_) => "array".to_string(),
             ScalarValue::Json(_) => "json".to_string(),
             ScalarValue::Null => "null".to_string(),
+            ScalarValue::Float32Array(_) => "float32_array".to_string(),
         }
     }
     
@@ -326,6 +327,136 @@ impl BitmapIndex {
     /// Check if this is a valid bitmap index.
     pub fn is_valid(&self) -> bool {
         !self.values.is_empty() || self.num_rows > 0
+    }
+}
+
+/// Lightweight inverted index for text search.
+/// Stores term → row ID mappings for efficient full-text and LIKE queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvertedIndex {
+    /// Term → list of row IDs where the term appears
+    postings: HashMap<String, Vec<u32>>,
+    /// Number of rows indexed
+    num_rows: usize,
+    /// Total number of unique terms
+    total_terms: usize,
+}
+
+impl InvertedIndex {
+    pub fn new() -> Self {
+        Self {
+            postings: HashMap::new(),
+            num_rows: 0,
+            total_terms: 0,
+        }
+    }
+
+    /// Build inverted index from string values.
+    pub fn build(values: &[ScalarValue]) -> Self {
+        let mut index = Self::new();
+        index.num_rows = values.len();
+
+        for (row_id, value) in values.iter().enumerate() {
+            if let ScalarValue::String(s) = value {
+                let tokens = Self::tokenize(s);
+                for token in tokens {
+                    index.postings.entry(token).or_insert_with(Vec::new).push(row_id as u32);
+                }
+            }
+        }
+
+        index.total_terms = index.postings.len();
+        index
+    }
+
+    /// Simple tokenizer: lowercase, split by whitespace/punctuation.
+    fn tokenize(text: &str) -> Vec<String> {
+        text.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .filter(|s| !s.is_empty() && s.len() >= 2)
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// Search for a single term. Returns row IDs containing the term.
+    pub fn search_term(&self, term: &str) -> Option<&[u32]> {
+        self.postings.get(&term.to_lowercase()).map(|v| v.as_slice())
+    }
+
+    /// Search for all terms (AND). Returns rows containing ALL terms.
+    pub fn search_all(&self, terms: &[String]) -> Vec<u32> {
+        if terms.is_empty() {
+            return Vec::new();
+        }
+
+        let mut result: Option<Vec<u32>> = None;
+        for term in terms {
+            if let Some(postings) = self.search_term(term) {
+                result = Some(match result {
+                    None => postings.to_vec(),
+                    Some(prev) => {
+                        // Intersection: keep rows in both lists
+                        let mut intersection = Vec::new();
+                        let mut i = 0;
+                        let mut j = 0;
+                        while i < prev.len() && j < postings.len() {
+                            match prev[i].cmp(&postings[j]) {
+                                std::cmp::Ordering::Equal => {
+                                    intersection.push(prev[i]);
+                                    i += 1;
+                                    j += 1;
+                                }
+                                std::cmp::Ordering::Less => i += 1,
+                                std::cmp::Ordering::Greater => j += 1,
+                            }
+                        }
+                        intersection
+                    }
+                });
+            } else {
+                return Vec::new(); // Term not found: empty result
+            }
+        }
+        result.unwrap_or_default()
+    }
+
+    /// Search for any term (OR). Returns rows containing ANY term.
+    pub fn search_any(&self, terms: &[String]) -> Vec<u32> {
+        let mut result = Vec::new();
+        let mut seen = Vec::new();
+        for term in terms {
+            if let Some(postings) = self.search_term(term) {
+                for &row_id in postings {
+                    if !seen.contains(&row_id) {
+                        seen.push(row_id);
+                        result.push(row_id);
+                    }
+                }
+            }
+        }
+        result.sort();
+        result
+    }
+
+    /// Check if a LIKE pattern can be satisfied by the index.
+    /// Returns matching row IDs if the pattern uses indexed terms.
+    pub fn search_like(&self, pattern: &str) -> Vec<u32> {
+        // Extract terms from pattern (remove % and _ wildcards)
+        let cleaned = pattern.replace('%', " ").replace('_', " ");
+        let terms = Self::tokenize(&cleaned);
+        if terms.is_empty() {
+            return Vec::new();
+        }
+        // For LIKE, use "any term" matching (OR)
+        self.search_any(&terms)
+    }
+
+    pub fn num_terms(&self) -> usize {
+        self.total_terms
+    }
+
+    pub fn num_rows(&self) -> usize {
+        self.num_rows
     }
 }
 

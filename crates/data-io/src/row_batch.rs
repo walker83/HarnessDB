@@ -123,7 +123,7 @@ fn push_scalar_to_column(column: &mut Vector, value: &ScalarValue) {
                 v.push(Some(ScalarValue::Json(j.clone())));
             }
         }
-        Null | Binary(_) | Array(_) => {
+        Null | Binary(_) | Array(_) | Float32Array(_) => {
             push_null_to_column(column);
         }
     }
@@ -144,6 +144,7 @@ fn push_null_to_column(column: &mut Vector) {
         Vector::String(v) => v.push(None),
         Vector::Json(v) => v.push(None),
         Vector::Null(_) => {}
+        Vector::Float32Array(v) => v.push(None),
     }
 }
 

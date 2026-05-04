@@ -138,6 +138,10 @@ fn scalar_value_to_string(value: &ScalarValue) -> String {
         ScalarValue::Json(j) => {
             serde_json::to_string(j).unwrap_or_else(|_| "null".to_string())
         }
+        ScalarValue::Float32Array(arr) => {
+            let items: Vec<String> = arr.iter().map(|f| f.to_string()).collect();
+            format!("[{}]", items.join(","))
+        }
     }
 }
 

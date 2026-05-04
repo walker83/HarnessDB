@@ -321,6 +321,14 @@ pub fn serialize_scalar(val: &ScalarValue) -> Vec<u8> {
             out.extend_from_slice(bytes);
             out
         }
+        ScalarValue::Float32Array(arr) => {
+            let len = arr.len() as u32;
+            let mut out = len.to_le_bytes().to_vec();
+            for f in arr {
+                out.extend_from_slice(&f.to_le_bytes());
+            }
+            out
+        }
     }
 }
 

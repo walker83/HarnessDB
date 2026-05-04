@@ -93,6 +93,7 @@ impl ColumnarRow {
                 ScalarValue::Null => 0,
                 ScalarValue::Binary(b) => b.len() as u64 + 8,
                 ScalarValue::Array(a) => a.len() as u64 * 8 + 8,
+                ScalarValue::Float32Array(arr) => arr.len() as u64 * 4 + 8,
             };
         }
         size
@@ -558,6 +559,10 @@ fn estimate_block_size(block: &Block) -> u64 {
             types::Vector::DateTime(v) => v.len() as u64 * 8,
             types::Vector::Json(v) => v.len() as u64 * 64,
             types::Vector::Null(v) => v.len() as u64,
+            types::Vector::Float32Array(v) => {
+                let dim = if v.len() > 0 { v.data()[0].len() } else { 0 };
+                v.len() as u64 * dim as u64 * 4
+            }
         };
     }
     size

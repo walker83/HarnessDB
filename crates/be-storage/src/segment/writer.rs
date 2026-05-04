@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use types::{Block, DataType, Field, Schema, Vector};
 
 use crate::codec::{self, EncodingType};
-use crate::index::{BitmapIndex, ZoneMap};
+use crate::index::{BitmapIndex, InvertedIndex, ZoneMap};
 
 const DEFAULT_PAGE_SIZE: usize = 64 * 1024;
 const MAGIC: &[u8; 8] = b"ROVSSEG\0";
@@ -21,6 +21,8 @@ pub struct PageMeta {
     pub zone_map: ZoneMap,
     /// Bitmap index for low-cardinality columns
     pub bitmap_index: Option<Vec<u8>>,
+    /// Inverted index for text columns (serialized)
+    pub inverted_index: Option<Vec<u8>>,
 }
 
 /// Column metadata in the footer.
@@ -193,6 +195,20 @@ impl SegmentWriter {
             }
         });
 
+        // Build inverted index for string columns
+        let inverted_index = if matches!(field.data_type, DataType::String | DataType::Varchar(_) | DataType::Char(_))
+            && column.len() > 0
+        {
+            let idx = InvertedIndex::build(&values);
+            if idx.num_terms() > 0 {
+                serde_json::to_vec(&idx).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Choose encoding and optionally compress
         let cardinality_ratio = Self::estimate_cardinality(&values);
         let data_size_hint = raw_data.len();
@@ -245,6 +261,7 @@ impl SegmentWriter {
             encoding,
             zone_map,
             bitmap_index,
+            inverted_index,
         })
     }
 
@@ -335,6 +352,22 @@ impl SegmentWriter {
             Vector::Null(v) => {
                 vec![0u8; v.len()]
             }
+            Vector::Float32Array(v) => {
+                let len = v.len();
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&(len as u32).to_le_bytes());
+                for i in 0..len {
+                    if let Some(arr) = v.get(i) {
+                        buf.extend_from_slice(&(arr.len() as u32).to_le_bytes());
+                        for f in arr {
+                            buf.extend_from_slice(&f.to_le_bytes());
+                        }
+                    } else {
+                        buf.extend_from_slice(&0u32.to_le_bytes());
+                    }
+                }
+                buf
+            }
         }
     }
 
@@ -358,6 +391,7 @@ impl SegmentWriter {
                 Vector::String(v) => v.validity().is_valid(i),
                 Vector::Json(v) => v.validity().is_valid(i),
                 Vector::Null(_) => false,
+                Vector::Float32Array(v) => v.validity().is_valid(i),
             };
             if is_valid {
                 let word_idx = i / 64;

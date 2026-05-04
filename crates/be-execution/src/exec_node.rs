@@ -195,6 +195,7 @@ impl ScanExecNode {
             column_name: column_name.to_string(),
             op,
             value,
+            values: Vec::new(),
         })
     }
 

@@ -18,6 +18,8 @@ pub enum ScalarValue {
     Binary(Vec<u8>),
     Array(Vec<ScalarValue>),
     Json(JsonValue),
+    /// Float32 vector for ANN Index
+    Float32Array(Vec<f32>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -51,6 +53,7 @@ impl ScalarValue {
                 DataType::Array(Box::new(inner))
             }
             Self::Json(_) => DataType::Json,
+            Self::Float32Array(v) => DataType::Float32Vector(v.len()),
         }
     }
 
