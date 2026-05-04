@@ -532,6 +532,7 @@ mod tests {
         let scan = PlanNode {
             id: PlanNodeId(0),
             node_type: PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: "t1".into(),
                 database: Some("db".into()),
                 columns: vec!["a".into()],

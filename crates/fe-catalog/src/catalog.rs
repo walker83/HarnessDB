@@ -297,6 +297,7 @@ mod tests {
             properties: HashMap::new(),
             row_count: 0,
             data_size: 0,
+            stats: None,
         }
     }
 

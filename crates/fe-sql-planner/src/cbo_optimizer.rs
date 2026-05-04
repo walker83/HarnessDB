@@ -150,6 +150,7 @@ mod tests {
         PlanNode {
             id: PlanNodeId(0),
             node_type: PlanNodeType::Scan(ScanNode {
+                catalog: None,
                 table_name: table.to_string(),
                 database: Some(db.to_string()),
                 columns: vec!["*".to_string()],
