@@ -13,3 +13,4 @@ types = { workspace = true }
 fe-catalog = { workspace = true }
 fe-sql-planner = { workspace = true }
 fe-sql-parser = { workspace = true }
+dashmap = { workspace = true }

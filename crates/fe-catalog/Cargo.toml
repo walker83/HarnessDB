@@ -13,3 +13,4 @@ parking_lot = "0.12"
 common = { workspace = true }
 types = { workspace = true }
 fe-common = { workspace = true }
+dashmap = { workspace = true }

@@ -69,6 +69,7 @@ hashbrown = "0.15"
 indexmap = "2"
 bytes = "1"
 tokio-stream = { version = "0.1", features = ["fs"] }
+dashmap = "6"
 
 # Date/time handling
 chrono = "0.4"

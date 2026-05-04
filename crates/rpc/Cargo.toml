@@ -15,3 +15,4 @@ tonic-build = { workspace = true }
 
 common = { workspace = true }
 proto = { workspace = true }
+dashmap = { workspace = true }
