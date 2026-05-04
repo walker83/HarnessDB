@@ -1,8 +1,8 @@
-# RovisDB 编译与打包方案
+# RorisDB 编译与打包方案
 
 ## 项目概述
 
-RovisDB 是一个使用 Rust 重新实现的实时 OLAP 数据库，采用 MPP 架构，分为 FE（前端）和 BE（后端）组件。
+RorisDB 是一个使用 Rust 重新实现的实时 OLAP 数据库，采用 MPP 架构，分为 FE（前端）和 BE（后端）组件。
 
 ### 技术栈
 - **语言**: Rust (2024 Edition)
@@ -106,7 +106,7 @@ rovisdb-v0.1.2-macos/
 #!/bin/bash
 set -e
 
-echo "=== RovisDB Release Build ==="
+echo "=== RorisDB Release Build ==="
 
 # 检查环境
 if ! command -v cargo &> /dev/null; then
@@ -134,7 +134,7 @@ VERSION="0.1.2"
 PACKAGE_NAME="rovisdb-v${VERSION}-macos"
 TARGET_DIR="target/release"
 
-echo "=== Packaging RovisDB for macOS ==="
+echo "=== Packaging RorisDB for macOS ==="
 
 # 创建临时目录
 rm -rf "${PACKAGE_NAME}"
