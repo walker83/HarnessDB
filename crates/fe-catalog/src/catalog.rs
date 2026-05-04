@@ -1,4 +1,4 @@
-use parking_lot::RwLock;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,7 +10,7 @@ use crate::table::Table;
 use common::{DrorisError, Result};
 
 pub struct CatalogManager {
-    databases: RwLock<HashMap<String, Database>>,
+    databases: DashMap<String, Database>,
     next_id: AtomicU64,
     catalog_path: String,
 }
@@ -36,67 +36,61 @@ impl CatalogManager {
     }
 
     pub fn with_path(path: impl Into<String>) -> Self {
-        let mut dbs = HashMap::new();
+        let dbs = DashMap::new();
         dbs.insert("information_schema".into(), Database::new(0, "information_schema"));
 
         Self {
-            databases: RwLock::new(dbs),
+            databases: dbs,
             next_id: AtomicU64::new(1),
             catalog_path: path.into(),
         }
     }
 
     pub fn create_database(&self, name: &str) -> Result<()> {
-        let mut dbs = self.databases.write();
-        if dbs.contains_key(name) {
+        if self.databases.contains_key(name) {
             return Err(DrorisError::Catalog(format!("database '{}' already exists", name)));
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        dbs.insert(name.to_string(), Database::new(id, name));
+        self.databases.insert(name.to_string(), Database::new(id, name));
         Ok(())
     }
 
     pub fn drop_database(&self, name: &str) -> Result<()> {
-        let mut dbs = self.databases.write();
-        dbs.remove(name)
+        self.databases.remove(name)
             .ok_or_else(|| DrorisError::Catalog(format!("database '{}' not found", name)))?;
         Ok(())
     }
 
     pub fn list_databases(&self) -> Vec<String> {
-        self.databases.read().keys().cloned().collect()
+        self.databases.iter().map(|r| r.key().clone()).collect()
     }
 
     pub fn get_database(&self, name: &str) -> Option<Database> {
-        self.databases.read().get(name).cloned()
+        self.databases.get(name).map(|r| r.value().clone())
     }
 
     pub fn create_table(&self, db_name: &str, table: Table) -> Result<()> {
-        let mut dbs = self.databases.write();
-        let db = dbs.get_mut(db_name)
+        let mut db_ref = self.databases.get_mut(db_name)
             .ok_or_else(|| DrorisError::Catalog(format!("database '{}' not found", db_name)))?;
-        db.add_table(table);
+        db_ref.add_table(table);
         Ok(())
     }
 
     pub fn drop_table(&self, db_name: &str, table_name: &str) -> Result<()> {
-        let mut dbs = self.databases.write();
-        let db = dbs.get_mut(db_name)
+        let mut db_ref = self.databases.get_mut(db_name)
             .ok_or_else(|| DrorisError::Catalog(format!("database '{}' not found", db_name)))?;
-        db.drop_table(table_name)
+        db_ref.drop_table(table_name)
             .ok_or_else(|| DrorisError::Catalog(format!("table '{}' not found", table_name)))?;
         Ok(())
     }
 
     pub fn get_table(&self, db_name: &str, table_name: &str) -> Option<Table> {
-        self.databases.read()
-            .get(db_name)
+        self.databases.get(db_name)
             .and_then(|db| db.get_table(table_name).cloned())
     }
 
     pub fn list_tables(&self, db_name: &str) -> Option<Vec<String>> {
-        self.databases.read()
-            .get(db_name)
+        self.databases.get(db_name)
             .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
     }
 
@@ -108,7 +102,7 @@ impl CatalogManager {
         let runtime = tokio::runtime::Runtime::new()?;
         runtime.block_on(async {
             let catalog_state = CatalogState {
-                databases: self.databases.read().clone(),
+                databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
                 next_id: self.next_id.load(Ordering::Relaxed),
             };
             let json = serde_json::to_string(&catalog_state)
@@ -137,7 +131,9 @@ impl CatalogManager {
             file.read_to_string(&mut contents).await?;
             let state: CatalogState = serde_json::from_str(&contents)
                 .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            *self.databases.write() = state.databases;
+            for (key, value) in state.databases {
+                self.databases.insert(key, value);
+            }
             self.next_id = AtomicU64::new(state.next_id);
             Ok(())
         })
