@@ -80,7 +80,7 @@ fn test_bitmap_not_inplace() {
 
 #[test]
 fn test_bitmap_bitand_optimized() {
-    let bm1 = Bitmap::from_bools(&vec![true; 100]);
+    let bm1 = Bitmap::from_bools(&[true; 100]);
     let bm2 = Bitmap::from_bools(&(0..100).map(|i| i % 2 == 0).collect::<Vec<bool>>());
     
     let result = &bm1 & &bm2;
@@ -131,7 +131,7 @@ fn test_bitmap_iter_set_bits_edge_cases() {
     let set_bits: Vec<usize> = bm.iter_set_bits().collect();
     assert_eq!(set_bits, (0..64).collect::<Vec<usize>>());
     
-    let bm2 = Bitmap::from_bools(&vec![false; 100]);
+    let bm2 = Bitmap::from_bools(&[false; 100]);
     let set_bits2: Vec<usize> = bm2.iter_set_bits().collect();
     assert_eq!(set_bits2, vec![]);
 }
@@ -149,10 +149,10 @@ fn test_bitmap_word_at() {
 
 #[test]
 fn test_bitmap_words() {
-    let bm = Bitmap::from_bools(&vec![true; 65]);
+    let bm = Bitmap::from_bools(&[true; 65]);
     assert_eq!(bm.words(), 2);
     
-    let bm2 = Bitmap::from_bools(&vec![true; 128]);
+    let bm2 = Bitmap::from_bools(&[true; 128]);
     assert_eq!(bm2.words(), 2);
 }
 
@@ -193,7 +193,7 @@ fn test_bitmap_or_with() {
 
 #[test]
 fn test_bitmap_operations_cross_word_boundary() {
-    let bm1 = Bitmap::from_bools(&vec![true; 70]);
+    let bm1 = Bitmap::from_bools(&[true; 70]);
     let bm2 = Bitmap::from_bools(&(0..70).map(|i| i % 2 == 0).collect::<Vec<bool>>());
     
     let result = &bm1 & &bm2;

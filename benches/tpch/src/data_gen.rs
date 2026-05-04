@@ -5,11 +5,9 @@ use types::{
 
 /// TPC-H scale factor 0.01 data generator.
 /// Generates all 8 TPC-H tables as Block objects with realistic data.
-
 // ---------------------------------------------------------------------------
 // Nation table
 // ---------------------------------------------------------------------------
-
 /// Schema: n_nationkey (PK), n_name, n_regionkey (FK), n_comment
 pub fn nation_schema() -> Schema {
     Schema::new(vec![

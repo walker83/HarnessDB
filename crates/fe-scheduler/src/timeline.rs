@@ -1,7 +1,7 @@
 use common::{DrorisError, QueryError};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use types::Block;
 
 /// Helper to get the current time as milliseconds since Unix epoch.

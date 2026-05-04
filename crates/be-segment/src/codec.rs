@@ -7,6 +7,7 @@ pub enum CodecType {
 }
 
 impl CodecType {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "lz4" => CodecType::Lz4,
@@ -59,7 +60,7 @@ pub fn encode_with_level(data: &[u8], codec: CodecType, level: i32) -> Vec<u8> {
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Zstd => {
-            zstd::encode_all(data, level.min(22).max(-22))
+            zstd::encode_all(data, level.clamp(-22, 22))
                 .unwrap_or_else(|_| data.to_vec())
         }
         CodecType::Snappy => {

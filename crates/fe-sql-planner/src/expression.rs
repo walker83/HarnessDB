@@ -213,11 +213,10 @@ pub fn resolve_column_type<'a>(
     schemas: &'a [(&str, Vec<(&str, DataType)>)],
 ) -> Option<&'a DataType> {
     for (tbl_name, cols) in schemas {
-        if let Some(t) = table {
-            if t != *tbl_name {
+        if let Some(t) = table
+            && t != *tbl_name {
                 continue;
             }
-        }
         for (col_name, dt) in cols {
             if col_name == &column {
                 return Some(dt);

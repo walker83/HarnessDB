@@ -1,9 +1,15 @@
-use std::ops::{BitAnd, BitOr, BitXor, Not};
+use std::ops::{BitAnd, BitOr, Not};
 
 #[derive(Debug, Clone)]
 pub struct Bitmap {
     data: Vec<u64>,
     len: usize,
+}
+
+impl Default for Bitmap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Bitmap {
@@ -12,7 +18,7 @@ impl Bitmap {
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
-        let words = (capacity + 63) / 64;
+        let words = capacity.div_ceil(64);
         Self { data: vec![0; words], len: 0 }
     }
 
@@ -25,13 +31,12 @@ impl Bitmap {
     }
 
     pub fn all_set(len: usize) -> Self {
-        let words = (len + 63) / 64;
+        let words = len.div_ceil(64);
         let mut data = vec![u64::MAX; words];
-        if len % 64 != 0 {
-            if let Some(last) = data.last_mut() {
+        if !len.is_multiple_of(64)
+            && let Some(last) = data.last_mut() {
                 *last &= (1u64 << (len % 64)) - 1;
             }
-        }
         Self { data, len }
     }
 
@@ -111,7 +116,7 @@ impl Bitmap {
     }
 
     /// Iterate over set bits efficiently using trailing_zeros
-    pub fn iter_set_bits(&self) -> SetBitIter {
+    pub fn iter_set_bits(&self) -> SetBitIter<'_> {
         let first_word = self.data.first().copied().unwrap_or(0);
         // Apply mask to first word to ignore bits beyond len
         let masked_word = if self.len < 64 {
@@ -159,11 +164,10 @@ impl Bitmap {
         for word in &mut self.data {
             *word = !*word;
         }
-        if self.len % 64 != 0 && !self.data.is_empty() {
-            if let Some(last) = self.data.last_mut() {
+        if !self.len.is_multiple_of(64) && !self.data.is_empty()
+            && let Some(last) = self.data.last_mut() {
                 *last &= (1u64 << (self.len % 64)) - 1;
             }
-        }
     }
 
     /// In-place AND with another bitmap
@@ -221,7 +225,7 @@ impl BitAnd for &Bitmap {
     type Output = Bitmap;
     fn bitand(self, rhs: &Bitmap) -> Bitmap {
         let len = self.len.min(rhs.len);
-        let words = (len + 63) / 64;
+        let words = len.div_ceil(64);
         let mut data = Vec::with_capacity(words);
         
         let min_len = self.data.len().min(rhs.data.len());
@@ -237,7 +241,7 @@ impl BitOr for &Bitmap {
     type Output = Bitmap;
     fn bitor(self, rhs: &Bitmap) -> Bitmap {
         let len = self.len.max(rhs.len);
-        let words = (len + 63) / 64;
+        let words = len.div_ceil(64);
         let mut data = Vec::with_capacity(words);
         
         let max_len = self.data.len().max(rhs.data.len());
@@ -254,7 +258,7 @@ impl BitOr for &Bitmap {
 impl Not for &Bitmap {
     type Output = Bitmap;
     fn not(self) -> Bitmap {
-        let words = (self.len + 63) / 64;
+        let words = self.len.div_ceil(64);
         let mut data = Vec::with_capacity(words);
         
         for i in 0..words {
@@ -262,11 +266,10 @@ impl Not for &Bitmap {
             data.push(!word);
         }
         
-        if self.len % 64 != 0 && !data.is_empty() {
-            if let Some(last) = data.last_mut() {
+        if !self.len.is_multiple_of(64) && !data.is_empty()
+            && let Some(last) = data.last_mut() {
                 *last &= (1u64 << (self.len % 64)) - 1;
             }
-        }
         Bitmap { data, len: self.len }
     }
 }

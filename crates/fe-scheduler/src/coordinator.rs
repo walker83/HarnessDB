@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -67,11 +66,13 @@ pub struct QueryResult {
 /// Tracks the state of a query that has been scheduled and is executing.
 struct RunningQuery {
     query_id: QueryId,
+    #[allow(dead_code)]
     sql: String,
     scheduled_at: std::time::Instant,
     timeout: Duration,
     fragment_tree: FragmentTree,
     /// Partial result blocks collected from BE nodes so far.
+    #[allow(dead_code)]
     result_blocks: Vec<Block>,
     /// Accumulated rows scanned across all fragments.
     rows_scanned: u64,
@@ -148,9 +149,8 @@ impl Coordinator {
         self.scheduler.check_cluster_limits(running_count).await?;
 
         // Step 3: Plan.
-        let plan = self.plan(&stmt).map_err(|e| {
+        let plan = self.plan(&stmt).inspect_err(|e| {
             self.record_failure(&query_id, e.to_string());
-            e
         })?;
 
         // Step 4: Optimize.
@@ -166,9 +166,8 @@ impl Coordinator {
             .scheduler
             .schedule(optimized, &query_id.to_string(), &limits)
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 self.record_failure(&query_id, e.to_string());
-                e
             })?;
 
 // Step 6: Track the running query.

@@ -1,4 +1,3 @@
-use common::Result;
 use types::Block;
 
 pub struct RowBatchStream {
@@ -15,6 +14,7 @@ impl RowBatchStream {
         self.index < self.blocks.len()
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<&Block> {
         if self.index < self.blocks.len() {
             let block = &self.blocks[self.index];

@@ -63,18 +63,15 @@ impl Default for ClusterLimits {
 
 /// Strategy for assigning fragment instances to BE nodes.
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub enum SchedulingStrategy {
     /// Round-robin across available nodes.
     RoundRobin,
     /// Choose least-loaded node based on reported load stats.
+    #[default]
     LoadAware,
 }
 
-impl Default for SchedulingStrategy {
-    fn default() -> Self {
-        Self::LoadAware
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Scheduler
@@ -299,7 +296,7 @@ impl Scheduler {
     ) -> Vec<Vec<ExchangeDestination>> {
         match exchange_kind {
             ExchangeKind::HashPartition {
-                num_partitions,
+                num_partitions: _,
                 key_columns: _,
             } => {
                 // Each child instance sends to specific parent partitions.
@@ -369,7 +366,7 @@ impl Scheduler {
         tree: &mut FragmentTree,
         failed_node: &NodeId,
         query_id: &str,
-        query_limits: &QueryLimits,
+        _query_limits: &QueryLimits,
     ) -> Result<Vec<FragmentInstanceId>, DrorisError> {
         let replacement = self.cluster.select_node().await;
 

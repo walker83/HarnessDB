@@ -1,4 +1,4 @@
-use types::{Block, Schema, DataType, Field, Vector, bitmap::*, vector::*};
+use types::{Block, Schema, DataType, Field, Vector, vector::*};
 use std::io::{Read, BufRead};
 use crate::schema_inference::infer_type;
 
@@ -84,17 +84,17 @@ impl<R: Read + BufRead> CsvReader<R> {
         fields
     }
 
+    #[allow(dead_code)]
     fn parse_quoted_field(&self, field: &str) -> String {
         let mut result = String::new();
         let mut chars = field.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch == '"' {
-                if let Some(&next) = chars.peek() {
-                    if next == '"' {
+                if let Some(&next) = chars.peek()
+                    && next == '"' {
                         result.push('"');
                         chars.next();
                     }
-                }
             } else {
                 result.push(ch);
             }
@@ -203,11 +203,11 @@ impl<R: Read + BufRead> CsvReader<R> {
         for col_idx in 0..num_cols {
             let data_type = schema.field(col_idx).map(|f| f.data_type.clone()).unwrap_or(DataType::String);
 
-            let mut values: Vec<String> = all_rows.iter().map(|row| {
+            let values: Vec<String> = all_rows.iter().map(|row| {
                 row.get(col_idx).cloned().unwrap_or_default()
             }).collect();
 
-            let vector = build_vector_from_strings(&values, &data_type, &|v: &str| {
+            let vector = build_vector_from_strings(&values, &data_type, |v: &str| {
                 // Check null strings
                 v.is_empty() || v == "\\N" || v.eq_ignore_ascii_case("\\N")
                     || v == "NULL" || v.eq_ignore_ascii_case("null")

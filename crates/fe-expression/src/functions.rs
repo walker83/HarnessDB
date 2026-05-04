@@ -296,7 +296,7 @@ impl FunctionRegistry {
                 }).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_date_string(s)).map(|dt| dt.year() as i64).unwrap_or(0)
+                v.get(i).and_then(parse_date_string).map(|dt| dt.year() as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -312,7 +312,7 @@ impl FunctionRegistry {
                 v.get(i).map(|ms| naive_datetime_from_millis(ms).month() as i64).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_date_string(s)).map(|dt| dt.month() as i64).unwrap_or(0)
+                v.get(i).and_then(parse_date_string).map(|dt| dt.month() as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -328,7 +328,7 @@ impl FunctionRegistry {
                 v.get(i).map(|ms| naive_datetime_from_millis(ms).day() as i64).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_date_string(s)).map(|dt| dt.day() as i64).unwrap_or(0)
+                v.get(i).and_then(parse_date_string).map(|dt| dt.day() as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -341,7 +341,7 @@ impl FunctionRegistry {
                 v.get(i).map(|ms| naive_datetime_from_millis(ms).hour() as i64).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_datetime_string(s)).map(|dt| dt.hour() as i64).unwrap_or(0)
+                v.get(i).and_then(parse_datetime_string).map(|dt| dt.hour() as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -354,7 +354,7 @@ impl FunctionRegistry {
                 v.get(i).map(|ms| naive_datetime_from_millis(ms).minute() as i64).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_datetime_string(s)).map(|dt| dt.minute() as i64).unwrap_or(0)
+                v.get(i).and_then(parse_datetime_string).map(|dt| dt.minute() as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -367,7 +367,7 @@ impl FunctionRegistry {
                 v.get(i).map(|ms| naive_datetime_from_millis(ms).second() as i64).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_datetime_string(s)).map(|dt| dt.second() as i64).unwrap_or(0)
+                v.get(i).and_then(parse_datetime_string).map(|dt| dt.second() as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -503,7 +503,7 @@ impl FunctionRegistry {
                 }).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_date_string(s)).map(|dt| dt.iso_week().week() as i64).unwrap_or(0)
+                v.get(i).and_then(parse_date_string).map(|dt| dt.iso_week().week() as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -525,7 +525,7 @@ impl FunctionRegistry {
                 }).unwrap_or(0)
             }).collect()),
             Some(Vector::String(v)) => int64_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_date_string(s)).map(|dt| ((dt.month() - 1) / 3 + 1) as i64).unwrap_or(0)
+                v.get(i).and_then(parse_date_string).map(|dt| ((dt.month() - 1) / 3 + 1) as i64).unwrap_or(0)
             }).collect()),
             _ => int64_vec(vec![]),
         }
@@ -551,7 +551,7 @@ impl FunctionRegistry {
                 })
             }).collect()),
             Some(Vector::String(v)) => string_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_date_string(s)).map(|dt| {
+                v.get(i).and_then(parse_date_string).map(|dt| {
                     let month_names = ["January", "February", "March", "April", "May", "June",
                                       "July", "August", "September", "October", "November", "December"];
                     month_names[(dt.month() - 1) as usize].to_string()
@@ -579,7 +579,7 @@ impl FunctionRegistry {
                 })
             }).collect()),
             Some(Vector::String(v)) => string_vec((0..v.len()).map(|i| {
-                v.get(i).and_then(|s| parse_date_string(s)).map(|dt| {
+                v.get(i).and_then(parse_date_string).map(|dt| {
                     let day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
                     day_names[dt.weekday().num_days_from_monday() as usize].to_string()
                 })
@@ -596,7 +596,7 @@ impl FunctionRegistry {
 fn naive_date_from_ordinal(ordinal: i32) -> NaiveDate {
     NaiveDate::from_ymd_opt(1970, 1, 1)
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
-        .with_ordinal(ordinal.max(1).min(366) as u32)
+        .with_ordinal(ordinal.clamp(1, 366) as u32)
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
 }
 
@@ -698,7 +698,8 @@ fn parse_interval(val: &ScalarValue) -> Option<Duration> {
 fn format_datetime(dt: &chrono::DateTime<Utc>, fmt: &str) -> String {
     let naive = dt.naive_local();
     // Simple format strings
-    let result = fmt
+    
+    fmt
         .replace("%Y", &naive.format("%Y").to_string())
         .replace("%m", &format!("{:02}", naive.month()))
         .replace("%d", &format!("{:02}", naive.day()))
@@ -711,8 +712,7 @@ fn format_datetime(dt: &chrono::DateTime<Utc>, fmt: &str) -> String {
         .replace("%j", &format!("{:03}", naive.ordinal()))
         .replace("%W", &naive.format("%W").to_string())
         .replace("%U", &naive.format("%U").to_string())
-        .replace("%p", &naive.format("%p").to_string());
-    result
+        .replace("%p", &naive.format("%p").to_string())
 }
 
 /// Truncate datetime to specified unit
@@ -853,7 +853,7 @@ impl FunctionRegistry {
         float64_vec((0..count).enumerate().map(|(i, _)| {
             // Simple linear congruential generator
             let state = seed.wrapping_add(i as u64);
-            ((state as f64) / (u64::MAX as f64))
+            (state as f64) / (u64::MAX as f64) 
         }).collect())
     }
 
@@ -885,7 +885,7 @@ impl FunctionRegistry {
                     if let Vector::Int64(d) = a { d.data().first() } else { None }
                 }).unwrap_or(&0);
 
-                int64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                int64_vec(v.data().iter().enumerate().map(|(i, &_val)| {
                     if i >= *offset as usize {
                         v.data()[i - *offset as usize]
                     } else {
@@ -901,7 +901,7 @@ impl FunctionRegistry {
                     if let Vector::Float64(d) = a { d.data().first() } else { None }
                 }).unwrap_or(&0.0);
 
-                float64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                float64_vec(v.data().iter().enumerate().map(|(i, &_val)| {
                     if i >= *offset as usize {
                         v.data()[i - *offset as usize]
                     } else {
@@ -923,7 +923,7 @@ impl FunctionRegistry {
                     if let Vector::Int64(d) = a { d.data().first() } else { None }
                 }).unwrap_or(&0);
 
-                int64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                int64_vec(v.data().iter().enumerate().map(|(i, &_val)| {
                     let next_idx = i + *offset as usize;
                     if next_idx < v.data().len() {
                         v.data()[next_idx]
@@ -940,7 +940,7 @@ impl FunctionRegistry {
                     if let Vector::Float64(d) = a { d.data().first() } else { None }
                 }).unwrap_or(&0.0);
 
-                float64_vec(v.data().iter().enumerate().map(|(i, &val)| {
+                float64_vec(v.data().iter().enumerate().map(|(i, &_val)| {
                     let next_idx = i + *offset as usize;
                     if next_idx < v.data().len() {
                         v.data()[next_idx]
@@ -1106,7 +1106,7 @@ impl FunctionRegistry {
 
         match (args.first(), args.get(1)) {
             (Some(Vector::Json(json_vec)), Some(target)) => {
-                let target_len = target.len();
+                let _target_len = target.len();
                 let results: Vec<bool> = (0..json_vec.len()).map(|i| {
                     let target_val = target.scalar_at(i);
                     let target_str = match target_val {
@@ -1187,7 +1187,7 @@ impl FunctionRegistry {
     fn json_object(&self, args: &[Vector]) -> Vector {
         use types::{Vector as TypesVector, JsonVector, JsonValue};
 
-        if args.len() % 2 != 0 {
+        if !args.len().is_multiple_of(2) {
             return bool_vec(vec![]);
         }
 
@@ -1196,8 +1196,8 @@ impl FunctionRegistry {
             let mut pairs = vec![];
 
             for chunk in args.chunks(2) {
-                if let (Some(key_vec), Some(val_vec)) = (chunk.first(), chunk.get(1)) {
-                    if let (types::ScalarValue::String(key), val) = (key_vec.scalar_at(i), val_vec.scalar_at(i)) {
+                if let (Some(key_vec), Some(val_vec)) = (chunk.first(), chunk.get(1))
+                    && let (types::ScalarValue::String(key), val) = (key_vec.scalar_at(i), val_vec.scalar_at(i)) {
                         let json_val = match val {
                             types::ScalarValue::Null => JsonValue::Null,
                             types::ScalarValue::String(s) => JsonValue::String(s.clone()),
@@ -1209,7 +1209,6 @@ impl FunctionRegistry {
                         };
                         pairs.push((key.clone(), json_val));
                     }
-                }
             }
 
             JsonValue::Object(pairs)
@@ -1219,7 +1218,7 @@ impl FunctionRegistry {
     }
 
     fn json_length(&self, args: &[Vector]) -> Vector {
-        use types::JsonValue;
+        
 
         match args.first() {
             Some(Vector::Json(v)) => {
@@ -1562,7 +1561,7 @@ impl FunctionRegistry {
             result.push(max_val);
         }
 
-        Vector::from_scalar(&result.first().unwrap_or(&ScalarValue::Null), 0)
+        Vector::from_scalar(result.first().unwrap_or(&ScalarValue::Null), 0)
             .slice(0, 0)
             .filter(&types::Bitmap::with_capacity(len));
 
@@ -1774,7 +1773,7 @@ impl FunctionRegistry {
         // locate(substring, string, [start_position])
         // Returns 1-based position of first occurrence, or 0 if not found
         // Note: SQL LOCATE(substring, string) - first arg is needle, second is haystack
-        match (args.get(0), args.get(1), args.get(2)) {
+        match (args.first(), args.get(1), args.get(2)) {
             (Some(Vector::String(needle)), Some(Vector::String(haystack)), None) => {
                 let len = haystack.len();
                 int64_vec((0..len).map(|i| {
@@ -1857,12 +1856,12 @@ impl FunctionRegistry {
 
         let len = args[0].len();
         let results: Vec<String> = (0..len).map(|i| {
-            args.iter().filter_map(|v| {
+args.iter().filter_map(|v| {
                 if let Vector::Int64(sv) = v {
                     sv.get(i).map(|n| {
-                        let ch = (n.max(0).min(255) as u8) as char;
-                        if ch.is_ascii() { Some(ch) } else { Some('�') }
-                    }).flatten()
+                        let ch = (n.clamp(0, 255) as u8) as char;
+                        if ch.is_ascii() { ch } else { '\u{FFFD}' }
+                    })
                 } else {
                     None
                 }

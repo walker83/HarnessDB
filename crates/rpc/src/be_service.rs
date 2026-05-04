@@ -1,6 +1,4 @@
 use proto::{Status, ExecPlanFragmentRequest, ExecPlanFragmentResponse, CancelPlanFragmentRequest, FetchDataRequest, FetchDataResponse, HeartbeatRequest, HeartbeatResponse, BackendService};
-use std::collections::HashMap;
-use std::sync::Arc;
 use dashmap::DashMap;
 use tonic::{Request, Response, Status as TonicStatus, Code};
 
@@ -15,6 +13,7 @@ struct FragmentState {
 enum ExecutionStatus {
     Running,
     Completed,
+    #[allow(dead_code)]
     Failed,
     Cancelled,
 }
@@ -22,6 +21,12 @@ enum ExecutionStatus {
 // gRPC server implementation
 pub struct BeGrpcServer {
     fragments: DashMap<String, FragmentState>,
+}
+
+impl Default for BeGrpcServer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BeGrpcServer {

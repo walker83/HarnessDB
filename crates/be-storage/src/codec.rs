@@ -134,7 +134,7 @@ pub fn bit_pack_i64(values: &[i64]) -> (i64, u8, Vec<u8>) {
     };
 
     let total_bits = values.len() as u64 * bits_needed as u64;
-    let byte_len = ((total_bits + 7) / 8) as usize;
+    let byte_len = total_bits.div_ceil(8) as usize;
     let mut packed = vec![0u8; byte_len];
 
     let mut bit_offset: u64 = 0;

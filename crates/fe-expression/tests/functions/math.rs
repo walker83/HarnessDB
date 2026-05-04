@@ -57,14 +57,14 @@ fn test_truncate() {
 
     // Test with decimal places
     let args = vec![
-        float64_vec(vec![3.14159, 2.71828, -1.5]),
+        float64_vec(vec![5.1234, 4.5678, -1.5]),
         int64_vec(vec![2, 1, 0]),
     ];
     let result = registry.call("truncate", &args);
 
     assert!(matches!(result, Vector::Float64(_)));
     if let Vector::Float64(v) = result {
-        assert_eq!(v.data(), &[3.14, 2.7, -1.0]);
+        assert_eq!(v.data(), &[5.12, 4.5, -1.0]);
     }
 
     // Test without decimal places (default to 0)

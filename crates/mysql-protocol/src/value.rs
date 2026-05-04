@@ -46,6 +46,7 @@ pub fn encode_date(buf: &mut BytesMut, year: u16, month: u8, day: u8) {
 
 /// Encode a datetime value in binary protocol format.
 /// Format: length + year(2) + month(1) + day(1) [+ hour(1) + minute(1) + second(1)]
+#[allow(clippy::too_many_arguments)]
 pub fn encode_datetime(
     buf: &mut BytesMut,
     year: u16,

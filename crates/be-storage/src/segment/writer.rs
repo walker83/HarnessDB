@@ -109,7 +109,7 @@ impl SegmentWriter {
 
         // Build and write footer
         let footer = SegmentFooter {
-            magic: MAGIC.clone(),
+            magic: *MAGIC,
             version: VERSION,
             num_rows: num_rows as u64,
             columns: column_metas,
@@ -316,7 +316,7 @@ impl SegmentWriter {
 
     fn serialize_null_bitmap(column: &Vector) -> Vec<u8> {
         let num_rows = column.len();
-        let bitmap_words = (num_rows + 63) / 64;
+        let bitmap_words = num_rows.div_ceil(64);
         let mut bitmap = vec![0u64; bitmap_words];
 
         for i in 0..num_rows {
