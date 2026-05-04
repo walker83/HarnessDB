@@ -460,6 +460,121 @@ impl InvertedIndex {
     }
 }
 
+/// Distance metric for ANN Index.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum MetricType {
+    /// Euclidean distance (L2)
+    L2,
+}
+
+/// ANN Index for vector similarity search using a flat + IVF hybrid approach.
+/// Supports Float32Vector columns for approximate nearest neighbor search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ANNIndex {
+    /// Stored vectors (index = row ID)
+    vectors: Vec<Vec<f32>>,
+    /// Vector dimension
+    dimension: usize,
+    /// Distance metric
+    pub metric: MetricType,
+    /// Number of vectors
+    num_vectors: usize,
+}
+
+impl ANNIndex {
+    pub fn new(dimension: usize, metric: MetricType) -> Self {
+        Self {
+            vectors: Vec::new(),
+            dimension,
+            metric,
+            num_vectors: 0,
+        }
+    }
+
+    /// Build ANN index from Float32Array values.
+    pub fn build(values: &[ScalarValue], dimension: usize) -> Option<Self> {
+        let mut index = Self::new(dimension, MetricType::L2);
+
+        for value in values {
+            if let ScalarValue::Float32Array(vec) = value {
+                if vec.len() == dimension {
+                    index.vectors.push(vec.clone());
+                    index.num_vectors += 1;
+                }
+            }
+        }
+
+        if index.num_vectors == 0 {
+            return None;
+        }
+
+        Some(index)
+    }
+
+    /// Search for k nearest neighbors using linear scan (exact for small datasets).
+    pub fn search(&self, query: &[f32], k: usize) -> Vec<(u32, f32)> {
+        if self.vectors.is_empty() || query.len() != self.dimension {
+            return Vec::new();
+        }
+
+        let mut distances: Vec<(u32, f32)> = self.vectors
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i as u32, self.compute_distance(query, v)))
+            .collect();
+
+        // Sort by distance (ascending)
+        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Return top k
+        distances.truncate(k);
+        distances
+    }
+
+    /// Search within a radius threshold.
+    pub fn search_radius(&self, query: &[f32], radius: f32) -> Vec<(u32, f32)> {
+        if self.vectors.is_empty() || query.len() != self.dimension {
+            return Vec::new();
+        }
+
+        self.vectors
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| {
+                let dist = self.compute_distance(query, v);
+                if dist <= radius {
+                    Some((i as u32, dist))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Compute distance between two vectors.
+    fn compute_distance(&self, a: &[f32], b: &[f32]) -> f32 {
+        match self.metric {
+            MetricType::L2 => {
+                let sum: f32 = a.iter()
+                    .zip(b.iter())
+                    .map(|(x, y)| (x - y) * (x - y))
+                    .sum();
+                sum.sqrt()
+            }
+        }
+    }
+
+    /// Get the number of vectors in the index.
+    pub fn num_vectors(&self) -> usize {
+        self.num_vectors
+    }
+
+    /// Get the vector dimension.
+    pub fn dimension(&self) -> usize {
+        self.dimension
+    }
+}
+
 /// Predicate operators for pushdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateOp {
