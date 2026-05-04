@@ -326,6 +326,23 @@ pub struct HashJoinNode {
     pub build_keys: Vec<String>,
     pub probe_keys: Vec<String>,
     pub condition: Option<String>,
+    pub build_filters: Vec<RuntimeFilterPlan>,
+    pub probe_filters: Vec<RuntimeFilterPlan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeFilterPlan {
+    pub id: u64,
+    pub filter_type: RuntimeFilterTypePlan,
+    pub build_column: String,
+    pub probe_column: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RuntimeFilterTypePlan {
+    Bloom,
+    MinMax,
+    In,
 }
 
 /// Merge join: expects both inputs sorted on the join keys.

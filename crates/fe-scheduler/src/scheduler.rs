@@ -8,9 +8,10 @@ use crate::cluster::{ClusterManager, NodeId};
 use crate::exchange::{ExchangeDestination, ExchangeKind};
 use crate::fragment::{
     ExecutionParams, Fragment, FragmentId, FragmentInstance, FragmentInstanceId, FragmentTree,
-    Fragmentizer,
+    Fragmentizer, RuntimeFilterInstance, RuntimeFilterTypeInstance,
 };
 use fe_sql_planner::PlanNode;
+use fe_sql_planner::plan_node::{PlanNodeType, RuntimeFilterPlan};
 
 // ---------------------------------------------------------------------------
 // Resource limits
@@ -121,7 +122,10 @@ impl Scheduler {
         let mut fragmentizer = Fragmentizer::new();
         let mut tree = fragmentizer.fragmentize(plan);
 
-        // Step 2: Assign instances to each fragment in topological order (leaves first).
+        // Step 2: Extract runtime filters from the plan and assign to fragments.
+        self.extract_and_assign_runtime_filters(&mut tree);
+
+        // Step 3: Assign instances to each fragment in topological order (leaves first).
         let ordered_ids: Vec<FragmentId> = tree.topological_order().iter().map(|f| f.id.clone()).collect();
 
         for frag_id in &ordered_ids {
@@ -140,8 +144,11 @@ impl Scheduler {
             }
         }
 
-        // Step 3: Wire exchange destinations between parent and child instances.
+        // Step 4: Wire exchange destinations between parent and child instances.
         self.wire_exchanges(&mut tree)?;
+
+        // Step 5: Distribute runtime filters from build fragments to probe fragments.
+        self.distribute_runtime_filters(&mut tree)?;
 
         info!(
             "Scheduled query {}: {} fragments, {} total instances",
@@ -154,6 +161,71 @@ impl Scheduler {
         );
 
         Ok(tree)
+    }
+
+    fn extract_and_assign_runtime_filters(&self, tree: &mut FragmentTree) {
+        for (_, fragment) in tree.fragments.iter_mut() {
+            let filters = self.collect_runtime_filters_from_plan(&fragment.plan);
+            fragment.build_runtime_filters = filters;
+        }
+    }
+
+    fn collect_runtime_filters_from_plan(&self, plan: &PlanNode) -> Vec<RuntimeFilterPlan> {
+        let mut filters = Vec::new();
+        self.collect_filters_recursive(plan, &mut filters);
+        filters
+    }
+
+    fn collect_filters_recursive(&self, plan: &PlanNode, filters: &mut Vec<RuntimeFilterPlan>) {
+        if let PlanNodeType::HashJoin(hj) = &plan.node_type {
+            for filter in &hj.build_filters {
+                filters.push(filter.clone());
+            }
+        }
+        for child in &plan.children {
+            self.collect_filters_recursive(child, filters);
+        }
+    }
+
+    fn distribute_runtime_filters(&self, tree: &mut FragmentTree) -> Result<(), DrorisError> {
+        let filter_updates: Vec<(FragmentId, Vec<RuntimeFilterPlan>)> = tree
+            .fragments
+            .iter()
+            .filter(|(_, fragment)| !fragment.build_runtime_filters.is_empty())
+            .filter_map(|(frag_id, fragment)| {
+                fragment
+                    .parent_fragment_id
+                    .as_ref()
+                    .map(|parent_id| (parent_id.clone(), fragment.build_runtime_filters.clone()))
+            })
+            .collect();
+
+        for (parent_id, filters) in filter_updates {
+            if let Some(parent_frag) = tree.fragments.get_mut(&parent_id) {
+                parent_frag.probe_runtime_filters.extend(filters);
+            }
+        }
+
+        for (_, fragment) in tree.fragments.iter_mut() {
+            for instance in &mut fragment.instances {
+                instance.runtime_filters = fragment
+                    .probe_runtime_filters
+                    .iter()
+                    .map(|f| RuntimeFilterInstance {
+                        id: f.id,
+                        filter_type: match f.filter_type {
+                            fe_sql_planner::plan_node::RuntimeFilterTypePlan::Bloom => RuntimeFilterTypeInstance::Bloom,
+                            fe_sql_planner::plan_node::RuntimeFilterTypePlan::MinMax => RuntimeFilterTypeInstance::MinMax,
+                            fe_sql_planner::plan_node::RuntimeFilterTypePlan::In => RuntimeFilterTypeInstance::In,
+                        },
+                        target_column: f.probe_column.clone(),
+                        serialized_filter: Vec::new(),
+                    })
+                    .collect();
+            }
+        }
+
+        Ok(())
     }
 
     /// Assign fragment instances to BE nodes using the configured strategy.
@@ -211,6 +283,7 @@ impl Scheduler {
                     batch_size: query_limits.batch_size,
                 },
                 output_destinations: Vec::new(),
+                runtime_filters: Vec::new(),
             })
             .collect();
 
