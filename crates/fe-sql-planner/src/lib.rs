@@ -8,4 +8,4 @@ pub mod materialized_view;
 pub use planner::Planner;
 pub use plan_node::{PlanNode, PlanNodeType};
 pub use optimizer::Optimizer;
-pub use materialized_view::{MaterializedView, RefreshStrategy, rewrite_query};
+pub use materialized_view::rewrite_query;

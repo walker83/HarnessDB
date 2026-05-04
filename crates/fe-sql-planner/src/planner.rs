@@ -65,8 +65,6 @@ impl Planner {
             Statement::ShowDatabases => self.plan_show_databases(),
             Statement::ShowTables(db) => self.plan_show_tables(db),
             Statement::Explain(explain) => {
-                // Plan the inner statement; the explain wrapper is transparent
-                // at the logical plan level.
                 self.plan(*explain.statement)
             }
             Statement::AlterTable(alter) => self.plan_alter_table(alter),
@@ -83,6 +81,15 @@ impl Planner {
             Statement::CreateView { database, name, if_not_exists, query, columns } => {
                 self.plan_create_view(database, name, if_not_exists, query, columns)
             }
+            Statement::CreateRepository(stmt) => self.plan_create_repository(stmt),
+            Statement::DropRepository(stmt) => self.plan_drop_repository(stmt),
+            Statement::ShowRepositories => self.plan_show_repositories(),
+            Statement::BackupDatabase(stmt) => self.plan_backup_database(stmt),
+            Statement::RestoreDatabase(stmt) => self.plan_restore_database(stmt),
+            Statement::CreateMaterializedView(stmt) => self.plan_create_materialized_view(stmt),
+            Statement::DropMaterializedView(stmt) => self.plan_drop_materialized_view(stmt),
+            Statement::AlterMaterializedView(stmt) => self.plan_alter_materialized_view(stmt),
+            Statement::RefreshMaterializedView(stmt) => self.plan_refresh_materialized_view(stmt),
         }
     }
 
@@ -764,6 +771,152 @@ impl Planner {
                 if_not_exists,
                 query,
                 columns,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_create_repository(
+        &self,
+        stmt: fe_sql_parser::ast::CreateRepositoryStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        let repo_type = match stmt.repo_type {
+            fe_sql_parser::ast::RepositoryType::Local => "local".to_string(),
+            fe_sql_parser::ast::RepositoryType::S3 => "s3".to_string(),
+            fe_sql_parser::ast::RepositoryType::Hdfs => "hdfs".to_string(),
+        };
+        Ok(self.make_node(
+            PlanNodeType::CreateRepository(CreateRepositoryNode {
+                name: stmt.name,
+                repo_type,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_drop_repository(
+        &self,
+        stmt: fe_sql_parser::ast::DropRepositoryStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DropRepository(DropRepositoryNode {
+                name: stmt.name,
+                if_exists: stmt.if_exists,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_repositories(&self) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::ShowRepositories(ShowRepositoriesNode),
+            vec![],
+        ))
+    }
+
+    fn plan_backup_database(
+        &self,
+        stmt: fe_sql_parser::ast::BackupDatabaseStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::BackupDatabase(BackupDatabaseNode {
+                database: stmt.database,
+                repository: stmt.repository,
+                backup_name: stmt.backup_name,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_restore_database(
+        &self,
+        stmt: fe_sql_parser::ast::RestoreDatabaseStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::RestoreDatabase(RestoreDatabaseNode {
+                database: stmt.database,
+                repository: stmt.repository,
+                backup_name: stmt.backup_name,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_create_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::CreateMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        let refresh_type = stmt.refresh.as_ref().map(|r| {
+            match r.r#type {
+                fe_sql_parser::ast::RefreshType::Complete => "COMPLETE".to_string(),
+                fe_sql_parser::ast::RefreshType::Fast => "FAST".to_string(),
+            }
+        });
+
+        Ok(self.make_node(
+            PlanNodeType::CreateMaterializedView(CreateMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                if_not_exists: stmt.if_not_exists,
+                query: stmt.query,
+                columns: stmt.columns,
+                refresh_type,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_drop_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::DropMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DropMaterializedView(DropMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                if_exists: stmt.if_exists,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_alter_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::AlterMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        let operation = match stmt.operation {
+            fe_sql_parser::ast::AlterMaterializedViewOperation::PauseRefresh => "PAUSE REFRESH".to_string(),
+            fe_sql_parser::ast::AlterMaterializedViewOperation::ResumeRefresh => "RESUME REFRESH".to_string(),
+            fe_sql_parser::ast::AlterMaterializedViewOperation::Rename(new_name) => format!("RENAME TO {}", new_name),
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::AlterMaterializedView(AlterMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                operation,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_refresh_materialized_view(
+        &self,
+        stmt: fe_sql_parser::ast::RefreshMaterializedViewStmt,
+    ) -> Result<PlanNode, DrorisError> {
+        let refresh_type = match stmt.refresh_type {
+            fe_sql_parser::ast::RefreshType::Complete => "COMPLETE",
+            fe_sql_parser::ast::RefreshType::Fast => "FAST",
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::RefreshMaterializedView(RefreshMaterializedViewNode {
+                database: stmt.database,
+                view_name: stmt.name,
+                refresh_type: refresh_type.to_string(),
             }),
             vec![],
         ))

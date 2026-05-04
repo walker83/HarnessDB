@@ -6,11 +6,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::database::Database;
+use crate::materialized_view::MaterializedView;
 use crate::table::Table;
 use common::{DrorisError, Result, CatalogError};
 
 pub struct CatalogManager {
     databases: DashMap<String, Database>,
+    materialized_views: DashMap<String, MaterializedView>,
     next_id: AtomicU64,
     catalog_path: String,
 }
@@ -42,6 +44,7 @@ impl CatalogManager {
 
         Self {
             databases: dbs,
+            materialized_views: DashMap::new(),
             next_id: AtomicU64::new(1),
             catalog_path: path.into(),
         }
@@ -95,6 +98,36 @@ impl CatalogManager {
             .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
     }
 
+    pub fn create_materialized_view(&self, mv: MaterializedView) -> common::Result<()> {
+        let key = format!("{}.{}", mv.database, mv.name);
+        self.materialized_views.insert(key, mv);
+        Ok(())
+    }
+
+    pub fn drop_materialized_view(&self, db_name: &str, name: &str) -> common::Result<()> {
+        let key = format!("{}.{}", db_name, name);
+        self.materialized_views.remove(&key)
+            .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound, format!("materialized view '{}' not found", name)))?;
+        Ok(())
+    }
+
+    pub fn get_materialized_view(&self, db_name: &str, name: &str) -> Option<MaterializedView> {
+        let key = format!("{}.{}", db_name, name);
+        self.materialized_views.get(&key).map(|r| r.value().clone())
+    }
+
+    pub fn list_materialized_views(&self, db_name: &str) -> Vec<MaterializedView> {
+        let prefix = format!("{}.", db_name);
+        self.materialized_views.iter()
+            .filter(|r| r.key().starts_with(&prefix))
+            .map(|r| r.value().clone())
+            .collect()
+    }
+
+    pub fn all_materialized_views(&self) -> Vec<MaterializedView> {
+        self.materialized_views.iter().map(|r| r.value().clone()).collect()
+    }
+
     /// Serialize catalog state to JSON file
     pub fn save(&self) -> common::Result<()> {
         use tokio::fs;
@@ -104,6 +137,7 @@ impl CatalogManager {
         runtime.block_on(async {
             let catalog_state = CatalogState {
                 databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+                materialized_views: self.materialized_views.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
                 next_id: self.next_id.load(Ordering::Relaxed),
             };
             let json = serde_json::to_string(&catalog_state)
@@ -134,6 +168,9 @@ impl CatalogManager {
                 .map_err(|e| DrorisError::Internal(e.to_string()))?;
             for (key, value) in state.databases {
                 self.databases.insert(key, value);
+            }
+            for (key, value) in state.materialized_views {
+                self.materialized_views.insert(key, value);
             }
             self.next_id = AtomicU64::new(state.next_id);
             Ok(())
@@ -180,6 +217,7 @@ impl CatalogManager {
 #[derive(Debug, Serialize, Deserialize)]
 struct CatalogState {
     databases: HashMap<String, Database>,
+    materialized_views: HashMap<String, MaterializedView>,
     next_id: u64,
 }
 

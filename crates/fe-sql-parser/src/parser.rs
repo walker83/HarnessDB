@@ -2,6 +2,36 @@ use crate::ast::*;
 use crate::error::ParseError;
 
 pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let trimmed = sql.trim().to_uppercase();
+
+    if trimmed.starts_with("CREATE REPOSITORY") {
+        return parse_create_repository(sql);
+    }
+    if trimmed.starts_with("DROP REPOSITORY") {
+        return parse_drop_repository(sql);
+    }
+    if trimmed.starts_with("SHOW REPOSITORIES") {
+        return Ok(vec![Statement::ShowRepositories]);
+    }
+    if trimmed.starts_with("BACKUP DATABASE") {
+        return parse_backup_database(sql);
+    }
+    if trimmed.starts_with("RESTORE DATABASE") {
+        return parse_restore_database(sql);
+    }
+    if trimmed.starts_with("CREATE MATERIALIZED VIEW") {
+        return parse_create_materialized_view(sql);
+    }
+    if trimmed.starts_with("DROP MATERIALIZED VIEW") {
+        return parse_drop_materialized_view(sql);
+    }
+    if trimmed.starts_with("ALTER MATERIALIZED VIEW") {
+        return parse_alter_materialized_view(sql);
+    }
+    if trimmed.starts_with("REFRESH MATERIALIZED VIEW") {
+        return parse_refresh_materialized_view(sql);
+    }
+
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, sql)
         .map_err(|e| ParseError::SyntaxError {
@@ -13,6 +43,450 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .into_iter()
         .map(convert_statement)
         .collect()
+}
+
+fn parse_create_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE REPOSITORY")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE REPOSITORY".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let mut repo_type = RepositoryType::Local;
+    let mut properties = vec![];
+
+    if rest.starts_with("WITH") {
+        let after_with = rest.strip_prefix("WITH").unwrap().trim();
+        if after_with.starts_with("S3") || after_with.starts_with("s3") {
+            repo_type = RepositoryType::S3;
+            let after_s3 = after_with
+                .strip_prefix("S3")
+                .or_else(|| after_with.strip_prefix("s3"))
+                .unwrap_or("")
+                .trim();
+            properties = parse_properties(after_s3);
+        } else if after_with.starts_with("HDFS") || after_with.starts_with("hdfs") {
+            repo_type = RepositoryType::Hdfs;
+            let after_hdfs = after_with
+                .strip_prefix("HDFS")
+                .or_else(|| after_with.strip_prefix("hdfs"))
+                .unwrap_or("")
+                .trim();
+            properties = parse_properties(after_hdfs);
+        } else {
+            properties = parse_properties(after_with);
+        }
+    }
+
+    Ok(vec![Statement::CreateRepository(CreateRepositoryStmt {
+        name: name.to_string(),
+        repo_type,
+        properties,
+    })])
+}
+
+fn parse_drop_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP REPOSITORY")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP REPOSITORY".to_string(),
+        })?
+        .trim();
+
+    let if_exists = after_drop.starts_with("IF EXISTS");
+    let name_part = if if_exists {
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+
+    let (name, _) = extract_identifier(name_part)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    Ok(vec![Statement::DropRepository(DropRepositoryStmt {
+        name: name.to_string(),
+        if_exists,
+    })])
+}
+
+fn parse_backup_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_backup = sql.strip_prefix("BACKUP DATABASE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected BACKUP DATABASE".to_string(),
+        })?
+        .trim();
+
+    let (database, rest) = extract_identifier(after_backup)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("TO")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected TO".to_string(),
+        })?
+        .trim();
+
+    let (repository, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let backup_name = if rest.starts_with("BACKUP") {
+        let after_backup = rest.strip_prefix("BACKUP").unwrap().trim();
+        let (name, _) = extract_identifier(after_backup)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected backup name".to_string(),
+            })?;
+        name.to_string()
+    } else {
+        format!("{}_{}", database, chrono_lite_timestamp())
+    };
+
+    let properties = parse_properties(rest);
+
+    Ok(vec![Statement::BackupDatabase(BackupDatabaseStmt {
+        database: database.to_string(),
+        repository: repository.to_string(),
+        backup_name,
+        properties,
+    })])
+}
+
+fn parse_restore_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_restore = sql.strip_prefix("RESTORE DATABASE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected RESTORE DATABASE".to_string(),
+        })?
+        .trim();
+
+    let (database, rest) = extract_identifier(after_restore)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("FROM")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected FROM".to_string(),
+        })?
+        .trim();
+
+    let (repository, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected repository name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("BACKUP")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected BACKUP".to_string(),
+        })?
+        .trim();
+
+    let (backup_name, _) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected backup name".to_string(),
+        })?;
+
+    Ok(vec![Statement::RestoreDatabase(RestoreDatabaseStmt {
+        database: database.to_string(),
+        repository: repository.to_string(),
+        backup_name: backup_name.to_string(),
+        properties: vec![],
+    })])
+}
+
+fn parse_create_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let if_not_exists = after_create.starts_with("IF NOT EXISTS");
+    let rest = if if_not_exists {
+        after_create.strip_prefix("IF NOT EXISTS").unwrap().trim()
+    } else {
+        after_create
+    };
+
+    let (name, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let mut columns = Vec::new();
+    let mut query = String::new();
+    let mut refresh = None;
+
+    if rest.starts_with('(') {
+        if let Some(end) = rest.find(')') {
+            let cols_str = &rest[1..end];
+            for col in cols_str.split(',') {
+                columns.push(col.trim().to_string());
+            }
+            query = rest[end + 1..].trim().to_string();
+        }
+    } else {
+        let as_pos = rest.to_uppercase().find(" AS ");
+        if let Some(pos) = as_pos {
+            let after_as = &rest[pos + 4..];
+            query = after_as.trim().to_string();
+        }
+    }
+
+    if query.to_uppercase().contains("REFRESH") {
+        let refresh_pos = query.to_uppercase().find("REFRESH").unwrap();
+        let before_refresh = query[..refresh_pos].trim();
+        if !before_refresh.is_empty() && before_refresh != "AS" {
+            query = before_refresh.to_string();
+        }
+        let refresh_start = query[refresh_pos..].find("COMPLETE")
+            .or_else(|| query[refresh_pos..].find("FAST"))
+            .map(|p| p + refresh_pos);
+
+        if let Some(pos) = refresh_start {
+            let refresh_str = &query[pos..];
+            if refresh_str.to_uppercase().starts_with("COMPLETE") {
+                refresh = Some(RefreshClause {
+                    r#type: RefreshType::Complete,
+                    concurrency: None,
+                });
+            } else if refresh_str.to_uppercase().starts_with("FAST") {
+                refresh = Some(RefreshClause {
+                    r#type: RefreshType::Fast,
+                    concurrency: None,
+                });
+            }
+        }
+    }
+
+    Ok(vec![Statement::CreateMaterializedView(CreateMaterializedViewStmt {
+        database,
+        name: view_name,
+        if_not_exists,
+        query: query.replace("AS ", "").replace("as ", "").trim().to_string(),
+        columns,
+        refresh,
+    })])
+}
+
+fn parse_drop_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let if_exists = after_drop.starts_with("IF EXISTS");
+    let rest = if if_exists {
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+
+    let (name, _) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    Ok(vec![Statement::DropMaterializedView(DropMaterializedViewStmt {
+        database,
+        name: view_name,
+        if_exists,
+    })])
+}
+
+fn parse_alter_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql.strip_prefix("ALTER MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let rest = rest.trim();
+    let operation = if rest.to_uppercase().starts_with("PAUSE REFRESH") {
+        AlterMaterializedViewOperation::PauseRefresh
+    } else if rest.to_uppercase().starts_with("RESUME REFRESH") {
+        AlterMaterializedViewOperation::ResumeRefresh
+    } else if rest.to_uppercase().starts_with("RENAME TO ") {
+        let new_name = rest.strip_prefix("RENAME TO ").unwrap().trim();
+        AlterMaterializedViewOperation::Rename(new_name.to_string())
+    } else {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: format!("Unknown ALTER MATERIALIZED VIEW operation: {}", rest),
+        });
+    };
+
+    Ok(vec![Statement::AlterMaterializedView(AlterMaterializedViewStmt {
+        database,
+        name: view_name,
+        operation,
+    })])
+}
+
+fn parse_refresh_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_refresh = sql.strip_prefix("REFRESH MATERIALIZED VIEW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected REFRESH MATERIALIZED VIEW".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_refresh)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected materialized view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let refresh_type = if rest.trim().to_uppercase().starts_with("COMPLETE") {
+        RefreshType::Complete
+    } else {
+        RefreshType::Fast
+    };
+
+    Ok(vec![Statement::RefreshMaterializedView(RefreshMaterializedViewStmt {
+        database,
+        name: view_name,
+        refresh_type,
+    })])
+}
+
+fn extract_identifier(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    if s.starts_with('"') || s.starts_with('\'') {
+        let quote = s.chars().next().unwrap();
+        let rest = &s[1..];
+        let end = rest.find(quote).unwrap_or(0);
+        let identifier = &rest[..end];
+        let remaining = &rest[end + 1..];
+        Some((identifier, remaining))
+    } else {
+        let end = s.find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(s.len());
+        if end == 0 {
+            return None;
+        }
+        let identifier = &s[..end];
+        let remaining = &s[end..];
+        Some((identifier, remaining))
+    }
+}
+
+fn parse_properties(s: &str) -> Vec<(String, String)> {
+    let s = s.trim();
+    if !s.starts_with("PROPERTIES") {
+        return vec![];
+    }
+
+    let props_str = s.strip_prefix("PROPERTIES").unwrap().trim();
+    if !props_str.starts_with('(') || !props_str.ends_with(')') {
+        return vec![];
+    }
+
+    let content = &props_str[1..props_str.len() - 1];
+    let mut props = vec![];
+
+    for pair in content.split(',') {
+        let pair = pair.trim();
+        if let Some((key, value)) = pair.split_once('=') {
+            let key = key.trim().trim_matches('"').trim_matches('\'');
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            props.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    props
+}
+
+fn chrono_lite_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}", duration.as_secs())
 }
 
 fn convert_statement(
