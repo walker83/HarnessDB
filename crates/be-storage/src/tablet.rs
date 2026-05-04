@@ -10,7 +10,7 @@ use crate::segment::{SegmentWriter, SegmentReader};
 use crate::index::ColumnPredicate;
 
 /// Tablet column definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TabletColumn {
     pub name: String,
     pub data_type: DataType,
@@ -20,7 +20,7 @@ pub struct TabletColumn {
 }
 
 /// Tablet schema definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TabletSchema {
     pub tablet_id: u64,
     pub columns: Vec<TabletColumn>,

@@ -58,13 +58,11 @@ pub enum PlanNodeType {
 
 #[derive(Debug, Clone)]
 pub struct ScanNode {
+    pub catalog: Option<String>,
     pub table_name: String,
     pub database: Option<String>,
-    /// Columns to project out of the scan (column pruning).
     pub columns: Vec<String>,
-    /// Push-down predicates that the scan can evaluate directly.
     pub predicates: Vec<String>,
-    /// Limit pushed into the scan (early termination).
     pub limit: Option<usize>,
 }
 

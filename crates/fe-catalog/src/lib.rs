@@ -10,6 +10,7 @@ pub mod table;
 
 pub use catalog::CatalogManager;
 pub use database::Database;
-pub use external::{Catalog, CatalogType, ColumnInfo, DatabaseInfo, FileFormat, InternalCatalog, TableInfo};
+pub use external::{Catalog, CatalogCache, CatalogType, ColumnInfo, DatabaseInfo, FileFormat, InternalCatalog, TableInfo};
+pub use external::iceberg::IcebergCatalog;
 pub use materialized_view::{MaterializedView, MaterializedViewColumn, RefreshStrategy};
 pub use table::Table;
