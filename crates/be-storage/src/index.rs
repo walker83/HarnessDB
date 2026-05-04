@@ -819,4 +819,115 @@ mod tests {
         // May have false positives but should be rare
         assert!(!bf.may_contain(b"xyzzy_not_present_at_all"));
     }
+
+    #[test]
+    fn test_bitmap_index_low_cardinality() {
+        let values = vec![
+            ScalarValue::String("a".to_string()),
+            ScalarValue::String("b".to_string()),
+            ScalarValue::String("a".to_string()),
+            ScalarValue::String("c".to_string()),
+            ScalarValue::Null,
+            ScalarValue::String("b".to_string()),
+        ];
+        let idx = BitmapIndex::build(&values, 100).unwrap();
+        assert!(idx.is_valid());
+        assert_eq!(idx.num_values(), 3);
+    }
+
+    #[test]
+    fn test_bitmap_index_high_cardinality() {
+        let values: Vec<ScalarValue> = (0..2000).map(|i| ScalarValue::Int64(i)).collect();
+        let idx = BitmapIndex::build(&values, 1000);
+        assert!(idx.is_none(), "Should reject high-cardinality columns");
+    }
+
+    #[test]
+    fn test_inverted_index_basic() {
+        let values = vec![
+            ScalarValue::String("hello world".to_string()),
+            ScalarValue::String("world of databases".to_string()),
+            ScalarValue::String("hello rust".to_string()),
+        ];
+        let idx = InvertedIndex::build(&values);
+        assert_eq!(idx.num_terms(), 5); // hello, world, of, databases, rust
+        let results = idx.search_term("hello");
+        assert!(results.is_some());
+        assert_eq!(results.unwrap(), &[0u32, 2]);
+    }
+
+    #[test]
+    fn test_inverted_index_search_all() {
+        let values = vec![
+            ScalarValue::String("hello world rust".to_string()),
+            ScalarValue::String("hello world".to_string()),
+            ScalarValue::String("hello rust".to_string()),
+        ];
+        let idx = InvertedIndex::build(&values);
+        let terms = vec!["hello".to_string(), "world".to_string()];
+        let results = idx.search_all(&terms);
+        assert_eq!(results, vec![0u32, 1]);
+    }
+
+    #[test]
+    fn test_ann_index_exact_search() {
+        let values = vec![
+            ScalarValue::Float32Array(vec![1.0, 0.0]),
+            ScalarValue::Float32Array(vec![0.0, 1.0]),
+            ScalarValue::Float32Array(vec![0.5, 0.5]),
+        ];
+        let idx = ANNIndex::build(&values, 2).unwrap();
+        assert_eq!(idx.num_vectors(), 3);
+
+        // Search for nearest neighbor of [1.0, 0.0] - should be [1.0, 0.0] itself
+        let results = idx.search(&[1.0, 0.0], 2);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, 0);
+        assert!(results[0].1 < 0.01);
+    }
+
+    #[test]
+    fn test_ann_index_radius_search() {
+        let values = vec![
+            ScalarValue::Float32Array(vec![0.0, 0.0]),
+            ScalarValue::Float32Array(vec![10.0, 10.0]),
+            ScalarValue::Float32Array(vec![0.1, 0.1]),
+        ];
+        let idx = ANNIndex::build(&values, 2).unwrap();
+        let results = idx.search_radius(&[0.0, 0.0], 1.0);
+        assert_eq!(results.len(), 2); // [0,0] and [0.1,0.1] are within radius 1
+    }
+
+    #[test]
+    fn test_predicate_op_in() {
+        let val = ScalarValue::Int64(5);
+        let values = vec![ScalarValue::Int64(3), ScalarValue::Int64(5), ScalarValue::Int64(7)];
+        assert!(eval_predicate_with_values(&PredicateOp::In, &val, &ScalarValue::Null, &values));
+        let val2 = ScalarValue::Int64(10);
+        assert!(!eval_predicate_with_values(&PredicateOp::In, &val2, &ScalarValue::Null, &values));
+    }
+
+    #[test]
+    fn test_predicate_op_like() {
+        let val = ScalarValue::String("hello world".to_string());
+
+        // Starts with
+        assert!(eval_predicate_with_values(&PredicateOp::Like, &val, &ScalarValue::String("hello%".to_string()), &[]));
+        // Ends with
+        assert!(eval_predicate_with_values(&PredicateOp::Like, &val, &ScalarValue::String("%world".to_string()), &[]));
+        // Contains
+        assert!(eval_predicate_with_values(&PredicateOp::Like, &val, &ScalarValue::String("%llo w%".to_string()), &[]));
+        // Not match
+        assert!(!eval_predicate_with_values(&PredicateOp::Like, &val, &ScalarValue::String("xyz%".to_string()), &[]));
+    }
+
+    #[test]
+    fn test_predicate_op_between() {
+        let val = ScalarValue::Int64(50);
+        let low = ScalarValue::Int64(10);
+        let high = ScalarValue::Int64(100);
+        assert!(eval_predicate_with_values(&PredicateOp::Between, &val, &low, &[high.clone()]));
+        let val2 = ScalarValue::Int64(5);
+        assert!(!eval_predicate_with_values(&PredicateOp::Between, &val2, &low, &[high]));
+    }
 }
