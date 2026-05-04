@@ -79,7 +79,13 @@ impl Bitmap {
     }
 
     pub fn set_count(&self) -> usize {
-        self.data.iter().map(|w| w.count_ones() as usize).sum::<usize>()
+        let mut count = 0usize;
+        for chunk in self.data.chunks(8) {
+            for word in chunk {
+                count += word.count_ones() as usize;
+            }
+        }
+        count
     }
 
     pub fn is_valid(&self, idx: usize) -> bool {
@@ -217,11 +223,12 @@ impl BitAnd for &Bitmap {
         let len = self.len.min(rhs.len);
         let words = (len + 63) / 64;
         let mut data = Vec::with_capacity(words);
-        for i in 0..words {
-            let left = if i < self.data.len() { self.data[i] } else { 0 };
-            let right = if i < rhs.data.len() { rhs.data[i] } else { 0 };
-            data.push(left & right);
+        
+        let min_len = self.data.len().min(rhs.data.len());
+        for i in 0..min_len {
+            data.push(self.data[i] & rhs.data[i]);
         }
+        
         Bitmap { data, len }
     }
 }
@@ -232,11 +239,14 @@ impl BitOr for &Bitmap {
         let len = self.len.max(rhs.len);
         let words = (len + 63) / 64;
         let mut data = Vec::with_capacity(words);
-        for i in 0..words {
-            let left = if i < self.data.len() { self.data[i] } else { 0 };
-            let right = if i < rhs.data.len() { rhs.data[i] } else { 0 };
+        
+        let max_len = self.data.len().max(rhs.data.len());
+        for i in 0..max_len {
+            let left = self.data.get(i).copied().unwrap_or(0);
+            let right = rhs.data.get(i).copied().unwrap_or(0);
             data.push(left | right);
         }
+        
         Bitmap { data, len }
     }
 }
@@ -246,10 +256,12 @@ impl Not for &Bitmap {
     fn not(self) -> Bitmap {
         let words = (self.len + 63) / 64;
         let mut data = Vec::with_capacity(words);
+        
         for i in 0..words {
-            let word = if i < self.data.len() { self.data[i] } else { 0 };
+            let word = self.data.get(i).copied().unwrap_or(0);
             data.push(!word);
         }
+        
         if self.len % 64 != 0 && !data.is_empty() {
             if let Some(last) = data.last_mut() {
                 *last &= (1u64 << (self.len % 64)) - 1;

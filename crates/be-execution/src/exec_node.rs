@@ -162,6 +162,17 @@ pub struct AggregateExecNode {
 }
 
 impl AggregateExecNode {
+    fn compute_aggregate_batch(col: &Vector, func: &str) -> ScalarValue {
+        match func {
+            "count" => ScalarValue::Int64(col.count_batch() as i64),
+            "sum" => col.sum_batch().unwrap_or(ScalarValue::Null),
+            "min" => col.min_batch().unwrap_or(ScalarValue::Null),
+            "max" => col.max_batch().unwrap_or(ScalarValue::Null),
+            "avg" => col.avg_batch().unwrap_or(ScalarValue::Null),
+            _ => ScalarValue::Null,
+        }
+    }
+
     fn compute_aggregate(values: &[ScalarValue], func: &str) -> ScalarValue {
         match func {
             "count" => ScalarValue::Int64(values.len() as i64),
@@ -253,15 +264,10 @@ impl ExecNode for AggregateExecNode {
             let mut result_columns: Vec<Vector> = Vec::new();
             let mut result_schema_fields: Vec<types::Field> = Vec::new();
 
-            // Compute aggregates
             for (func, col_idx) in &self.aggregates {
                 if *col_idx < block.num_columns() {
                     if let Some(col) = block.column(*col_idx) {
-                        let values: Vec<ScalarValue> = (0..block.num_rows())
-                            .map(|i| col.scalar_at(i))
-                            .collect();
-                        let agg_value = Self::compute_aggregate(&values, func);
-                        // Create single-value column
+                        let agg_value = Self::compute_aggregate_batch(col, func);
                         let vector = match agg_value {
                             ScalarValue::Int64(v) => Vector::Int64(types::vector::Int64Vector::from_vec(vec![v])),
                             ScalarValue::Float64(v) => Vector::Float64(types::vector::Float64Vector::from_vec(vec![v])),
@@ -312,14 +318,12 @@ impl ExecNode for AggregateExecNode {
         for (_group_key, group_rows) in &groups {
             let mut result_row = Vec::new();
 
-            // Add group by columns (first row's values)
             if !group_rows.is_empty() {
                 for &col_idx in &self.group_by {
                     result_row.push(group_rows[0].get(col_idx).cloned().unwrap_or(ScalarValue::Null));
                 }
             }
 
-            // Compute aggregates
             for (func, col_idx) in &self.aggregates {
                 let values: Vec<ScalarValue> = group_rows.iter()
                     .filter_map(|row| row.get(*col_idx).cloned())
@@ -446,30 +450,13 @@ impl ExecNode for SortExecNode {
         // Multi-key comparator function
         let order_by = self.order_by.clone();
         let cmp_block = &block;
-        indices.sort_by(|&a, &b| {
+        indices.sort_unstable_by(|&a, &b| {
             for &(col_idx, ascending) in &order_by {
                 if col_idx >= cmp_block.num_columns() {
                     continue;
                 }
                 if let Some(col) = cmp_block.column(col_idx) {
-                    let scalar_a = col.scalar_at(a);
-                    let scalar_b = col.scalar_at(b);
-                    // Compare scalars
-                    let ord = match (scalar_a, scalar_b) {
-                        (ScalarValue::Int64(va), ScalarValue::Int64(vb)) => {
-                            va.cmp(&vb)
-                        }
-                        (ScalarValue::Int32(va), ScalarValue::Int32(vb)) => {
-                            va.cmp(&vb)
-                        }
-                        (ScalarValue::Float64(va), ScalarValue::Float64(vb)) => {
-                            va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
-                        }
-                        (ScalarValue::String(va), ScalarValue::String(vb)) => {
-                            va.cmp(&vb)
-                        }
-                        _ => std::cmp::Ordering::Equal,
-                    };
+                    let ord = col.compare_at(a, b);
                     let ord = if ascending { ord } else { ord.reverse() };
                     if ord != std::cmp::Ordering::Equal {
                         return ord;
