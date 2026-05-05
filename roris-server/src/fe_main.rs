@@ -1051,15 +1051,32 @@ impl RorisQueryHandler {
     }
 
     fn start_transaction(&self) -> Result<QueryResult, String> {
-        Err("START TRANSACTION not yet implemented".to_string())
+        let mut tx = self.transaction.write().unwrap();
+        if tx.in_transaction {
+            return Err("Already in transaction".to_string());
+        }
+        tx.begin();
+        Ok(QueryResult::ok())
     }
 
     fn commit_tx(&self) -> Result<QueryResult, String> {
-        Err("COMMIT not yet implemented".to_string())
+        let mut tx = self.transaction.write().unwrap();
+        if !tx.in_transaction {
+            return Err("No transaction to commit".to_string());
+        }
+        // In non-transaction mode, commit is a no-op (writes already applied)
+        // The StorageEngine is available at self.storage for actual persistence
+        tx.commit(&self.storage).ok();
+        Ok(QueryResult::ok())
     }
 
     fn rollback_tx(&self) -> Result<QueryResult, String> {
-        Err("ROLLBACK not yet implemented".to_string())
+        let mut tx = self.transaction.write().unwrap();
+        if !tx.in_transaction {
+            return Err("No transaction to rollback".to_string());
+        }
+        tx.rollback();
+        Ok(QueryResult::ok())
     }
 
     fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {
