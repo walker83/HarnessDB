@@ -42,6 +42,11 @@ pub enum Statement {
     DropView(DropViewStmt),
     AlterView(AlterViewStmt),
     ShowCreateView(String, String),
+    // Batch 2 DDL additions
+    CreateIndex(CreateIndexStmt),
+    DropIndex(DropIndexStmt),
+    CancelAlterTable(CancelAlterTableStmt),
+    AlterColocateGroup(AlterColocateGroupStmt),
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +221,12 @@ pub enum AlterOperation {
     RenameColumn { old_name: String, new_name: String },
     SetComment(String),
     SetProperty(Vec<(String, String)>),
+    AddPartition { partition_name: String, values_less_than: Vec<String>, properties: Vec<(String, String)> },
+    DropPartition { partition_name: String, if_exists: bool, force: bool },
+    AddRollup { rollup_name: String, columns: Vec<String>, properties: Vec<(String, String)> },
+    DropRollup { rollup_name: String, if_exists: bool },
+    Replace { old_table: String, swap: bool, properties: Vec<(String, String)> },
+    AddGeneratedColumn(ColumnDef),
 }
 
 #[derive(Debug, Clone)]
@@ -422,4 +433,43 @@ pub struct AlterViewStmt {
     pub database: Option<String>,
     pub name: String,
     pub query: String,
+}
+
+// Batch 2: DDL statement types
+
+#[derive(Debug, Clone)]
+pub struct CreateIndexStmt {
+    pub index_name: String,
+    pub database: Option<String>,
+    pub table: String,
+    pub columns: Vec<String>,
+    pub index_type: Option<String>,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropIndexStmt {
+    pub index_name: String,
+    pub database: Option<String>,
+    pub table: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CancelAlterTableStmt {
+    pub database: Option<String>,
+    pub table: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterColocateGroupStmt {
+    pub group_name: String,
+    pub operation: ColocateGroupOperation,
+}
+
+#[derive(Debug, Clone)]
+pub enum ColocateGroupOperation {
+    AddTable { database: Option<String>, table: String },
+    RemoveTable { database: Option<String>, table: String },
+    SetProperty(Vec<(String, String)>),
 }

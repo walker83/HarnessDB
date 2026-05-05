@@ -86,10 +86,33 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         return parse_show_create_view(sql);
     }
 
+    // Batch 2: CREATE INDEX, DROP INDEX, CANCEL ALTER TABLE, ALTER COLOCATE GROUP
+    if trimmed.starts_with("CREATE INDEX") {
+        return parse_create_index(sql);
+    }
+    if trimmed.starts_with("DROP INDEX") {
+        return parse_drop_index(sql);
+    }
+    if trimmed.starts_with("CANCEL ALTER TABLE") {
+        return parse_cancel_alter_table(sql);
+    }
+    if trimmed.starts_with("ALTER COLOCATE GROUP") {
+        return parse_alter_colocate_group(sql);
+    }
+
     // Doris-specific ALTER TABLE operations that sqlparser doesn't handle
     if trimmed.starts_with("ALTER TABLE") {
         let upper = trimmed.clone();
-        if upper.contains("RENAME COLUMN") || upper.contains("SET PROPERTIES") || upper.contains("COMMENT") {
+        if upper.contains("RENAME COLUMN")
+            || upper.contains("SET PROPERTIES")
+            || upper.contains("COMMENT")
+            || upper.contains("ADD PARTITION")
+            || upper.contains("DROP PARTITION")
+            || upper.contains("ADD ROLLUP")
+            || upper.contains("DROP ROLLUP")
+            || upper.contains("REPLACE WITH")
+            || upper.contains("ADD GENERATED COLUMN")
+        {
             return parse_alter_table_doris(sql);
         }
     }
@@ -1697,6 +1720,157 @@ fn parse_alter_table_doris(sql: &str) -> Result<Vec<Statement>, ParseError> {
             old_name: old_name.to_string(),
             new_name: new_name.to_string(),
         }
+    } else if rest_upper.starts_with("ADD PARTITION") {
+        let after_add = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let (partition_name, remaining) = extract_identifier(after_add)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected partition name".to_string(),
+            })?;
+        let remaining = remaining.trim();
+        let mut values_less_than = vec![];
+        let mut properties = vec![];
+        let remaining_upper = remaining.to_uppercase();
+        if remaining_upper.starts_with("VALUES LESS THAN") {
+            let after_vals = remaining.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+                .trim();
+            if after_vals.starts_with('(') {
+                if let Some(end_paren) = after_vals.find(')') {
+                    let vals_str = &after_vals[1..end_paren];
+                    values_less_than = vals_str.split(',')
+                        .map(|v| v.trim().trim_matches('\'').trim_matches('"').to_string())
+                        .collect();
+                    let after_paren = after_vals[end_paren + 1..].trim();
+                    if after_paren.to_uppercase().starts_with("PROPERTIES") {
+                        properties = parse_properties(&format!("PROPERTIES {}", after_paren.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim()));
+                    }
+                }
+            }
+        }
+        AlterOperation::AddPartition {
+            partition_name: partition_name.to_string(),
+            values_less_than,
+            properties,
+        }
+    } else if rest_upper.starts_with("DROP PARTITION") {
+        let after_drop = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let if_exists = after_drop.to_uppercase().starts_with("IF EXISTS");
+        let name_part = if if_exists {
+            after_drop.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim()
+        } else {
+            after_drop
+        };
+        let (partition_name, remaining) = extract_identifier(name_part)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected partition name".to_string(),
+            })?;
+        let force = remaining.trim().to_uppercase() == "FORCE";
+        AlterOperation::DropPartition {
+            partition_name: partition_name.to_string(),
+            if_exists,
+            force,
+        }
+    } else if rest_upper.starts_with("ADD ROLLUP") {
+        let after_add = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let (rollup_name, remaining) = extract_identifier(after_add)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected rollup name".to_string(),
+            })?;
+        let remaining = remaining.trim();
+        let mut columns = vec![];
+        let mut properties = vec![];
+        if remaining.starts_with('(') {
+            if let Some(end_paren) = remaining.find(')') {
+                let cols_str = &remaining[1..end_paren];
+                columns = cols_str.split(',')
+                    .map(|c| c.trim().to_string())
+                    .collect();
+                let after_paren = remaining[end_paren + 1..].trim();
+                if after_paren.to_uppercase().starts_with("PROPERTIES") {
+                    properties = parse_properties(&format!("PROPERTIES {}", after_paren.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim()));
+                }
+            }
+        }
+        AlterOperation::AddRollup {
+            rollup_name: rollup_name.to_string(),
+            columns,
+            properties,
+        }
+    } else if rest_upper.starts_with("DROP ROLLUP") {
+        let after_drop = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let if_exists = after_drop.to_uppercase().starts_with("IF EXISTS");
+        let name_part = if if_exists {
+            after_drop.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim()
+        } else {
+            after_drop
+        };
+        let (rollup_name, _) = extract_identifier(name_part)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected rollup name".to_string(),
+            })?;
+        AlterOperation::DropRollup {
+            rollup_name: rollup_name.to_string(),
+            if_exists,
+        }
+    } else if rest_upper.starts_with("REPLACE WITH") {
+        let after_replace = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let remaining_upper = after_replace.to_uppercase();
+        let after_table = if remaining_upper.starts_with("TABLE") {
+            after_replace.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim()
+        } else {
+            after_replace
+        };
+        let (old_table, remaining) = extract_identifier(after_table)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected table name after REPLACE WITH TABLE".to_string(),
+            })?;
+        let swap = remaining.trim().to_uppercase().starts_with("SWAP");
+        let properties = if remaining.to_uppercase().contains("PROPERTIES") {
+            let prop_start = remaining.to_uppercase().find("PROPERTIES").unwrap();
+            parse_properties(&remaining[prop_start..])
+        } else {
+            vec![]
+        };
+        AlterOperation::Replace {
+            old_table: old_table.to_string(),
+            swap,
+            properties,
+        }
+    } else if rest_upper.starts_with("ADD GENERATED COLUMN") {
+        let after_add = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let (col_name, remaining) = extract_identifier(after_add)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected column name".to_string(),
+            })?;
+        let remaining = remaining.trim();
+        let (data_type, remaining) = extract_identifier(remaining)
+            .map(|(dt, r)| (dt.to_string(), r))
+            .unwrap_or_else(|| ("STRING".to_string(), ""));
+        let comment = if remaining.trim().to_uppercase().starts_with("COMMENT") {
+            let comment_part = remaining.trim().trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
+            comment_part.trim_matches('\'').trim_matches('"').to_string()
+        } else {
+            String::new()
+        };
+        AlterOperation::AddGeneratedColumn(ColumnDef {
+            name: col_name.to_string(),
+            data_type,
+            nullable: true,
+            default_value: None,
+            agg_type: None,
+            comment: if comment.is_empty() { None } else { Some(comment) },
+        })
     } else if rest_upper.starts_with("COMMENT") {
         let comment_part = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
             .trim();
@@ -1718,5 +1892,240 @@ fn parse_alter_table_doris(sql: &str) -> Result<Vec<Statement>, ParseError> {
         database,
         table: table_name,
         operations: vec![operation],
+    })])
+}
+
+// ---- Batch 2: New statement parsers ----
+
+fn parse_create_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql
+        .strip_prefix("CREATE INDEX")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE INDEX".to_string(),
+        })?
+        .trim();
+
+    let (index_name, rest) = extract_identifier(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected index name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("ON")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ON".to_string(),
+        })?
+        .trim();
+
+    let (table_name, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+
+    let name_str = table_name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, table) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let rest = rest.trim();
+    let mut columns = vec![];
+    let mut index_type = None;
+    let mut properties = vec![];
+
+    // Extract columns from (col1, col2, ...)
+    if rest.starts_with('(') {
+        if let Some(end_paren) = rest.find(')') {
+            let cols_str = &rest[1..end_paren];
+            columns = cols_str.split(',')
+                .map(|c| c.trim().to_string())
+                .collect();
+            let after_paren = rest[end_paren + 1..].trim();
+
+            // Check for USING BITMAP / USING INVERTED / etc.
+            let after_upper = after_paren.to_uppercase();
+            if after_upper.starts_with("USING") {
+                let after_using = after_paren.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
+                let (itype, remaining) = extract_identifier(after_using)
+                    .map(|(t, r)| (Some(t.to_string()), r))
+                    .unwrap_or((None, ""));
+                index_type = itype;
+                if remaining.trim().to_uppercase().starts_with("PROPERTIES") {
+                    properties = parse_properties(remaining.trim());
+                }
+            } else if after_upper.starts_with("PROPERTIES") {
+                properties = parse_properties(after_paren);
+            }
+        }
+    }
+
+    Ok(vec![Statement::CreateIndex(CreateIndexStmt {
+        index_name: index_name.to_string(),
+        database,
+        table,
+        columns,
+        index_type,
+        properties,
+    })])
+}
+
+fn parse_drop_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql
+        .strip_prefix("DROP INDEX")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP INDEX".to_string(),
+        })?
+        .trim();
+
+    let if_exists = after_drop.to_uppercase().starts_with("IF EXISTS");
+    let rest = if if_exists {
+        after_drop.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim()
+    } else {
+        after_drop
+    };
+
+    let (index_name, rest) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected index name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("ON")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ON".to_string(),
+        })?
+        .trim();
+
+    let (table_name, _) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+
+    let name_str = table_name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, table) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    Ok(vec![Statement::DropIndex(DropIndexStmt {
+        index_name: index_name.to_string(),
+        database,
+        table,
+        if_exists,
+    })])
+}
+
+fn parse_cancel_alter_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_cancel = sql
+        .strip_prefix("CANCEL ALTER TABLE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CANCEL ALTER TABLE".to_string(),
+        })?
+        .trim();
+
+    // Handle optional FROM db clause
+    let (database, rest) = if after_cancel.to_uppercase().starts_with("FROM") {
+        let after_from = after_cancel.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
+        let (db, remaining) = extract_identifier(after_from)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected database name".to_string(),
+            })?;
+        (Some(db.to_string()), remaining.trim())
+    } else {
+        (None, after_cancel)
+    };
+
+    let (table_name, _) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+
+    Ok(vec![Statement::CancelAlterTable(CancelAlterTableStmt {
+        database,
+        table: table_name.to_string(),
+    })])
+}
+
+fn parse_alter_colocate_group(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql
+        .strip_prefix("ALTER COLOCATE GROUP")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER COLOCATE GROUP".to_string(),
+        })?
+        .trim();
+
+    let (group_name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected group name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let rest_upper = rest.to_uppercase();
+
+    let operation = if rest_upper.starts_with("ADD TABLE") {
+        let after_add = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
+        let (table_name, _) = extract_identifier(after_add)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected table name".to_string(),
+            })?;
+        let name_str = table_name.to_string();
+        let parts: Vec<&str> = name_str.split('.').collect();
+        let (database, table) = if parts.len() == 2 {
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (None, name_str)
+        };
+        ColocateGroupOperation::AddTable { database, table }
+    } else if rest_upper.starts_with("REMOVE TABLE") {
+        let after_remove = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
+        let (table_name, _) = extract_identifier(after_remove)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected table name".to_string(),
+            })?;
+        let name_str = table_name.to_string();
+        let parts: Vec<&str> = name_str.split('.').collect();
+        let (database, table) = if parts.len() == 2 {
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (None, name_str)
+        };
+        ColocateGroupOperation::RemoveTable { database, table }
+    } else if rest_upper.starts_with("SET PROPERTIES") {
+        let after_set = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
+        let props = parse_properties(&format!("PROPERTIES {}", after_set));
+        ColocateGroupOperation::SetProperty(props)
+    } else {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: format!("Unknown ALTER COLOCATE GROUP operation: {}", rest),
+        });
+    };
+
+    Ok(vec![Statement::AlterColocateGroup(AlterColocateGroupStmt {
+        group_name: group_name.to_string(),
+        operation,
     })])
 }

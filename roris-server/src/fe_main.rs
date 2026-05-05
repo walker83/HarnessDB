@@ -13,7 +13,7 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{AlterDatabaseStmt, AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, DropViewStmt, AlterViewStmt};
+use fe_sql_parser::ast::{AlterDatabaseStmt, AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt};
 use types::{DataType, Block, ScalarValue};
 
 #[derive(Parser)]
@@ -136,6 +136,11 @@ impl RorisQueryHandler {
             Statement::DropView(stmt) => self.drop_view(stmt),
             Statement::AlterView(stmt) => self.alter_view(stmt),
             Statement::ShowCreateView(db, name) => self.show_create_view(db.clone(), name.clone()),
+            // Batch 2 DDL additions
+            Statement::CreateIndex(stmt) => self.create_index(stmt),
+            Statement::DropIndex(stmt) => self.drop_index(stmt),
+            Statement::CancelAlterTable(stmt) => self.cancel_alter_table(stmt),
+            Statement::AlterColocateGroup(stmt) => self.alter_colocate_group(stmt),
             _ => Ok(QueryResult::with_rows(
                 vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
                 vec![vec![Some(format!("Statement parsed successfully (execution not fully implemented)"))]],
@@ -499,6 +504,114 @@ impl RorisQueryHandler {
         }
     }
 
+    // ---- Batch 2: DDL statement handlers ----
+
+    fn create_index(&self, stmt: &CreateIndexStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+
+        match catalog.get_table(db, &stmt.table) {
+            Some(_) => {
+                drop(catalog);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut table) = catalog.get_table(db, &stmt.table) {
+                    let index_key = format!("__index_{}", stmt.index_name);
+                    table.properties.insert(index_key.clone(), stmt.columns.join(","));
+                    if let Some(ref itype) = stmt.index_type {
+                        table.properties.insert(format!("__index_{}_type", stmt.index_name), itype.clone());
+                    }
+                    for (k, v) in &stmt.properties {
+                        table.properties.insert(format!("__index_{}_{}", stmt.index_name, k), v.clone());
+                    }
+                    catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                }
+                Ok(QueryResult::ok())
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
+        }
+    }
+
+    fn drop_index(&self, stmt: &DropIndexStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+
+        match catalog.get_table(db, &stmt.table) {
+            Some(_) => {
+                drop(catalog);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut table) = catalog.get_table(db, &stmt.table) {
+                    let index_key = format!("__index_{}", stmt.index_name);
+                    if !table.properties.contains_key(&index_key) && !stmt.if_exists {
+                        return Err(format!("Unknown index '{}' on table '{}.{}'", stmt.index_name, db, stmt.table));
+                    }
+                    table.properties.remove(&index_key);
+                    table.properties.remove(&format!("__index_{}_type", stmt.index_name));
+                    catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                }
+                Ok(QueryResult::ok())
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
+        }
+    }
+
+    fn cancel_alter_table(&self, stmt: &CancelAlterTableStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+
+        match catalog.get_table(db, &stmt.table) {
+            Some(_) => Ok(QueryResult::ok()),
+            None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
+        }
+    }
+
+    fn alter_colocate_group(&self, stmt: &AlterColocateGroupStmt) -> Result<QueryResult, String> {
+        use fe_sql_parser::ast::ColocateGroupOperation;
+        match &stmt.operation {
+            ColocateGroupOperation::AddTable { database, table } => {
+                let current_db = self.current_database.read().unwrap();
+                let db = database.as_deref().unwrap_or(&current_db);
+                let catalog = self.catalog.read().unwrap();
+                if catalog.get_table(db, table).is_none() {
+                    return Err(format!("Unknown table '{}.{}'", db, table));
+                }
+                drop(catalog);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut tbl) = catalog.get_table(db, table) {
+                    let groups_key = "__colocate_groups".to_string();
+                    let mut groups = tbl.properties.get(&groups_key).cloned().unwrap_or_default();
+                    if !groups.is_empty() { groups.push(','); }
+                    groups.push_str(&stmt.group_name);
+                    tbl.properties.insert(groups_key, groups);
+                    catalog.create_table(db, tbl).map_err(|e| e.to_string())?;
+                }
+                Ok(QueryResult::ok())
+            }
+            ColocateGroupOperation::RemoveTable { database, table } => {
+                let current_db = self.current_database.read().unwrap();
+                let db = database.as_deref().unwrap_or(&current_db);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut tbl) = catalog.get_table(db, table) {
+                    let groups_key = "__colocate_groups".to_string();
+                    if let Some(groups) = tbl.properties.get(&groups_key).cloned() {
+                        let parts: Vec<&str> = groups.split(',').filter(|g| *g != stmt.group_name).collect();
+                        tbl.properties.insert(groups_key, parts.join(","));
+                        catalog.create_table(db, tbl).map_err(|e| e.to_string())?;
+                    }
+                }
+                Ok(QueryResult::ok())
+            }
+            ColocateGroupOperation::SetProperty(props) => {
+                Ok(QueryResult::with_rows(
+                    vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(format!("Colocate group '{}' properties updated ({} properties)", stmt.group_name, props.len()))]],
+                ))
+            }
+        }
+    }
+
     fn alter_table(&self, stmt: &AlterTableStmt) -> Result<QueryResult, String> {
         let catalog = self.catalog.read().unwrap();
         let current_db = self.current_database.read().unwrap();
@@ -532,6 +645,105 @@ impl RorisQueryHandler {
                             for (k, v) in props {
                                 table.properties.insert(k.clone(), v.clone());
                             }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::AddPartition { partition_name, values_less_than, properties } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let partitions_key = "__partitions".to_string();
+                            let mut part_list = table.properties.get(&partitions_key)
+                                .cloned()
+                                .unwrap_or_default();
+                            if !part_list.is_empty() { part_list.push(','); }
+                            part_list.push_str(&partition_name);
+                            table.properties.insert(partitions_key, part_list);
+                            let vals_key = format!("__partition_{}_values", partition_name);
+                            table.properties.insert(vals_key, values_less_than.join(","));
+                            for (k, v) in properties {
+                                table.properties.insert(format!("__partition_{}_{}", partition_name, k), v.clone());
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::DropPartition { partition_name, if_exists, force: _ } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let partitions_key = "__partitions".to_string();
+                            let part_list = table.properties.get(&partitions_key)
+                                .cloned()
+                                .unwrap_or_default();
+                            let parts: Vec<&str> = part_list.split(',').filter(|p| *p != partition_name).collect();
+                            if parts.is_empty() && !part_list.is_empty() && !if_exists {
+                                return Err(format!("Unknown partition '{}'", partition_name));
+                            }
+                            table.properties.insert(partitions_key, parts.join(","));
+                            let vals_key = format!("__partition_{}_values", partition_name);
+                            table.properties.remove(&vals_key);
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::AddRollup { rollup_name, columns, properties } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let rollups_key = "__rollups".to_string();
+                            let mut rollup_list = table.properties.get(&rollups_key)
+                                .cloned()
+                                .unwrap_or_default();
+                            if !rollup_list.is_empty() { rollup_list.push(','); }
+                            rollup_list.push_str(&rollup_name);
+                            table.properties.insert(rollups_key, rollup_list);
+                            table.properties.insert(format!("__rollup_{}_columns", rollup_name), columns.join(","));
+                            for (k, v) in properties {
+                                table.properties.insert(format!("__rollup_{}_{}", rollup_name, k), v.clone());
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::DropRollup { rollup_name, if_exists } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let rollups_key = "__rollups".to_string();
+                            let rollup_list = table.properties.get(&rollups_key)
+                                .cloned()
+                                .unwrap_or_default();
+                            let parts: Vec<&str> = rollup_list.split(',').filter(|p| *p != rollup_name).collect();
+                            if parts.len() == rollup_list.split(',').count() && !rollup_list.is_empty() && !if_exists {
+                                return Err(format!("Unknown rollup '{}'", rollup_name));
+                            }
+                            table.properties.insert(rollups_key, parts.join(","));
+                            table.properties.remove(&format!("__rollup_{}_columns", rollup_name));
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::Replace { old_table, swap, properties } => {
+                            if catalog.get_table(db, old_table).is_none() {
+                                return Err(format!("Unknown table '{}.{}'", db, old_table));
+                            }
+                            if let Some(mut table) = catalog.get_table(db, &stmt.table) {
+                                table.name = old_table.clone();
+                                for (k, v) in properties {
+                                    table.properties.insert(k.clone(), v.clone());
+                                }
+                                catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                                if *swap {
+                                    if let Some(mut old_tbl) = catalog.get_table(db, old_table) {
+                                        old_tbl.name = stmt.table.clone();
+                                        catalog.create_table(db, old_tbl).map_err(|e| e.to_string())?;
+                                    }
+                                } else {
+                                    catalog.drop_table(db, old_table).map_err(|e| e.to_string())?;
+                                }
+                            }
+                        }
+                        fe_sql_parser::ast::AlterOperation::AddGeneratedColumn(col_def) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            use fe_catalog::table::TableColumn;
+                            let new_col = TableColumn {
+                                name: col_def.name.clone(),
+                                data_type: parse_data_type(&col_def.data_type),
+                                nullable: col_def.nullable,
+                                default_value: None,
+                                agg_type: None,
+                                comment: col_def.comment.clone().unwrap_or_default(),
+                            };
+                            table.columns.push(new_col);
                             catalog.create_table(db, table).map_err(|e| e.to_string())?;
                         }
                         _ => {

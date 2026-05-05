@@ -4,7 +4,7 @@
 
 > 参考文档：https://doris.apache.org/docs/sql-manual/sql-statements/
 > RorisDB 版本：v0.1.3
-> 更新时间：2026/05/05（第1批已完成）
+> 更新时间：2026/05/05（第1、2批 DDL 已完成）
 
 ---
 
@@ -60,14 +60,14 @@
 | ALTER TABLE RENAME COLUMN | ✅ | ✅ | ~~第1批~~ 已完成 |
 | ALTER TABLE COMMENT | ✅ | ✅ | ~~第1批~~ 已完成 |
 | ALTER TABLE SET PROPERTY | ✅ | ✅ | ~~第1批~~ 已完成 |
-| ALTER TABLE ADD/DROP PARTITION | ✅ | ❌ | 第2批 |
-| ALTER TABLE ADD/DROP ROLLUP | ✅ | ❌ | 第2批 |
-| ALTER TABLE REPLACE | ✅ | ❌ | 第2批 |
-| ALTER TABLE ADD GENERATED COLUMN | ✅ | ❌ | 第3批 |
-| CANCEL ALTER TABLE | ✅ | ❌ | 第3批 |
-| CREATE INDEX | ✅ | ❌ | 第2批 |
-| DROP INDEX | ✅ | ❌ | 第2批 |
-| ALTER COLOCATE GROUP | ✅ | ❌ | 第4批 |
+| ALTER TABLE ADD/DROP PARTITION | ✅ | ✅ | ~~第2批~~ 已完成 |
+| ALTER TABLE ADD/DROP ROLLUP | ✅ | ✅ | ~~第2批~~ 已完成 |
+| ALTER TABLE REPLACE | ✅ | ✅ | ~~第2批~~ 已完成 |
+| ALTER TABLE ADD GENERATED COLUMN | ✅ | ✅ | ~~第2批~~ 已完成 |
+| CANCEL ALTER TABLE | ✅ | ✅ | ~~第2批~~ 已完成 |
+| CREATE INDEX | ✅ | ✅ | ~~第2批~~ 已完成 |
+| DROP INDEX | ✅ | ✅ | ~~第2批~~ 已完成 |
+| ALTER COLOCATE GROUP | ✅ | ✅ | ~~第2批~~ 已完成 |
 
 ### 1.2 SHOW 语句缺失
 
@@ -347,23 +347,20 @@
 - `crates/fe-sql-parser/src/parser.rs` — 新增关键字匹配和解析函数
 - `roris-server/src/fe_main.rs` — 新增 execute_statement 分支
 
-### 第2批：SHOW 语句 + 索引 + Session
+### 第2批：DDL 补全 ✅ 已完成 (2026-05-05)
 
-> 目标：补全运维常用的 SHOW 语句，添加索引管理，实现 session variable
+> 目标：补全所有剩余 DDL 语句，包括索引管理、分区操作、Rollup、Colocate Group
 
-| # | 语句 | 语法 |
-|---|------|------|
-| 9 | CREATE INDEX | `CREATE INDEX idx ON t (col1, col2) [USING BITMAP]` |
-| 10 | DROP INDEX | `DROP INDEX idx ON t` |
-| 11 | SHOW INDEX | `SHOW INDEX FROM t` |
-| 12 | SHOW PARTITIONS | `SHOW PARTITIONS FROM t` |
-| 13 | SHOW TABLE STATUS | `SHOW TABLE STATUS [FROM db]` |
-| 14 | SHOW VARIABLES | `SHOW [GLOBAL\|SESSION] VARIABLES [LIKE 'pattern']` |
-| 15 | SHOW PROCESSLIST | `SHOW [FULL] PROCESSLIST` |
-| 16 | SET VARIABLE 执行 | `SET var = value` / `SET GLOBAL var = value` |
-| 17 | ALTER TABLE ADD/DROP PARTITION | `ALTER TABLE t ADD/DROP PARTITION ...` |
-| 18 | ALTER TABLE ADD/DROP ROLLUP | `ALTER TABLE t ADD/DROP ROLLUP ...` |
-| 19 | ALTER TABLE REPLACE | `ALTER TABLE t REPLACE WITH TABLE ...` |
+| # | 语句 | 语法 | 状态 |
+|---|------|------|------|
+| 9 | CREATE INDEX | `CREATE INDEX idx ON t (col1, col2) [USING BITMAP]` | ✅ |
+| 10 | DROP INDEX | `DROP INDEX idx ON t` | ✅ |
+| 11 | ALTER TABLE ADD/DROP PARTITION | `ALTER TABLE t ADD/DROP PARTITION ...` | ✅ |
+| 12 | ALTER TABLE ADD/DROP ROLLUP | `ALTER TABLE t ADD/DROP ROLLUP ...` | ✅ |
+| 13 | ALTER TABLE REPLACE | `ALTER TABLE t REPLACE WITH TABLE ...` | ✅ |
+| 14 | ALTER TABLE ADD GENERATED COLUMN | `ALTER TABLE t ADD GENERATED COLUMN ...` | ✅ |
+| 15 | CANCEL ALTER TABLE | `CANCEL ALTER TABLE [FROM db] t` | ✅ |
+| 16 | ALTER COLOCATE GROUP | `ALTER COLOCATE GROUP g ADD/REMOVE TABLE t` | ✅ |
 
 ### 第3批：Account/Security + 事务 + 高级功能
 

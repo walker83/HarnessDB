@@ -112,6 +112,9 @@ impl Planner {
             Statement::DropView(stmt) => self.plan_drop_view(stmt),
             Statement::AlterView(stmt) => self.plan_alter_view(stmt),
             Statement::ShowCreateView(db, name) => self.plan_show_create_view(db, name),
+            _ => Err(DrorisError::plan(PlanError::UnsupportedOperation,
+                "Statement not supported in planner"
+            )),
         }
     }
 
@@ -430,6 +433,9 @@ impl Planner {
                 },
                 AlterOperation::SetProperty(props) => AlterOperationPlan::SetProperty {
                     properties: props.clone(),
+                },
+                _ => AlterOperationPlan::SetProperty {
+                    properties: vec![],
                 },
             })
             .collect();
