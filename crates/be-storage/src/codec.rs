@@ -75,15 +75,26 @@ pub fn lz4_compress(data: &[u8]) -> Vec<u8> {
 }
 
 /// Decode an LZ4-compressed buffer.
+/// If the data was stored uncompressed (because compression would expand it), returns it as-is.
 pub fn lz4_decompress(data: &[u8], original_size: usize) -> Result<Vec<u8>, String> {
-    lz4_flex::block::decompress(data, original_size).map_err(|e| format!("LZ4 decompress error: {}", e))
+    match lz4_flex::block::decompress(data, original_size) {
+        Ok(decompressed) => Ok(decompressed),
+        Err(_) if data.len() == original_size => Ok(data.to_vec()),
+        Err(e) => Err(format!("LZ4 decompress error: {}", e)),
+    }
 }
 
 /// Encode a raw byte buffer with Zstd compression.
 /// Level: 1 (fast) to 22 (max compression). Default: 3.
+/// Returns raw data if compression would expand it.
 pub fn zstd_compress(data: &[u8], level: i32) -> Vec<u8> {
     let level = level.clamp(-22, 22);
-    zstd::encode_all(data, level).unwrap_or_else(|_| data.to_vec())
+    let compressed = zstd::encode_all(data, level).unwrap_or_else(|_| data.to_vec());
+    if compressed.len() >= data.len() {
+        data.to_vec()
+    } else {
+        compressed
+    }
 }
 
 /// Encode with Zstd using trained dictionary (for better compression ratio).

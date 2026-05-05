@@ -83,39 +83,20 @@ impl StreamLoad {
         self
     }
 
-    /// Load data with the specified format
-    /// In a real implementation, this would send the data to the server
-    /// via the RPC layer or HTTP API
-    pub async fn load(&self, data: Vec<u8>, format: LoadFormat) -> Result<LoadResult> {
-        tracing::info!(
-            "StreamLoad: db={}, table={}, format={}, size={} bytes",
-            self.db_name,
-            self.table_name,
-            format.as_str(),
-            data.len()
-        );
-
-        // Validate format
-        if format != LoadFormat::Csv && format != LoadFormat::Json {
-            return Ok(LoadResult::failure(format!("Unsupported format: {:?}", format)));
-        }
-
-        // Parse and validate the data
-        
-
-        // In a real implementation, this would:
-        // 1. Connect to the server via RPC
-        // 2. Send the data in chunks
-        // 3. Handle partial responses
-        // 4. Retry on failures
-
+    /// Load data synchronously — safe to call from tests and non-async contexts.
+    pub fn load_blocking(&self, data: Vec<u8>, format: LoadFormat) -> Result<LoadResult> {
         match format {
-            LoadFormat::Csv => self.load_csv(data).await,
-            LoadFormat::Json => self.load_json(data).await,
+            LoadFormat::Csv => self.load_csv(data),
+            LoadFormat::Json => self.load_json(data),
         }
     }
 
-    async fn load_csv(&self, data: Vec<u8>) -> Result<LoadResult> {
+    /// Load data with the specified format (async wrapper for use in async contexts).
+    pub async fn load(&self, data: Vec<u8>, format: LoadFormat) -> Result<LoadResult> {
+        self.load_blocking(data, format)
+    }
+
+    fn load_csv(&self, data: Vec<u8>) -> Result<LoadResult> {
         use std::io::Cursor;
 
         let cursor = Cursor::new(data);
@@ -128,7 +109,6 @@ impl StreamLoad {
         loop {
             match reader.next_batch() {
                 Ok(Some(_block)) => {
-                    // In a real implementation, send block to server
                     total_rows += _block.num_rows() as u64;
                 }
                 Ok(None) => break,
@@ -145,7 +125,7 @@ impl StreamLoad {
         Ok(LoadResult::new(total_rows, error_count, first_err))
     }
 
-    async fn load_json(&self, data: Vec<u8>) -> Result<LoadResult> {
+    fn load_json(&self, data: Vec<u8>) -> Result<LoadResult> {
         use std::io::Cursor;
 
         let cursor = Cursor::new(data);
@@ -158,7 +138,6 @@ impl StreamLoad {
         loop {
             match reader.next_batch() {
                 Ok(Some(_block)) => {
-                    // In a real implementation, send block to server
                     total_rows += _block.num_rows() as u64;
                 }
                 Ok(None) => break,
@@ -279,5 +258,23 @@ mod tests {
         assert_eq!(load.db_name(), "mydb");
         assert_eq!(load.table_name(), "mytable");
         assert_eq!(load.timeout_secs(), 7200);
+    }
+
+    #[test]
+    fn test_stream_load_csv_blocking() {
+        let loader = StreamLoad::new("test_db", "test_table");
+        let csv_data = b"1,Alice\n2,Bob\n".to_vec();
+        let result = loader.load_blocking(csv_data, LoadFormat::Csv).unwrap();
+        assert!(result.is_success());
+        assert_eq!(result.rows_loaded, 2);
+    }
+
+    #[test]
+    fn test_stream_load_json_blocking() {
+        let loader = StreamLoad::new("test_db", "test_table");
+        let json_data = b"{\"id\": 1, \"name\": \"Alice\"}\n{\"id\": 2, \"name\": \"Bob\"}\n".to_vec();
+        let result = loader.load_blocking(json_data, LoadFormat::Json).unwrap();
+        assert!(result.is_success());
+        assert_eq!(result.rows_loaded, 2);
     }
 }

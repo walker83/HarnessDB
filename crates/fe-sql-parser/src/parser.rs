@@ -1113,9 +1113,9 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
             high: Box::new(convert_expr(*high)),
             negated,
         },
-        sqlparser::ast::Expr::IsNull { expr, negated } => Expr::IsNull {
+        sqlparser::ast::Expr::IsNull(expr) => Expr::IsNull {
             expr: Box::new(convert_expr(*expr)),
-            negated,
+            negated: false,
         },
         _ => Expr::Wildcard,
     }

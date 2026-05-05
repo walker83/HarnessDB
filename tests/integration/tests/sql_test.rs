@@ -87,6 +87,7 @@ fn test_create_table_multiple_types() {
         id: 100,
         name: "all_types".to_string(),
         database: "typed_db".to_string(),
+        stats: None,
         columns: vec![
             TableColumn {
                 name: "col_bool".into(),

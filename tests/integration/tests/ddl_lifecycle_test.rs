@@ -343,11 +343,17 @@ fn test_create_table_primary_key() {
 
 #[test]
 fn test_alter_table_add_column() {
-    // Test ALTER TABLE via planner directly (parser uses custom ALTER format)
-    let catalog = common::create_test_catalog();
     let result = fe_sql_parser::parse_sql("ALTER TABLE employees ADD COLUMN age INT64");
-    // Parser returns Unsupported for standard ALTER TABLE - this is a known limitation
-    assert!(result.is_err() || result.unwrap().is_empty());
+    assert!(result.is_ok(), "ALTER TABLE should parse successfully");
+    let stmts = result.unwrap();
+    assert_eq!(stmts.len(), 1);
+    match &stmts[0] {
+        fe_sql_parser::ast::Statement::AlterTable(alter) => {
+            assert_eq!(alter.table, "employees");
+            assert_eq!(alter.operations.len(), 1);
+        }
+        other => panic!("Expected AlterTable, got {:?}", other),
+    }
 }
 
 // ===========================================================================
