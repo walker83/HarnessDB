@@ -264,7 +264,8 @@ impl Connection {
                 command::COM_INIT_DB => {
                     let db = String::from_utf8_lossy(data).to_string();
                     debug!("COM_INIT_DB: {}", db);
-                    self.database = Some(db);
+                    self.database = Some(db.clone());
+                    self.handler.set_database(&db);
                     self.send_ok(0, 0).await?;
                 }
                 command::COM_FIELD_LIST => {
@@ -426,12 +427,14 @@ impl Connection {
         let result = self.handler.handle_query(sql);
         // Sync connection database state for USE commands
         let trimmed_lc = sql.trim().to_lowercase();
-        if trimmed_lc.starts_with("use ") && result.columns.is_empty() && result.rows.is_empty() {
+        if trimmed_lc.starts_with("use ") {
+            // Extract database name from USE statement
             if let Some(pos) = sql.trim().find("USE ") {
                 let after_use = &sql.trim()[pos + 4..].trim().trim_end_matches(';').trim();
                 let db_name = after_use.split_whitespace().next().unwrap_or(after_use);
                 if !db_name.is_empty() {
                     self.database = Some(db_name.to_string());
+                    self.handler.set_database(db_name);
                 }
             }
         }

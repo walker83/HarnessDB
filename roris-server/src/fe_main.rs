@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 
+use be_storage::StorageEngine;
 use fe_common::edit_log::EditLog;
 use fe_catalog::CatalogManager;
 use fe_scheduler::ClusterManager;
@@ -14,7 +15,8 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
 use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt};
-use types::DataType;
+use types::{DataType, Block, ScalarValue};
+use fe_catalog::table::{Table, TableColumn, KeysType};
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
@@ -41,13 +43,15 @@ struct Args {
 struct RorisQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
+    storage: Arc<StorageEngine>,
 }
 
 impl RorisQueryHandler {
-    fn new(catalog: Arc<StdRwLock<CatalogManager>>) -> Self {
+    fn new(catalog: Arc<StdRwLock<CatalogManager>>, storage: Arc<StorageEngine>) -> Self {
         Self {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
+            storage,
         }
     }
 }
@@ -85,6 +89,11 @@ impl QueryHandler for RorisQueryHandler {
             }
         }
     }
+
+    fn set_database(&self, db: &str) {
+        let mut current_db = self.current_database.write().unwrap();
+        *current_db = db.to_string();
+    }
 }
 
 impl RorisQueryHandler {
@@ -102,6 +111,9 @@ impl RorisQueryHandler {
             Statement::DropTable(stmt) => self.drop_table(stmt),
             Statement::AlterTable(stmt) => self.alter_table(stmt),
             Statement::TruncateTable { database, table, if_exists } => self.truncate_table(database.clone(), table.to_string(), *if_exists),
+            Statement::Insert(stmt) => self.insert(stmt),
+            Statement::Update(stmt) => self.update(stmt),
+            Statement::Delete(stmt) => self.delete(stmt),
             Statement::Query(_) => self.execute_query(stmt),
             Statement::Explain(explain) => self.explain(&explain.statement),
             _ => Ok(QueryResult::with_rows(
@@ -370,13 +382,37 @@ impl RorisQueryHandler {
         }
     }
 
-    fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {
-        let _catalog = self.catalog.read().unwrap();
-        let current_db = self.current_database.read().unwrap();
-        let _db = current_db.clone();
+    fn insert(&self, stmt: &fe_sql_parser::ast::InsertStmt) -> Result<QueryResult, String> {
+        // Resolve table: db.table or just table (use current_db)
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (db, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+        Err(format!("INSERT execution not yet implemented - table: {}.{}", db, table_name))
+    }
 
-        // Create a new CatalogManager instance for the planner
-        // In production, this would share state properly
+    fn update(&self, stmt: &fe_sql_parser::ast::UpdateStmt) -> Result<QueryResult, String> {
+        Err(format!("UPDATE execution not yet implemented - table: {}", stmt.table))
+    }
+
+    fn delete(&self, stmt: &fe_sql_parser::ast::DeleteStmt) -> Result<QueryResult, String> {
+        Err(format!("DELETE execution not yet implemented - table: {}", stmt.table))
+    }
+
+    fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {
+        use fe_sql_planner::plan_node::PlanNodeType;
+
+        let current_db = self.current_database.read().unwrap().clone();
+
+        // Create planner and plan the statement
         let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
         let planner = Planner::new(Arc::new(catalog_for_planner));
         let optimizer = Optimizer::new();
@@ -384,12 +420,10 @@ impl RorisQueryHandler {
         let plan = planner.plan(stmt.clone()).map_err(|e| format!("Planning error: {}", e))?;
         let optimized_plan = optimizer.optimize(plan);
 
+        // Return query plan as text (full execution requires distributed BE setup)
         let explain_output = format_plan(&optimized_plan);
-
         Ok(QueryResult::with_rows(
-            vec![
-                ColumnDef { name: "Query Plan".to_string(), col_type: ColumnType::String },
-            ],
+            vec![ColumnDef { name: "Query Plan".to_string(), col_type: ColumnType::String }],
             explain_output.lines().map(|line| vec![Some(line.to_string())]).collect(),
         ))
     }
@@ -426,6 +460,75 @@ fn parse_data_type(s: &str) -> DataType {
         "DATE" => DataType::Date,
         "DATETIME" | "TIMESTAMP" => DataType::DateTime,
         _ => DataType::String,
+    }
+}
+
+fn block_to_query_result(blocks: Vec<Block>) -> Result<QueryResult, String> {
+    if blocks.is_empty() {
+        return Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "OK".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("Empty set".to_string())]],
+        ));
+    }
+
+    // Collect all rows from all blocks
+    let mut all_rows: Vec<Vec<ScalarValue>> = Vec::new();
+    for block in &blocks {
+        for row_idx in 0..block.num_rows() {
+            all_rows.push(block.row(row_idx));
+        }
+    }
+
+    if all_rows.is_empty() {
+        return Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "OK".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("Empty set".to_string())]],
+        ));
+    }
+
+    // Determine columns from first block's schema
+    let schema = blocks[0].schema();
+    let columns: Vec<ColumnDef> = schema.fields().iter().map(|f| {
+        let col_type = match f.data_type {
+            DataType::Int8 | DataType::Int16 | DataType::Int32 => ColumnType::Int,
+            DataType::Int64 => ColumnType::Int,
+            DataType::Float32 => ColumnType::Float,
+            DataType::Float64 => ColumnType::Double,
+            DataType::String => ColumnType::String,
+            DataType::Boolean => ColumnType::Int,
+            DataType::Date => ColumnType::Date,
+            DataType::DateTime => ColumnType::DateTime,
+            _ => ColumnType::String,
+        };
+        ColumnDef { name: f.name.clone(), col_type }
+    }).collect();
+
+    // Convert rows to string rows
+    let string_rows: Vec<Vec<Option<String>>> = all_rows.iter().map(|row| {
+        row.iter().map(|v| scalar_to_string(v)).collect()
+    }).collect();
+
+    Ok(QueryResult::with_rows(columns, string_rows))
+}
+
+fn scalar_to_string(v: &ScalarValue) -> Option<String> {
+    match v {
+        ScalarValue::Null => None,
+        ScalarValue::Boolean(b) => Some(if *b { "1" } else { "0" }.to_string()),
+        ScalarValue::Int8(i) => Some(i.to_string()),
+        ScalarValue::Int16(i) => Some(i.to_string()),
+        ScalarValue::Int32(i) => Some(i.to_string()),
+        ScalarValue::Int64(i) => Some(i.to_string()),
+        ScalarValue::Int128(i) => Some(i.to_string()),
+        ScalarValue::Float32(f) => Some(f.to_string()),
+        ScalarValue::Float64(f) => Some(f.to_string()),
+        ScalarValue::String(s) => Some(s.clone()),
+        ScalarValue::Date(_) => Some(format!("{:?}", v)),
+        ScalarValue::DateTime(_) => Some(format!("{:?}", v)),
+        ScalarValue::Binary(b) => Some(format!("{:?}", b)),
+        ScalarValue::Array(_) => Some(format!("{:?}", v)),
+        ScalarValue::Json(_) => Some(format!("{:?}", v)),
+        ScalarValue::Float32Array(_) => Some(format!("{:?}", v)),
     }
 }
 
@@ -472,6 +575,13 @@ async fn main() -> Result<()> {
     // Initialize cluster manager for BE health monitoring
     let _cluster = Arc::new(RwLock::new(ClusterManager::new(fe_scheduler::cluster::ClusterConfig::default())));
 
+    // Initialize local storage engine for query execution
+    let storage = Arc::new(be_storage::StorageEngine::open("data/fe/storage").unwrap_or_else(|_| {
+        // Fallback to in-memory if storage dir doesn't exist
+        be_storage::StorageEngine::open("/tmp/roris-fe-storage").unwrap()
+    }));
+    tracing::info!("Local storage engine initialized");
+
     // Initialize monitoring manager
     let monitoring = Arc::new(MonitoringManager::new(catalog.clone()));
     tracing::info!("Monitoring manager initialized");
@@ -486,7 +596,7 @@ async fn main() -> Result<()> {
     tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
 
     // Start MySQL protocol server
-    let query_handler = RorisQueryHandler::new(catalog.clone());
+    let query_handler = RorisQueryHandler::new(catalog.clone(), storage.clone());
     let mysql_config = ServerConfig {
         bind_addr: "127.0.0.1".to_string(),
         port: args.mysql_port,
