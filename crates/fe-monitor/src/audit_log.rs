@@ -128,13 +128,8 @@ impl AuditLogger {
             current_file_index: Arc::new(RwLock::new(0)),
         };
 
-        if config.enabled {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
-                logger.rotate_if_needed().await;
-            });
-        }
-
+        // Note: File initialization is deferred to first write to avoid
+        // nested runtime issues when called from async context
         logger
     }
 

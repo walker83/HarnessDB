@@ -17,6 +17,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tonic = { workspace = true }
+proto = { workspace = true }
 
 fe-sql-parser = { workspace = true }
 fe-sql-planner = { workspace = true }
@@ -24,8 +28,11 @@ fe-catalog = { workspace = true }
 fe-scheduler = { workspace = true }
 fe-common = { workspace = true }
 fe-monitor = { workspace = true }
+fe-expression = { workspace = true }
+mysql-protocol = { workspace = true }
 be-storage = { workspace = true }
 be-execution = { workspace = true }
 be-common = { workspace = true }
 common = { workspace = true }
 rpc = { workspace = true }
+types = { workspace = true }

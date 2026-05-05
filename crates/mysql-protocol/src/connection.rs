@@ -613,6 +613,8 @@ impl Connection {
                     let payload: Bytes = self.read_buf[4..total].to_vec().into();
                     // Remove consumed bytes from the buffer: advance past the full packet
                     self.read_buf.advance(total);
+                    // Increment seq_id for the packet we just read
+                    self.seq_id = self.seq_id.wrapping_add(1);
                     return Ok(payload);
                 }
             }

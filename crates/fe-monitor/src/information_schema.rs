@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use fe_catalog::{CatalogManager, Table, table::TableColumn};
 use types::{DataType, ScalarValue, Schema, Field, Vector, Block};
 
@@ -26,7 +25,7 @@ impl InformationSchema {
 
     /// Query all tables metadata
     async fn query_tables(&self) -> Result<Block, String> {
-        let catalog = self.catalog.read().await;
+        let catalog = self.catalog.read().unwrap();
         let mut rows = Vec::new();
 
         for db_entry in catalog.list_databases() {
@@ -44,7 +43,7 @@ impl InformationSchema {
 
     /// Query all columns metadata
     async fn query_columns(&self) -> Result<Block, String> {
-        let catalog = self.catalog.read().await;
+        let catalog = self.catalog.read().unwrap();
         let mut rows = Vec::new();
 
         for db_entry in catalog.list_databases() {
@@ -64,7 +63,7 @@ impl InformationSchema {
 
     /// Query all databases
     async fn query_databases(&self) -> Result<Block, String> {
-        let catalog = self.catalog.read().await;
+        let catalog = self.catalog.read().unwrap();
         let mut rows = Vec::new();
 
         for db_name in catalog.list_databases() {
