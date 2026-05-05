@@ -17,6 +17,8 @@ pub struct Table {
     pub data_size: u64,
     /// Collected statistics for CBO (NULL if never analyzed).
     pub stats: Option<crate::stats::TableStats>,
+    /// Original view definition query (only for views)
+    pub view_definition: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

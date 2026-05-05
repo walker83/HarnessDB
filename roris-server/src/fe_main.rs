@@ -14,19 +14,7 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{
-    AlterDatabaseStmt, AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, 
-    DropTableStmt, DropViewStmt, AlterViewStmt,
-    ExportTableStmt, CancelExportStmt, ShowExportStmt,
-    CreateFunctionStmt, DropFunctionStmt,
-    AnalyzeTableStmt, AlterStatsStmt, DropStatsStmt, DropAnalyzeJobStmt, KillAnalyzeJobStmt,
-    ShowAnalyzeStmt, ShowStatsStmt, ShowTableStatsStmt,
-    CreateJobStmt, DropJobStmt, PauseJobStmt, ResumeJobStmt, CancelTaskStmt,
-    InstallPluginStmt, UninstallPluginStmt,
-    RecoverDatabaseStmt, RecoverTableStmt, RecoverPartitionStmt, DropCatalogRecycleBinStmt,
-    CreateSqlBlockRuleStmt, AlterSqlBlockRuleStmt, DropSqlBlockRuleStmt, ShowSqlBlockRuleStmt,
-    CreateRowPolicyStmt, DropRowPolicyStmt, ShowRowPolicyStmt,
-};
+use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt};
 use types::{DataType, Block, ScalarValue};
 use fe_catalog::table::{Table, TableColumn, KeysType};
 
@@ -56,15 +44,6 @@ struct RorisQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
     storage: Arc<StorageEngine>,
-    views: Arc<StdRwLock<Vec<ViewInfo>>>,
-}
-
-#[derive(Clone)]
-struct ViewInfo {
-    database: String,
-    name: String,
-    query: String,
-    columns: Vec<String>,
 }
 
 impl RorisQueryHandler {
@@ -73,13 +52,7 @@ impl RorisQueryHandler {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
             storage,
-            views: Arc::new(StdRwLock::new(Vec::new())),
         }
-    }
-
-    fn find_view(&self, db: &str, name: &str) -> Option<ViewInfo> {
-        let views = self.views.read().unwrap();
-        views.iter().find(|v| v.database == db && v.name == name).cloned()
     }
 }
 
@@ -129,6 +102,8 @@ impl RorisQueryHandler {
             Statement::ShowDatabases => self.show_databases(),
             Statement::ShowTables(db) => self.show_tables(db.clone()),
             Statement::ShowCreateTable(db, table) => self.show_create_table(db.clone(), table.clone()),
+            Statement::ShowCreateDatabase(db) => self.show_create_database(&db),
+            Statement::ShowCreateView(db, view) => self.show_create_view(db.clone(), view.clone()),
             Statement::Describe(db, table) => self.describe(db.clone(), table.clone()),
             Statement::ShowColumns(db, table) => self.show_columns(db.clone(), table.clone()),
             Statement::UseDatabase(db) => self.use_database(db),
@@ -143,66 +118,20 @@ impl RorisQueryHandler {
             Statement::Delete(stmt) => self.delete(stmt),
             Statement::Query(_) => self.execute_query(stmt),
             Statement::Explain(explain) => self.explain(&explain.statement),
-            Statement::CreateView { database, name, if_not_exists, query, columns } => {
-                self.create_view(database.clone(), name.clone(), *if_not_exists, query.clone(), columns.clone())
-            }
-            // Batch 1 additions
-            Statement::AlterDatabase(stmt) => self.alter_database(stmt),
-            Statement::ShowCreateDatabase(name) => self.show_create_database(name.clone()),
-            Statement::DropView(stmt) => self.drop_view(stmt),
-            Statement::AlterView(stmt) => self.alter_view(stmt),
-            Statement::ShowCreateView(db, name) => self.show_create_view(db.clone(), name.clone()),
-            
-            // Batch 3: Data export statements
-            Statement::ExportTable(stmt) => self.export_table(stmt),
-            Statement::CancelExport(stmt) => self.cancel_export(stmt),
-            Statement::ShowExport(stmt) => self.show_export(stmt),
-            
-            // Batch 4: UDF function management
-            Statement::CreateFunction(stmt) => self.create_function(stmt),
-            Statement::DropFunction(stmt) => self.drop_function(stmt),
-            Statement::ShowFunctions(pattern) => self.show_functions(pattern.clone()),
-            Statement::ShowCreateFunction(db, name) => self.show_create_function(db.clone(), name.clone()),
-            Statement::DescFunction(db, name) => self.desc_function(db.clone(), name.clone()),
-            
-            // Batch 4: Statistics management
-            Statement::AnalyzeTable(stmt) => self.analyze_table(stmt),
-            Statement::AlterStats(stmt) => self.alter_stats(stmt),
-            Statement::DropStats(stmt) => self.drop_stats(stmt),
-            Statement::DropAnalyzeJob(stmt) => self.drop_analyze_job(stmt),
-            Statement::KillAnalyzeJob(stmt) => self.kill_analyze_job(stmt),
-            Statement::ShowAnalyze(stmt) => self.show_analyze(stmt),
-            Statement::ShowStats(stmt) => self.show_stats(stmt),
-            Statement::ShowTableStats(stmt) => self.show_table_stats(stmt),
-            
-            // Batch 4: Job management
-            Statement::CreateJob(stmt) => self.create_job(stmt),
-            Statement::DropJob(stmt) => self.drop_job(stmt),
-            Statement::PauseJob(stmt) => self.pause_job(stmt),
-            Statement::ResumeJob(stmt) => self.resume_job(stmt),
-            Statement::CancelTask(stmt) => self.cancel_task(stmt),
-            
-            // Batch 4: Plugin management
-            Statement::InstallPlugin(stmt) => self.install_plugin(stmt),
-            Statement::UninstallPlugin(stmt) => self.uninstall_plugin(stmt),
-            Statement::ShowPlugins => self.show_plugins(),
-            
-            // Batch 4: Recycle bin management
-            Statement::RecoverDatabase(stmt) => self.recover_database(stmt),
-            Statement::RecoverTable(stmt) => self.recover_table(stmt),
-            Statement::RecoverPartition(stmt) => self.recover_partition(stmt),
-            Statement::DropCatalogRecycleBin(stmt) => self.drop_catalog_recycle_bin(stmt),
-            Statement::ShowCatalogRecycleBin => self.show_catalog_recycle_bin(),
-            
-            // Batch 4: Data governance
-            Statement::CreateSqlBlockRule(stmt) => self.create_sql_block_rule(stmt),
-            Statement::AlterSqlBlockRule(stmt) => self.alter_sql_block_rule(stmt),
-            Statement::DropSqlBlockRule(stmt) => self.drop_sql_block_rule(stmt),
-            Statement::ShowSqlBlockRule(stmt) => self.show_sql_block_rule(stmt),
-            Statement::CreateRowPolicy(stmt) => self.create_row_policy(stmt),
-            Statement::DropRowPolicy(stmt) => self.drop_row_policy(stmt),
-            Statement::ShowRowPolicy(stmt) => self.show_row_policy(stmt),
-            
+            Statement::ShowPartitions(db, table) => self.show_partitions(db.clone(), table.clone()),
+            Statement::ShowTableStatus(db) => self.show_table_status(db.clone()),
+            Statement::ShowVariables { global, pattern } => self.show_variables(*global, pattern.clone()),
+            Statement::ShowProcesslist(full) => self.show_processlist(*full),
+            Statement::ShowIndex(db, table) => self.show_index(db.clone(), table.clone()),
+            Statement::ShowAlterTable(db) => self.show_alter_table(db.clone()),
+            Statement::ShowBackends => self.show_backends(),
+            Statement::ShowFrontends => self.show_frontends(),
+            Statement::ShowAlterTableMv(db) => self.show_alter_table_mv(db.clone()),
+            Statement::ShowTableId => self.show_table_id(),
+            Statement::ShowPartitionId => self.show_partition_id(),
+            Statement::ShowDynamicPartitionTables => self.show_dynamic_partition_tables(),
+            Statement::ShowView(db, view) => self.show_view(db.clone(), view.clone()),
+            Statement::ShowCreateMaterializedView(name) => self.show_create_materialized_view(name.clone()),
             _ => Ok(QueryResult::with_rows(
                 vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
                 vec![vec![Some(format!("Statement parsed successfully (execution not fully implemented)"))]],
@@ -367,6 +296,7 @@ impl RorisQueryHandler {
             row_count: 0,
             data_size: 0,
             stats: None,
+            view_definition: None,
         };
 
         drop(catalog);
@@ -414,6 +344,7 @@ impl RorisQueryHandler {
 
         match catalog.get_table(target_db, &table) {
             Some(tbl) => {
+                // Build CREATE TABLE statement from table metadata
                 let mut create_sql = format!("CREATE TABLE `{}` (\n", table);
                 for (i, col) in tbl.columns.iter().enumerate() {
                     let nullable = if col.nullable { "" } else { " NOT NULL" };
@@ -437,132 +368,358 @@ impl RorisQueryHandler {
         }
     }
 
-    fn create_view(&self, database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String>) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read().unwrap();
-        let db = database.as_deref().unwrap_or(&current_db);
-
-        if self.find_view(db, &name).is_some() {
-            if if_not_exists {
-                return Ok(QueryResult::ok());
-            }
-            return Err(format!("View '{}.{}' already exists", db, name));
-        }
-
-        let mut views = self.views.write().unwrap();
-        views.push(ViewInfo {
-            database: db.to_string(),
-            name,
-            query,
-            columns,
-        });
-        Ok(QueryResult::ok())
-    }
-
-    // ---- Batch 1: New statement handlers ----
-
-    fn alter_database(&self, stmt: &AlterDatabaseStmt) -> Result<QueryResult, String> {
+    fn show_create_database(&self, db: &str) -> Result<QueryResult, String> {
         let catalog = self.catalog.read().unwrap();
-        if catalog.get_database(&stmt.name).is_none() {
-            return Err(format!("Unknown database '{}'", stmt.name));
-        }
-        drop(catalog);
-
-        if !stmt.properties.is_empty() {
-            let catalog = self.catalog.write().unwrap();
-            if let Some(mut db) = catalog.get_database(&stmt.name) {
-                for (k, v) in &stmt.properties {
-                    db.properties.insert(k.clone(), v.clone());
-                }
-                // Re-create with updated properties
-                let tables: Vec<_> = db.tables.keys().cloned().collect();
-                for table_name in &tables {
-                    if let Some(t) = db.tables.get(table_name) {
-                        let _ = t;
-                    }
-                }
-            }
-        }
-        Ok(QueryResult::ok())
-    }
-
-    fn show_create_database(&self, name: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
-        match catalog.get_database(&name) {
-            Some(db) => {
-                let mut create_sql = format!("CREATE DATABASE `{}`", name);
-                if !db.properties.is_empty() {
-                    create_sql.push_str("\nPROPERTIES (\n");
-                    for (i, (k, v)) in db.properties.iter().enumerate() {
-                        let comma = if i < db.properties.len() - 1 { "," } else { "" };
-                        create_sql.push_str(&format!("  \"{}\" = \"{}\"{}\n", k, v, comma));
-                    }
-                    create_sql.push_str(")");
-                }
+        match catalog.get_database(db) {
+            Some(database) => {
+                let create_sql = database.create_sql.clone()
+                    .unwrap_or_else(|| format!("CREATE DATABASE `{}`", db));
                 Ok(QueryResult::with_rows(
                     vec![
                         ColumnDef { name: "Database".to_string(), col_type: ColumnType::String },
                         ColumnDef { name: "Create Database".to_string(), col_type: ColumnType::String },
                     ],
-                    vec![vec![Some(name), Some(create_sql)]],
+                    vec![vec![Some(db.to_string()), Some(create_sql)]],
                 ))
             }
-            None => Err(format!("Unknown database '{}'", name)),
+            None => Err(format!("Unknown database '{}'", db)),
         }
     }
 
-    fn drop_view(&self, stmt: &DropViewStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read().unwrap();
-        let db = stmt.database.as_deref().unwrap_or(&current_db);
-
-        let mut views = self.views.write().unwrap();
-        let idx = views.iter().position(|v| v.database == db && v.name == stmt.name);
-        match idx {
-            Some(i) => {
-                views.remove(i);
-                Ok(QueryResult::ok())
-            }
-            None => {
-                if stmt.if_exists {
-                    Ok(QueryResult::ok())
-                } else {
-                    Err(format!("Unknown view '{}.{}'", db, stmt.name))
-                }
-            }
-        }
-    }
-
-    fn alter_view(&self, stmt: &AlterViewStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read().unwrap();
-        let db = stmt.database.as_deref().unwrap_or(&current_db);
-
-        let mut views = self.views.write().unwrap();
-        let view = views.iter_mut().find(|v| v.database == db && v.name == stmt.name)
-            .ok_or_else(|| format!("Unknown view '{}.{}'", db, stmt.name))?;
-        view.query = stmt.query.clone();
-        Ok(QueryResult::ok())
-    }
-
-    fn show_create_view(&self, db: String, name: String) -> Result<QueryResult, String> {
+    fn show_create_view(&self, db: String, view: String) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
         let current_db = self.current_database.read().unwrap();
         let target_db = if db.is_empty() { &current_db } else { &db };
 
-        match self.find_view(target_db, &name) {
-            Some(view) => {
-                let col_list = if view.columns.is_empty() {
-                    String::new()
+        match catalog.get_table(target_db, &view) {
+            Some(tbl) => {
+                let create_sql = if let Some(view_def) = &tbl.view_definition {
+                    format!("CREATE VIEW `{}` AS {}", view, view_def)
                 } else {
-                    format!(" ({})", view.columns.join(", "))
+                    format!("CREATE VIEW `{}` AS <view_definition>", view)
                 };
-                let create_sql = format!("CREATE VIEW `{}`{} AS {}", name, col_list, view.query);
                 Ok(QueryResult::with_rows(
                     vec![
                         ColumnDef { name: "View".to_string(), col_type: ColumnType::String },
                         ColumnDef { name: "Create View".to_string(), col_type: ColumnType::String },
                     ],
-                    vec![vec![Some(name), Some(create_sql)]],
+                    vec![vec![Some(view.clone()), Some(create_sql)]],
                 ))
             }
-            None => Err(format!("Unknown view '{}.{}'", target_db, name)),
+            None => Err(format!("Unknown view '{}.{}'", target_db, view)),
+        }
+    }
+
+    fn show_partitions(&self, db: String, table: String) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let target_db = if db.is_empty() { &current_db } else { &db };
+
+        match catalog.get_table(target_db, &table) {
+            Some(tbl) => {
+                if let Some(partition_info) = &tbl.partition_info {
+                    let rows: Vec<Vec<Option<String>>> = partition_info.partitions.iter().map(|p| {
+                        vec![
+                            Some(p.name.clone()),
+                            p.range_start.clone(),
+                            p.range_end.clone(),
+                        ]
+                    }).collect();
+                    Ok(QueryResult::with_rows(
+                        vec![
+                            ColumnDef { name: "PartitionName".to_string(), col_type: ColumnType::String },
+                            ColumnDef { name: "RangeStart".to_string(), col_type: ColumnType::String },
+                            ColumnDef { name: "RangeEnd".to_string(), col_type: ColumnType::String },
+                        ],
+                        rows,
+                    ))
+                } else {
+                    Ok(QueryResult::with_rows(
+                        vec![ColumnDef { name: "Message".to_string(), col_type: ColumnType::String }],
+                        vec![vec![Some("No partitions defined for table".to_string())]],
+                    ))
+                }
+            }
+            None => Err(format!("Unknown table '{}.{}'", target_db, table)),
+        }
+    }
+
+    fn show_table_status(&self, db: Option<String>) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let target_db = db.as_deref().unwrap_or(&current_db);
+
+        match catalog.list_tables(target_db) {
+            Some(tables) => {
+                let mut rows = Vec::new();
+                for table_name in tables {
+                    if let Some(tbl) = catalog.get_table(target_db, &table_name) {
+                        rows.push(vec![
+                            Some(table_name.clone()),
+                            Some("InnoDB".to_string()),
+                            Some(tbl.row_count.to_string()),
+                            Some(format!("{:?}", tbl.data_size)),
+                            Some("DEFAULT".to_string()),
+                            Some("Dynamic".to_string()),
+                            None,
+                        ]);
+                    }
+                }
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Name".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Engine".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Row_count".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Data_length".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Collation".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Comment".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Create_options".to_string(), col_type: ColumnType::String },
+                    ],
+                    rows,
+                ))
+            }
+            None => Err(format!("Database '{}' not found", target_db)),
+        }
+    }
+
+    fn show_variables(&self, global: bool, pattern: Option<String>) -> Result<QueryResult, String> {
+        let mut rows = vec![
+            vec![Some("debug".to_string()), Some(format!("global={}, pattern={:?}", global, pattern))],
+            vec![Some("version".to_string()), Some("5.7.42".to_string())],
+            vec![Some("version_comment".to_string()), Some("RorisDB".to_string())],
+        ];
+
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Variable_name".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Value".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    fn show_processlist(&self, full: bool) -> Result<QueryResult, String> {
+        let rows = vec![vec![
+            Some("1".to_string()),
+            Some("root".to_string()),
+            Some("127.0.0.1".to_string()),
+            None,
+            Some("Query".to_string()),
+            if full { Some("SHOW PROCESSLIST".to_string()) } else { Some("SHOW PROCESSLIST".to_string()) },
+            Some("0".to_string()),
+            None,
+        ]];
+
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Id".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "User".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Host".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "db".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Command".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Time".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "State".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Info".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    fn show_index(&self, db: String, table: String) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let target_db = if db.is_empty() { &current_db } else { &db };
+
+        match catalog.get_table(target_db, &table) {
+            Some(tbl) => {
+                let rows: Vec<Vec<Option<String>>> = tbl.columns.iter().enumerate().map(|(i, col)| {
+                    vec![
+                        Some(table.clone()),
+                        Some("0".to_string()),
+                        Some(col.name.clone()),
+                        Some((i + 1).to_string()),
+                        None,
+                        None,
+                        Some(if col.nullable { "YES".to_string() } else { "NO".to_string() }),
+                        None,
+                        None,
+                        Some("".to_string()),
+                        Some("BTREE".to_string()),
+                        Some("".to_string()),
+                        Some("".to_string()),
+                    ]
+                }).collect();
+
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Non_unique".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Key_name".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Seq_in_index".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Column_name".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Collation".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Null".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Index_type".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Comment".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Index_comment".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Algorithm".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Is_visible".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Expression".to_string(), col_type: ColumnType::String },
+                    ],
+                    rows,
+                ))
+            }
+            None => Err(format!("Unknown table '{}.{}'", target_db, table)),
+        }
+    }
+
+    fn show_alter_table(&self, db: Option<String>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Message".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("No ALTER TABLE operations in progress".to_string())]],
+        ))
+    }
+
+    fn show_backends(&self) -> Result<QueryResult, String> {
+        let backends = vec![
+            ("1".to_string(), "127.0.0.1".to_string(), "9060".to_string(), "true".to_string(), "0".to_string(), "0".to_string()),
+        ];
+        let rows: Vec<Vec<Option<String>>> = backends.into_iter()
+            .map(|(id, host, port, alive, tablet_num, data_size)| {
+                vec![Some(id), Some(host), Some(port), Some(alive), Some(tablet_num), Some(data_size)]
+            })
+            .collect();
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "BackendId".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Host".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Port".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Alive".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "TabletNum".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "DataSize".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    fn show_frontends(&self) -> Result<QueryResult, String> {
+        let frontends = vec![
+            ("fe1".to_string(), "127.0.0.1".to_string(), "8030".to_string(), "true".to_string(), "false".to_string(), "0".to_string()),
+        ];
+        let rows: Vec<Vec<Option<String>>> = frontends.into_iter()
+            .map(|(name, ip, port, alive, join, disk)| {
+                vec![Some(name), Some(ip), Some(port), Some(alive), Some(join), Some(disk)]
+            })
+            .collect();
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Name".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "IP".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Port".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Alive".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Join".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Disk".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    fn show_alter_table_mv(&self, db: Option<String>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Message".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("No ALTER MATERIALIZED VIEW operations in progress".to_string())]],
+        ))
+    }
+
+    fn show_table_id(&self) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let mut rows = Vec::new();
+
+        for db_name in catalog.list_databases() {
+            if let Some(tables) = catalog.list_tables(&db_name) {
+                for table_name in tables {
+                    if let Some(tbl) = catalog.get_table(&db_name, &table_name) {
+                        rows.push(vec![
+                            Some(db_name.clone()),
+                            Some(table_name.clone()),
+                            Some(tbl.id.to_string()),
+                        ]);
+                    }
+                }
+            }
+        }
+
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Database".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "TableId".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    fn show_partition_id(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "PartitionId".to_string(), col_type: ColumnType::String }],
+            vec![],
+        ))
+    }
+
+    fn show_dynamic_partition_tables(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Message".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("No dynamic partition tables".to_string())]],
+        ))
+    }
+
+    fn show_view(&self, db: String, view: String) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let target_db = if db.is_empty() { &current_db } else { &db };
+
+        match catalog.get_table(target_db, &view) {
+            Some(tbl) => {
+                let rows = vec![vec![
+                    Some(view.clone()),
+                    Some(target_db.clone()),
+                    if let Some(def) = &tbl.view_definition {
+                        Some(def.clone())
+                    } else {
+                        Some("<view_definition>".to_string())
+                    },
+                    Some("UTF-8".to_string()),
+                ]];
+
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "View".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Database".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Definition".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "CharacterSet".to_string(), col_type: ColumnType::String },
+                    ],
+                    rows,
+                ))
+            }
+            None => Err(format!("Unknown view '{}.{}'", target_db, view)),
+        }
+    }
+
+    fn show_create_materialized_view(&self, name: String) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+
+        if let Some(mv) = catalog.get_materialized_view(&current_db, &name) {
+            let create_sql = format!("CREATE MATERIALIZED VIEW `{}` AS {}", mv.name, mv.definition);
+            Ok(QueryResult::with_rows(
+                vec![
+                    ColumnDef { name: "MaterializedView".to_string(), col_type: ColumnType::String },
+                    ColumnDef { name: "Create Materialized View".to_string(), col_type: ColumnType::String },
+                ],
+                vec![vec![Some(name), Some(create_sql)]],
+            ))
+        } else {
+            Err(format!("Unknown materialized view '{}'", name))
         }
     }
 
@@ -573,40 +730,9 @@ impl RorisQueryHandler {
 
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
+                // ALTER TABLE implementation - currently just marks as parsed
                 drop(catalog);
-                let catalog = self.catalog.write().unwrap();
-                for op in &stmt.operations {
-                    match op {
-                        fe_sql_parser::ast::AlterOperation::RenameColumn { old_name, new_name } => {
-                            let mut table = catalog.get_table(db, &stmt.table)
-                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
-                            for col in &mut table.columns {
-                                if col.name == *old_name {
-                                    col.name = new_name.clone();
-                                }
-                            }
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
-                        }
-                        fe_sql_parser::ast::AlterOperation::SetComment(comment) => {
-                            let mut table = catalog.get_table(db, &stmt.table)
-                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
-                            table.properties.insert("comment".to_string(), comment.clone());
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
-                        }
-                        fe_sql_parser::ast::AlterOperation::SetProperty(props) => {
-                            let mut table = catalog.get_table(db, &stmt.table)
-                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
-                            for (k, v) in props {
-                                table.properties.insert(k.clone(), v.clone());
-                            }
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
-                        }
-                        _ => {
-                            return Err(format!("ALTER TABLE operation not yet implemented: {:?}", op));
-                        }
-                    }
-                }
-                Ok(QueryResult::ok())
+                Err("ALTER TABLE execution not yet implemented".to_string())
             }
             None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
         }
@@ -755,338 +881,6 @@ fn block_to_query_result(blocks: Vec<Block>) -> Result<QueryResult, String> {
     }).collect();
 
     Ok(QueryResult::with_rows(columns, string_rows))
-}
-
-// Separate impl block for Batch 3 & 4 new functions
-impl RorisQueryHandler {
-// ============================================================================
-// Batch 3: Data export implementation
-// ============================================================================
-
-    fn export_table(&self, stmt: &ExportTableStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "ExportId".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("EXPORT-{}", chrono_lite_timestamp()))]],
-    ))
-}
-
-    fn cancel_export(&self, stmt: &CancelExportStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Export {} cancelled", stmt.export_id))]],
-    ))
-}
-
-    fn show_export(&self, stmt: &ShowExportStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "ExportId".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "State".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("FINISHED".to_string())]],
-    ))
-}
-
-// ============================================================================
-// Batch 4: UDF function management implementation
-// ============================================================================
-
-    fn create_function(&self, stmt: &CreateFunctionStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Function {} created", stmt.name))]],
-    ))
-}
-
-    fn drop_function(&self, stmt: &DropFunctionStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Function {} dropped", stmt.name))]],
-    ))
-}
-
-    fn show_functions(&self, pattern: Option<String>) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "Signature".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "ReturnType".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "FunctionType".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-
-    fn show_create_function(&self, db: String, name: String) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "Function".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "Create Function".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some(format!("{}.{}", db, name)), Some("CREATE FUNCTION ...".to_string())]],
-    ))
-}
-
-    fn desc_function(&self, db: String, name: String) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "FunctionName".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "ReturnType".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "InputTypes".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some(format!("{}.{}", db, name)), Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-
-// ============================================================================
-// Batch 4: Statistics management implementation
-// ============================================================================
-
-    fn analyze_table(&self, stmt: &AnalyzeTableStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "JobId".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("ANALYZE-{}", chrono_lite_timestamp()))]],
-    ))
-}
-
-    fn alter_stats(&self, stmt: &AlterStatsStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some("Statistics altered".to_string())]],
-    ))
-}
-
-    fn drop_stats(&self, stmt: &DropStatsStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some("Statistics dropped".to_string())]],
-    ))
-}
-
-    fn drop_analyze_job(&self, stmt: &DropAnalyzeJobStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Analyze job {} dropped", stmt.job_id))]],
-    ))
-}
-
-    fn kill_analyze_job(&self, stmt: &KillAnalyzeJobStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Analyze job {} killed", stmt.job_id))]],
-    ))
-}
-
-    fn show_analyze(&self, stmt: &ShowAnalyzeStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "JobId".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "State".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("FINISHED".to_string())]],
-    ))
-}
-
-    fn show_stats(&self, stmt: &ShowStatsStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "TableName".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "ColumnName".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "NDV".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-
-    fn show_table_stats(&self, stmt: &ShowTableStatsStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "TableName".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "RowCount".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "DataSize".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-
-// ============================================================================
-// Batch 4: Job management implementation
-// ============================================================================
-
-    fn create_job(&self, stmt: &CreateJobStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "JobName".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(stmt.name.clone())]],
-    ))
-}
-
-    fn drop_job(&self, stmt: &DropJobStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Job {} dropped", stmt.name))]],
-    ))
-}
-
-    fn pause_job(&self, stmt: &PauseJobStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Job {} paused", stmt.name))]],
-    ))
-}
-
-    fn resume_job(&self, stmt: &ResumeJobStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Job {} resumed", stmt.name))]],
-    ))
-}
-
-    fn cancel_task(&self, stmt: &CancelTaskStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Task {} cancelled", stmt.task_id))]],
-    ))
-}
-
-// ============================================================================
-// Batch 4: Plugin management implementation
-// ============================================================================
-
-    fn install_plugin(&self, stmt: &InstallPluginStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Plugin {} installed", stmt.plugin_name))]],
-    ))
-}
-
-    fn uninstall_plugin(&self, stmt: &UninstallPluginStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Plugin {} uninstalled", stmt.plugin_name))]],
-    ))
-}
-
-    fn show_plugins(&self) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "Name".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "Type".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "Status".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-
-// ============================================================================
-// Batch 4: Recycle bin management implementation
-// ============================================================================
-
-    fn recover_database(&self, stmt: &RecoverDatabaseStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Database {} recovered", stmt.name))]],
-    ))
-}
-
-    fn recover_table(&self, stmt: &RecoverTableStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Table {}.{} recovered", stmt.database, stmt.table))]],
-    ))
-}
-
-    fn recover_partition(&self, stmt: &RecoverPartitionStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Partition {}.{}.{} recovered", stmt.database, stmt.table, stmt.partition))]],
-    ))
-}
-
-    fn drop_catalog_recycle_bin(&self, stmt: &DropCatalogRecycleBinStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some("Recycle bin cleaned".to_string())]],
-    ))
-}
-
-    fn show_catalog_recycle_bin(&self) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "Type".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "Name".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "DropTime".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-
-// ============================================================================
-// Batch 4: Data governance implementation
-// ============================================================================
-
-    fn create_sql_block_rule(&self, stmt: &CreateSqlBlockRuleStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("SQL block rule {} created", stmt.name))]],
-    ))
-}
-
-    fn alter_sql_block_rule(&self, stmt: &AlterSqlBlockRuleStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("SQL block rule {} altered", stmt.name))]],
-    ))
-}
-
-    fn drop_sql_block_rule(&self, stmt: &DropSqlBlockRuleStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("SQL block rule {} dropped", stmt.name))]],
-    ))
-}
-
-    fn show_sql_block_rule(&self, stmt: &ShowSqlBlockRuleStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "Name".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "SqlPattern".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-
-    fn create_row_policy(&self, stmt: &CreateRowPolicyStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Row policy {} created", stmt.name))]],
-    ))
-}
-
-    fn drop_row_policy(&self, stmt: &DropRowPolicyStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-        vec![vec![Some(format!("Row policy {} dropped", stmt.name))]],
-    ))
-}
-
-    fn show_row_policy(&self, stmt: &ShowRowPolicyStmt) -> Result<QueryResult, String> {
-    Ok(QueryResult::with_rows(
-        vec![
-            ColumnDef { name: "PolicyName".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "Database".to_string(), col_type: ColumnType::String },
-            ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
-        ],
-        vec![vec![Some("N/A".to_string()), Some("N/A".to_string()), Some("N/A".to_string())]],
-    ))
-}
-} // End of impl block for Batch 3 & 4 functions
-
-// Helper functions (outside impl blocks)
-fn chrono_lite_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}", duration.as_secs())
 }
 
 fn scalar_to_string(v: &ScalarValue) -> Option<String> {

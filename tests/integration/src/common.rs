@@ -65,6 +65,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
         row_count: 5,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
     catalog.create_table("test_db", employees).unwrap();
 
@@ -107,6 +108,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
         row_count: 3,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
     catalog.create_table("test_db", departments).unwrap();
 
@@ -221,7 +223,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "d_year".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 100, data_size: 0, stats: None,
+        replication_num: 1, properties: HashMap::new(), row_count: 100, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
     // supplier
@@ -233,7 +235,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "s_nation".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 20, data_size: 0, stats: None,
+        replication_num: 1, properties: HashMap::new(), row_count: 20, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
     // customer
@@ -245,7 +247,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "c_nation".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 50, data_size: 0, stats: None,
+        replication_num: 1, properties: HashMap::new(), row_count: 50, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
     // part
@@ -257,7 +259,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "p_category".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 30, data_size: 0, stats: None,
+        replication_num: 1, properties: HashMap::new(), row_count: 30, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
     // lineorder (fact table)
@@ -270,7 +272,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "lo_revenue".into(), data_type: DataType::Float64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 500, data_size: 0, stats: None,
+        replication_num: 1, properties: HashMap::new(), row_count: 500, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
     catalog

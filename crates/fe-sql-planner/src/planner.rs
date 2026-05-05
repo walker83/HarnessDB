@@ -107,53 +107,22 @@ impl Planner {
             Statement::DropCatalog(stmt) => self.plan_drop_catalog(stmt),
             Statement::ShowCatalogs => self.plan_show_catalogs(),
             Statement::RefreshCatalog(stmt) => self.plan_refresh_catalog(stmt),
-            Statement::AlterDatabase(stmt) => self.plan_alter_database(stmt),
-            Statement::ShowCreateDatabase(name) => self.plan_show_create_database(name),
-            Statement::DropView(stmt) => self.plan_drop_view(stmt),
-            Statement::AlterView(stmt) => self.plan_alter_view(stmt),
-            Statement::ShowCreateView(db, name) => self.plan_show_create_view(db, name),
-            
-            // Batch 3 & 4: Management statements - handled directly in fe_main.rs
-            Statement::ExportTable(_)
-            | Statement::CancelExport(_)
-            | Statement::ShowExport(_)
-            | Statement::CreateFunction(_)
-            | Statement::DropFunction(_)
-            | Statement::ShowFunctions(_)
-            | Statement::ShowCreateFunction(_, _)
-            | Statement::DescFunction(_, _)
-            | Statement::AnalyzeTable(_)
-            | Statement::AlterStats(_)
-            | Statement::DropStats(_)
-            | Statement::DropAnalyzeJob(_)
-            | Statement::KillAnalyzeJob(_)
-            | Statement::ShowAnalyze(_)
-            | Statement::ShowStats(_)
-            | Statement::ShowTableStats(_)
-            | Statement::CreateJob(_)
-            | Statement::DropJob(_)
-            | Statement::PauseJob(_)
-            | Statement::ResumeJob(_)
-            | Statement::CancelTask(_)
-            | Statement::InstallPlugin(_)
-            | Statement::UninstallPlugin(_)
-            | Statement::ShowPlugins
-            | Statement::RecoverDatabase(_)
-            | Statement::RecoverTable(_)
-            | Statement::RecoverPartition(_)
-            | Statement::DropCatalogRecycleBin(_)
-            | Statement::ShowCatalogRecycleBin
-            | Statement::CreateSqlBlockRule(_)
-            | Statement::AlterSqlBlockRule(_)
-            | Statement::DropSqlBlockRule(_)
-            | Statement::ShowSqlBlockRule(_)
-            | Statement::CreateRowPolicy(_)
-            | Statement::DropRowPolicy(_)
-            | Statement::ShowRowPolicy(_) => {
-                Err(DrorisError::plan(PlanError::UnsupportedOperation,
-                    "This statement is handled directly by the execution layer, not the planner"
-                ))
-            }
+            Statement::ShowCreateDatabase(_) => Err(DrorisError::Internal("SHOW CREATE DATABASE handled in FE".to_string())),
+            Statement::ShowCreateView(_, _) => Err(DrorisError::Internal("SHOW CREATE VIEW handled in FE".to_string())),
+            Statement::ShowPartitions(_, _) => Err(DrorisError::Internal("SHOW PARTITIONS handled in FE".to_string())),
+            Statement::ShowTableStatus(_) => Err(DrorisError::Internal("SHOW TABLE STATUS handled in FE".to_string())),
+            Statement::ShowVariables { .. } => Err(DrorisError::Internal("SHOW VARIABLES handled in FE".to_string())),
+            Statement::ShowProcesslist(_) => Err(DrorisError::Internal("SHOW PROCESSLIST handled in FE".to_string())),
+            Statement::ShowIndex(_, _) => Err(DrorisError::Internal("SHOW INDEX handled in FE".to_string())),
+            Statement::ShowAlterTable(_) => Err(DrorisError::Internal("SHOW ALTER TABLE handled in FE".to_string())),
+            Statement::ShowBackends => Err(DrorisError::Internal("SHOW BACKENDS handled in FE".to_string())),
+            Statement::ShowFrontends => Err(DrorisError::Internal("SHOW FRONTENDS handled in FE".to_string())),
+            Statement::ShowAlterTableMv(_) => Err(DrorisError::Internal("SHOW ALTER TABLE MV handled in FE".to_string())),
+            Statement::ShowTableId => Err(DrorisError::Internal("SHOW TABLE ID handled in FE".to_string())),
+            Statement::ShowPartitionId => Err(DrorisError::Internal("SHOW PARTITION ID handled in FE".to_string())),
+            Statement::ShowDynamicPartitionTables => Err(DrorisError::Internal("SHOW DYNAMIC PARTITION TABLES handled in FE".to_string())),
+            Statement::ShowView(_, _) => Err(DrorisError::Internal("SHOW VIEW handled in FE".to_string())),
+            Statement::ShowCreateMaterializedView(_) => Err(DrorisError::Internal("SHOW CREATE MATERIALIZED VIEW handled in FE".to_string())),
         }
     }
 
@@ -187,43 +156,6 @@ impl Planner {
 
     fn plan_show_users(&self) -> Result<PlanNode, DrorisError> {
         Err(DrorisError::Internal("SHOW USERS not yet implemented in planner".to_string()))
-    }
-
-    // ---- Batch 1: New statement handlers ----
-
-    fn plan_alter_database(&self, stmt: fe_sql_parser::ast::AlterDatabaseStmt) -> Result<PlanNode, DrorisError> {
-        Ok(self.make_node(
-            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("ALTER DATABASE {}", stmt.name) }),
-            vec![],
-        ))
-    }
-
-    fn plan_show_create_database(&self, name: String) -> Result<PlanNode, DrorisError> {
-        Ok(self.make_node(
-            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("SHOW CREATE DATABASE {}", name) }),
-            vec![],
-        ))
-    }
-
-    fn plan_drop_view(&self, stmt: fe_sql_parser::ast::DropViewStmt) -> Result<PlanNode, DrorisError> {
-        Ok(self.make_node(
-            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("DROP VIEW {}", stmt.name) }),
-            vec![],
-        ))
-    }
-
-    fn plan_alter_view(&self, stmt: fe_sql_parser::ast::AlterViewStmt) -> Result<PlanNode, DrorisError> {
-        Ok(self.make_node(
-            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("ALTER VIEW {}", stmt.name) }),
-            vec![],
-        ))
-    }
-
-    fn plan_show_create_view(&self, db: String, name: String) -> Result<PlanNode, DrorisError> {
-        Ok(self.make_node(
-            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("SHOW CREATE VIEW {}.{}", db, name) }),
-            vec![],
-        ))
     }
 
     // ---- DDL ----
@@ -462,16 +394,6 @@ impl Planner {
                 },
                 AlterOperation::RenameTable(new_name) => AlterOperationPlan::RenameTable {
                     new_name: new_name.clone(),
-                },
-                AlterOperation::RenameColumn { old_name, new_name } => AlterOperationPlan::RenameColumn {
-                    old_name: old_name.clone(),
-                    new_name: new_name.clone(),
-                },
-                AlterOperation::SetComment(comment) => AlterOperationPlan::SetComment {
-                    comment: comment.clone(),
-                },
-                AlterOperation::SetProperty(props) => AlterOperationPlan::SetProperty {
-                    properties: props.clone(),
                 },
             })
             .collect();

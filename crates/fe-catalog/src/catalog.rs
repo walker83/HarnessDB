@@ -17,17 +17,6 @@ pub struct CatalogManager {
     catalog_path: String,
 }
 
-impl Clone for CatalogManager {
-    fn clone(&self) -> Self {
-        Self {
-            databases: self.databases.clone(),
-            materialized_views: self.materialized_views.clone(),
-            next_id: AtomicU64::new(self.next_id.load(Ordering::Relaxed)),
-            catalog_path: self.catalog_path.clone(),
-        }
-    }
-}
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum CatalogOp {
@@ -298,6 +287,7 @@ mod tests {
             row_count: 0,
             data_size: 0,
             stats: None,
+            view_definition: None,
         }
     }
 

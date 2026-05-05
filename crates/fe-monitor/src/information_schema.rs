@@ -433,6 +433,7 @@ mod tests {
                 row_count: 0,
                 data_size: 0,
                 stats: None,
+                view_definition: None,
             };
 
             catalog_guard.create_table("test_db", table).unwrap();
