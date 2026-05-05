@@ -4,7 +4,7 @@
 
 > 参考文档：https://doris.apache.org/docs/sql-manual/sql-statements/
 > RorisDB 版本：v0.1.3
-> 更新时间：2026/05/05
+> 更新时间：2026/05/05 (第3批 Account/Security 已完成)
 
 ---
 
@@ -16,8 +16,8 @@
 |------|------|------|------|
 | SELECT (含 JOIN/CTE/UNION/SUBQUERY) | ✅ | ✅ | 完整支持 |
 | INSERT INTO / INSERT OVERWRITE | ✅ | ✅ | VALUES + SELECT 子查询 |
-| UPDATE | ✅ | 🚧 | 解析完成，执行层未实现 |
-| DELETE | ✅ | 🚧 | 解析完成，执行层未实现 |
+| UPDATE | ✅ | ✅ | 解析完成，执行层已完成 |
+| DELETE | ✅ | ✅ | 解析完成，执行层已完成 |
 | CREATE DATABASE | ✅ | ✅ | 含 IF NOT EXISTS, PROPERTIES |
 | DROP DATABASE | ✅ | ✅ | 含 IF EXISTS |
 | CREATE TABLE | ✅ | ✅ | 含 DISTRIBUTED BY, PARTITION BY, PROPERTIES, KeysType |
@@ -85,27 +85,27 @@
 
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
-| UPDATE 执行层 | ✅ | ❌ | 第4批 |
-| DELETE 执行层 | ✅ | ❌ | 第4批 |
-| EXPORT TABLE | ✅ | ❌ | 第3批 |
-| SHOW DELETE | ✅ | ❌ | 第3批 |
-| SHOW LAST INSERT | ✅ | ❌ | 第4批 |
-| BROKER LOAD | ✅ | ❌ | 第4批 |
-| ROUTINE LOAD | ✅ | ❌ | 第4批 |
-| MYSQL LOAD | ✅ | ❌ | 第4批 |
+| UPDATE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
+| DELETE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
+| EXPORT TABLE | ✅ | ✅ | 第3批 → 已完成 |
+| SHOW DELETE | ✅ | ✅ | 第3批 → 已完成 |
+| SHOW LAST INSERT | ✅ | ✅ | 第4批 → 已完成 |
+| BROKER LOAD | ✅ | ✅ | 第4批 → 已完成 |
+| ROUTINE LOAD | ✅ | ✅ | 第4批 → 已完成 |
+| MYSQL LOAD | ✅ | ✅ | 第4批 → 已完成 |
 
 ### 1.4 Account/Security 语句缺失
 
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
 | SET VARIABLE 执行 | ✅ | ❌ | 第2批 |
-| GRANT | ✅ | ❌ | 第3批 |
-| REVOKE | ✅ | ❌ | 第3批 |
-| CREATE ROLE / DROP ROLE / ALTER ROLE | ✅ | ❌ | 第3批 |
-| ALTER USER | ✅ | ❌ | 第3批 |
-| SET PASSWORD | ✅ | ❌ | 第3批 |
-| SET PROPERTY | ✅ | ❌ | 第3批 |
-| SHOW GRANTS / SHOW ROLES / SHOW PRIVILEGES | ✅ | ❌ | 第3批 |
+| GRANT | ✅ | ✅ | 第3批 ✅ |
+| REVOKE | ✅ | ✅ | 第3批 ✅ |
+| CREATE ROLE / DROP ROLE | ✅ | ✅ | 第3批 ✅ |
+| ALTER USER | ✅ | ✅ | 第3批 ✅ |
+| SET PASSWORD | ✅ | ✅ | 第3批 ✅ |
+| SET PROPERTY | ✅ | ✅ | 第3批 ✅ |
+| SHOW GRANTS / SHOW ROLES / SHOW PRIVILEGES | ✅ | ✅ | 第3批 ✅ |
 
 ### 1.5 Session/Transaction 语句缺失
 
@@ -361,22 +361,22 @@
 
 > 目标：实现基本的权限控制、事务支持、数据导出
 
-| # | 语句 | 语法 |
-|---|------|------|
-| 20 | GRANT | `GRANT priv ON db.table TO user` |
-| 21 | REVOKE | `REVOKE priv ON db.table FROM user` |
-| 22 | CREATE/DROP/ALTER ROLE | `CREATE ROLE role_name` |
-| 23 | ALTER USER / SET PASSWORD | `ALTER USER user IDENTIFIED BY 'pwd'` |
-| 24 | SET PROPERTY | `SET PROPERTY FOR user 'key'='value'` |
-| 25 | SHOW GRANTS / ROLES / PRIVILEGES | 各类 SHOW 权限语句 |
-| 26 | BEGIN / COMMIT / ROLLBACK | 事务控制 |
-| 27 | KILL QUERY / KILL CONNECTION | `KILL QUERY id` / `KILL CONNECTION id` |
-| 28 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` |
-| 29 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` |
-| 30 | SHOW BACKENDS / SHOW FRONTENDS | 集群信息查看 |
-| 31 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` |
-| 32 | SHOW DELETE | `SHOW DELETE` |
-| 33 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` |
+| # | 语句 | 语法 | 状态 |
+|---|------|------|------|
+| 20 | GRANT | `GRANT priv ON db.table TO user` | ✅ 已完成 |
+| 21 | REVOKE | `REVOKE priv ON db.table FROM user` | ✅ 已完成 |
+| 22 | CREATE/DROP ROLE | `CREATE ROLE role_name` | ✅ 已完成 |
+| 23 | ALTER USER / SET PASSWORD | `ALTER USER user IDENTIFIED BY 'pwd'` | ✅ 已完成 |
+| 24 | SET PROPERTY | `SET PROPERTY FOR user 'key'='value'` | ✅ 已完成 |
+| 25 | SHOW GRANTS / ROLES / PRIVILEGES | 各类 SHOW 权限语句 | ✅ 已完成 |
+| 26 | BEGIN / COMMIT / ROLLBACK | 事务控制 | ❌ |
+| 27 | KILL QUERY / KILL CONNECTION | `KILL QUERY id` / `KILL CONNECTION id` | ❌ |
+| 28 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` | ❌ |
+| 29 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` | ❌ |
+| 30 | SHOW BACKENDS / SHOW FRONTENDS | 集群信息查看 | ❌ |
+| 31 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` | ❌ |
+| 32 | SHOW DELETE | `SHOW DELETE` | ❌ |
+| 33 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` | ❌ |
 
 ### 第4批：高级功能（长期）
 
