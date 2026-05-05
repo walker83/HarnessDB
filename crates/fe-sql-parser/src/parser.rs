@@ -1994,14 +1994,16 @@ fn parse_cancel_alter_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
         let (db, remaining) = extract_identifier(after_from).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected database name".to_string() })?;
         (Some(db.to_string()), remaining.trim())
     } else { (None, after) };
-    // Handle optional database.table format
-    let rest = rest.trim();
-    let table_name = if rest.starts_with('.') {
-        // rest is like ".t1" - extract table name after the dot
-        let after_dot = rest[1..].trim();
-        let (name, _) = extract_identifier(after_dot).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
-        format!("{}.{}", database.as_ref().unwrap(), name)
+    // When database is specified in FROM clause, the next identifier is the table name
+    // (not db.table - that would only come from the table name itself containing a dot)
+    let (db_from_clause, table_name) = if database.is_some() {
+        // Database already extracted from FROM clause - remaining is just the table
+        // Skip leading dot if present (FROM sql_test.t1 means db=sql_test, table=t1)
+        let rest = rest.trim_start_matches('.');
+        let (name, _) = extract_identifier(rest).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
+        (database, name.to_string())
     } else {
+        // No FROM clause - might be db.table or just table
         let (name, remaining) = extract_identifier(rest).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
         let name_str = name.to_string();
         let remaining = remaining.trim();
@@ -2009,12 +2011,12 @@ fn parse_cancel_alter_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
             // Fully qualified db.table
             let after_dot = remaining[1..].trim();
             let (table_part, _) = extract_identifier(after_dot).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
-            format!("{}.{}", name_str, table_part)
+            (Some(name_str), table_part.to_string())
         } else {
-            name_str
+            (None, name_str)
         }
     };
-    Ok(vec![Statement::CancelAlterTable(CancelAlterTableStmt { database, table: table_name })])
+    Ok(vec![Statement::CancelAlterTable(CancelAlterTableStmt { database: db_from_clause, table: table_name })])
 }
 
 fn parse_alter_colocate_group(sql: &str) -> Result<Vec<Statement>, ParseError> {
