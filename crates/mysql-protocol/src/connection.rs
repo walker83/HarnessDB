@@ -475,6 +475,7 @@ impl Connection {
 
     /// Read one complete MySQL packet from the stream.
     /// Returns just the payload (without header).
+    /// Updates self.seq_id to next expected sequence number.
     async fn read_packet(&mut self) -> std::io::Result<Bytes> {
         loop {
             // Try to parse a complete packet from the buffer
@@ -486,11 +487,12 @@ impl Connection {
 
                 let total = 4 + payload_len;
                 if self.read_buf.len() >= total {
-                    let _seq_id = self.read_buf[3];
                     // Extract payload bytes
                     let payload: Bytes = self.read_buf[4..total].to_vec().into();
                     // Remove consumed bytes from the buffer: advance past the full packet
                     self.read_buf.advance(total);
+                    // Increment seq_id for the packet we just read
+                    self.seq_id = self.seq_id.wrapping_add(1);
                     return Ok(payload);
                 }
             }

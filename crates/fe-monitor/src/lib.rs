@@ -9,8 +9,7 @@ pub use metrics::{MetricsCollector, FeMetrics, BeMetrics};
 pub use audit_log::AuditLogger;
 pub use query_profile::QueryProfiler;
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use fe_catalog::CatalogManager;
 
 /// Monitoring manager that integrates all monitoring components
