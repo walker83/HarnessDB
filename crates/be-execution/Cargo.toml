@@ -11,5 +11,6 @@ common = { workspace = true }
 types = { workspace = true }
 be-storage = { workspace = true }
 async-trait = { workspace = true }
+fe-sql-parser = { workspace = true }
 fe-sql-planner = { workspace = true }
 fe-catalog = { workspace = true }

@@ -35,6 +35,7 @@ pub enum ExecutionPlan {
     Update(UpdateExecNode),
     Delete(DeleteExecNode),
     AlterTable(AlterTableExecNode),
+    Insert(InsertExecNode),
 }
 
 #[async_trait]
@@ -54,6 +55,7 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Update(node) => node.open().await,
             ExecutionPlan::Delete(node) => node.open().await,
             ExecutionPlan::AlterTable(node) => node.open().await,
+            ExecutionPlan::Insert(node) => node.open().await,
         }
     }
 
@@ -72,6 +74,7 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Update(node) => node.get_next().await,
             ExecutionPlan::Delete(node) => node.get_next().await,
             ExecutionPlan::AlterTable(node) => node.get_next().await,
+            ExecutionPlan::Insert(node) => node.get_next().await,
         }
     }
 
@@ -90,6 +93,7 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Update(node) => node.close().await,
             ExecutionPlan::Delete(node) => node.close().await,
             ExecutionPlan::AlterTable(node) => node.close().await,
+            ExecutionPlan::Insert(node) => node.close().await,
         }
     }
 
@@ -108,7 +112,144 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Update(node) => node.as_any(),
             ExecutionPlan::Delete(node) => node.as_any(),
             ExecutionPlan::AlterTable(node) => node.as_any(),
+            ExecutionPlan::Insert(node) => node.as_any(),
         }
+    }
+}
+
+// ---- INSERT Execution Node ----
+
+pub struct InsertExecNode {
+    pub table_name: String,
+    pub database: String,
+    pub columns: Vec<String>,  // target column names from INSERT - if empty, insert into all columns
+    pub child: Option<Box<ExecutionPlan>>,  // child plan (either Values or Select)
+    pub tablet_id: Option<u64>,
+    pub storage: Option<Arc<StorageEngine>>,
+    pub executed: bool,
+}
+
+impl InsertExecNode {
+    pub fn new(table_name: String, database: String) -> Self {
+        Self {
+            table_name,
+            database,
+            columns: Vec::new(),
+            child: None,
+            tablet_id: None,
+            storage: None,
+            executed: false,
+        }
+    }
+
+    pub fn with_columns(mut self, columns: Vec<String>) -> Self {
+        self.columns = columns;
+        self
+    }
+
+    pub fn with_child(mut self, child: Box<ExecutionPlan>) -> Self {
+        self.child = Some(child);
+        self
+    }
+
+    pub fn with_storage(mut self, tablet_id: u64, storage: Arc<StorageEngine>) -> Self {
+        self.tablet_id = Some(tablet_id);
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Reorder block columns to match the target table schema order.
+    /// Only used when INSERT specifies explicit column list (e.g., INSERT INTO (col1, col2) ...)
+    fn reorder_columns_to_schema(block: &mut Block, target_columns: &[String], schema: &Schema) {
+        if target_columns.is_empty() {
+            return;  // No reordering needed
+        }
+
+        let mut new_columns: Vec<Vector> = Vec::with_capacity(schema.num_fields());
+        let mut new_fields: Vec<types::Field> = Vec::with_capacity(schema.num_fields());
+
+        for col_name in target_columns {
+            if let Some(idx) = schema.index_of(col_name) {
+                if let Some(field) = schema.field(idx) {
+                    if let Some(col) = block.column(idx) {
+                        new_columns.push(col.clone());
+                        new_fields.push(field.clone());
+                    }
+                }
+            }
+        }
+
+        if !new_columns.is_empty() && new_columns.len() == new_fields.len() {
+            *block = Block::new(Schema::new(new_fields), new_columns);
+        }
+    }
+}
+
+#[async_trait]
+impl ExecNode for InsertExecNode {
+    async fn open(&mut self) -> Result<()> {
+        self.executed = false;
+        if let Some(ref mut child) = self.child {
+            child.open().await?;
+        }
+        Ok(())
+    }
+
+    async fn get_next(&mut self) -> Result<Option<Block>> {
+        if self.executed {
+            return Ok(None);
+        }
+
+        // Check tablet_id and storage
+        let Some(tablet_id) = self.tablet_id else {
+            tracing::warn!("INSERT without tablet_id on {}.{}", self.database, self.table_name);
+            return Ok(Some(make_affected_rows_block(0)));
+        };
+        let Some(storage) = &self.storage else {
+            tracing::warn!("INSERT without storage on {}.{}", self.database, self.table_name);
+            return Ok(Some(make_affected_rows_block(0)));
+        };
+
+        let mut total_rows_written: usize = 0;
+
+        // Process child plan if present
+        if let Some(ref mut child) = self.child {
+            // Get all blocks from child
+            while let Some(mut block) = child.get_next().await? {
+                // Handle column projection if columns are specified
+                if !self.columns.is_empty() {
+                    let schema = block.schema().clone();
+                    Self::reorder_columns_to_schema(&mut block, &self.columns, &schema);
+                }
+
+                // Write block to storage
+                storage.write_batch(tablet_id, &block)?;
+                total_rows_written += block.num_rows();
+            }
+        }
+
+        self.executed = true;
+
+        tracing::info!(
+            "INSERT INTO {}.{}: {} rows affected",
+            self.database,
+            self.table_name,
+            total_rows_written
+        );
+
+        Ok(Some(make_affected_rows_block(total_rows_written)))
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        if let Some(ref mut child) = self.child {
+            child.close().await?;
+        }
+        self.executed = false;
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

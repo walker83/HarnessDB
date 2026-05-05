@@ -1,6 +1,10 @@
 use be_storage::index::{ColumnPredicate, PredicateOp};
+use fe_sql_parser::ast::{Expr, LiteralValue};
 use types::{Block, DataType, Field, ScalarValue, Schema, Vector};
-use types::vector::Int64Vector;
+use types::vector::{
+    BooleanVector, DateVector, DateTimeVector, Float32Vector, Float64Vector, Int128Vector,
+    Int16Vector, Int32Vector, Int64Vector, Int8Vector, JsonVector, StringVector,
+};
 
 /// Parse a predicate string (from FE `expr_to_string`) into a list of ColumnPredicates.
 ///
@@ -468,6 +472,261 @@ pub fn make_affected_rows_block(count: usize) -> Block {
     Block::new(schema, vec![col])
 }
 
+/// Convert a VALUES clause (Vec<Vec<Expr>>) into a Block for INSERT execution.
+///
+/// Transposes row-oriented expressions to column-oriented storage:
+/// - Each inner Vec is a row with expressions for each column
+/// - The result is a Block with one Vector per column
+///
+/// Returns an error if the number of columns in any row doesn't match the schema.
+pub fn values_to_block(rows: Vec<Vec<Expr>>, schema: &Schema) -> Result<Block, String> {
+    if rows.is_empty() {
+        return Err(" VALUES clause cannot be empty".to_string());
+    }
+
+    let num_cols = schema.num_fields();
+    let num_rows = rows.len();
+
+    // Validate row length and transpose to column-oriented
+    let mut columns: Vec<Vec<ScalarValue>> = vec![Vec::with_capacity(num_rows); num_cols];
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        if row.len() != num_cols {
+            return Err(format!(
+                " Row {} has {} columns but schema expects {}",
+                row_idx + 1,
+                row.len(),
+                num_cols
+            ));
+        }
+
+        for (col_idx, expr) in row.iter().enumerate() {
+            let scalar = expr_to_scalar_value(expr, schema.field(col_idx).map(|f| &f.data_type))?;
+            columns[col_idx].push(scalar);
+        }
+    }
+
+    // Build Vectors for each column based on data type
+    let vectors: Vec<Vector> = schema
+        .fields()
+        .iter()
+        .zip(columns.into_iter())
+        .map(|(field, values)| scalar_values_to_vector(&values, &field.data_type))
+        .collect();
+
+    Ok(Block::new(schema.clone(), vectors))
+}
+
+/// Convert an Expr into a ScalarValue, optionally using target_type for coercion.
+fn expr_to_scalar_value(expr: &Expr, target_type: Option<&DataType>) -> Result<ScalarValue, String> {
+    match expr {
+        Expr::Literal(lv) => literal_to_scalar_value(lv),
+        Expr::Cast { expr, target_type: cast_type } => {
+            // Recursively get the inner value, then apply cast
+            let inner_scalar = expr_to_scalar_value(expr, target_type)?;
+            coerce_to_type(&inner_scalar, cast_type)
+        }
+        _ => Err(format!(" Unsupported expression type in VALUES: {:?}", expr)),
+    }
+}
+
+/// Convert a LiteralValue to a ScalarValue.
+fn literal_to_scalar_value(lv: &LiteralValue) -> Result<ScalarValue, String> {
+    match lv {
+        LiteralValue::Null => Ok(ScalarValue::Null),
+        LiteralValue::Boolean(b) => Ok(ScalarValue::Boolean(*b)),
+        LiteralValue::Int64(n) => Ok(ScalarValue::Int64(*n)),
+        LiteralValue::Float64(f) => Ok(ScalarValue::Float64(*f)),
+        LiteralValue::String(s) => Ok(ScalarValue::String(s.clone())),
+        LiteralValue::Date(s) => {
+            // Parse date string YYYY-MM-DD to i32 days
+            let days = s.replace('-', "").parse::<i32>()
+                .map_err(|_| format!(" Invalid date format: {}", s))?;
+            Ok(ScalarValue::Date(days))
+        }
+    }
+}
+
+/// Convert a list of ScalarValues into a Vector, using the data type to determine
+/// which Vector variant to create.
+fn scalar_values_to_vector(values: &[ScalarValue], data_type: &DataType) -> Vector {
+    match data_type {
+        DataType::Boolean => Vector::Boolean(BooleanVector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Boolean(b) = v { Some(*b) } else { None }).collect()
+        )),
+        DataType::Int8 => Vector::Int8(Int8Vector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Int8(n) = v { Some(*n) } else { None }).collect()
+        )),
+        DataType::Int16 => Vector::Int16(Int16Vector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Int16(n) = v { Some(*n) } else { None }).collect()
+        )),
+        DataType::Int32 => Vector::Int32(Int32Vector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Int32(n) = v { Some(*n) } else { None }).collect()
+        )),
+        DataType::Int64 => Vector::Int64(Int64Vector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Int64(n) = v { Some(*n) } else { None }).collect()
+        )),
+        DataType::Int128 => Vector::Int128(Int128Vector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Int128(n) = v { Some(*n) } else { None }).collect()
+        )),
+        DataType::Float32 => Vector::Float32(Float32Vector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Float32(f) = v { Some(*f) } else { None }).collect()
+        )),
+        DataType::Float64 => Vector::Float64(Float64Vector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Float64(f) = v { Some(*f) } else { None }).collect()
+        )),
+        DataType::Date => Vector::Date(DateVector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::Date(d) = v { Some(*d) } else { None }).collect()
+        )),
+        DataType::DateTime => Vector::DateTime(DateTimeVector::from_nullable_vec(
+            values.iter().map(|v| if let ScalarValue::DateTime(d) = v { Some(*d) } else { None }).collect()
+        )),
+        DataType::String | DataType::Varchar(_) | DataType::Char(_) => {
+            let strs: Vec<Option<String>> = values.iter().map(|v| {
+                if let ScalarValue::String(s) = v { Some(s.clone()) } else { None }
+            }).collect();
+            Vector::String(StringVector::from_option_vec(strs))
+        }
+        DataType::Json => Vector::Json(JsonVector::from_option_vec(
+            values.iter().map(|v| if let ScalarValue::Json(j) = v { Some(ScalarValue::Json(j.clone())) } else { None }).collect()
+        )),
+        _ => Vector::Null(types::vector::NullVector::new(values.len())),
+    }
+}
+
+/// Apply type coercion to match the target column type.
+fn coerce_to_type(scalar: &ScalarValue, target_type: &str) -> Result<ScalarValue, String> {
+    // Parse the target type string to DataType
+    let dt = match target_type.to_uppercase().as_str() {
+        "BOOLEAN" | "BOOL" => DataType::Boolean,
+        "TINYINT" | "INT8" => DataType::Int8,
+        "SMALLINT" | "INT16" => DataType::Int16,
+        "INT" | "INTEGER" | "INT32" => DataType::Int32,
+        "BIGINT" | "INT64" => DataType::Int64,
+        "LARGEINT" | "INT128" => DataType::Int128,
+        "FLOAT" | "FLOAT32" => DataType::Float32,
+        "DOUBLE" | "FLOAT64" => DataType::Float64,
+        "DATE" => DataType::Date,
+        "DATETIME" | "TIMESTAMP" => DataType::DateTime,
+        "VARCHAR" | "CHAR" | "STRING" | "TEXT" => DataType::String,
+        "JSON" => DataType::Json,
+        _ => return Err(format!(" Unsupported cast target type: {}", target_type)),
+    };
+
+    match scalar {
+        ScalarValue::Null => Ok(ScalarValue::Null),
+        ScalarValue::Boolean(b) => coerce_boolean_to(b, &dt),
+        ScalarValue::Int8(n) => coerce_int_to(*n as i64, &dt),
+        ScalarValue::Int16(n) => coerce_int_to(*n as i64, &dt),
+        ScalarValue::Int32(n) => coerce_int_to(*n as i64, &dt),
+        ScalarValue::Int64(n) => coerce_int_to(*n, &dt),
+        ScalarValue::Int128(n) => coerce_int_to(*n as i64, &dt),
+        ScalarValue::Float32(f) => coerce_float_to(*f as f64, &dt),
+        ScalarValue::Float64(f) => coerce_float_to(*f, &dt),
+        ScalarValue::Date(d) => coerce_date_to(*d, &dt),
+        ScalarValue::DateTime(dt_inner) => coerce_datetime_to(*dt_inner, &dt),
+        ScalarValue::String(s) => coerce_string_to(s, &dt),
+        _ => Err(format!(" Cannot cast {:?} to {:?}", scalar, target_type)),
+    }
+}
+
+fn coerce_int_to(n: i64, target: &DataType) -> Result<ScalarValue, String> {
+    match target {
+        DataType::Int8 => Ok(ScalarValue::Int8(n as i8)),
+        DataType::Int16 => Ok(ScalarValue::Int16(n as i16)),
+        DataType::Int32 => Ok(ScalarValue::Int32(n as i32)),
+        DataType::Int64 => Ok(ScalarValue::Int64(n)),
+        DataType::Int128 => Ok(ScalarValue::Int128(n as i128)),
+        DataType::Float32 => Ok(ScalarValue::Float32(n as f32)),
+        DataType::Float64 => Ok(ScalarValue::Float64(n as f64)),
+        DataType::Boolean => Ok(ScalarValue::Boolean(n != 0)),
+        DataType::String => Ok(ScalarValue::String(n.to_string())),
+        _ => Err(format!(" Cannot cast Int64 to {:?}", target)),
+    }
+}
+
+fn coerce_float_to(f: f64, target: &DataType) -> Result<ScalarValue, String> {
+    match target {
+        DataType::Float32 => Ok(ScalarValue::Float32(f as f32)),
+        DataType::Float64 => Ok(ScalarValue::Float64(f)),
+        DataType::Int8 => Ok(ScalarValue::Int8(f as i8)),
+        DataType::Int16 => Ok(ScalarValue::Int16(f as i16)),
+        DataType::Int32 => Ok(ScalarValue::Int32(f as i32)),
+        DataType::Int64 => Ok(ScalarValue::Int64(f as i64)),
+        DataType::Int128 => Ok(ScalarValue::Int128(f as i128)),
+        DataType::String => Ok(ScalarValue::String(f.to_string())),
+        _ => Err(format!(" Cannot cast Float64 to {:?}", target)),
+    }
+}
+
+fn coerce_boolean_to(b: &bool, target: &DataType) -> Result<ScalarValue, String> {
+    match target {
+        DataType::Boolean => Ok(ScalarValue::Boolean(*b)),
+        DataType::Int8 => Ok(ScalarValue::Int8(*b as i8)),
+        DataType::Int16 => Ok(ScalarValue::Int16(*b as i16)),
+        DataType::Int32 => Ok(ScalarValue::Int32(*b as i32)),
+        DataType::Int64 => Ok(ScalarValue::Int64(*b as i64)),
+        DataType::Int128 => Ok(ScalarValue::Int128(*b as i128)),
+        DataType::Float32 => Ok(ScalarValue::Float32(*b as i32 as f32)),
+        DataType::Float64 => Ok(ScalarValue::Float64(*b as i64 as f64)),
+        DataType::String => Ok(ScalarValue::String(b.to_string())),
+        _ => Err(format!(" Cannot cast Boolean to {:?}", target)),
+    }
+}
+
+fn coerce_date_to(d: i32, target: &DataType) -> Result<ScalarValue, String> {
+    match target {
+        DataType::Date => Ok(ScalarValue::Date(d)),
+        DataType::DateTime => Ok(ScalarValue::DateTime(d as i64)),
+        DataType::Int32 => Ok(ScalarValue::Int32(d)),
+        DataType::Int64 => Ok(ScalarValue::Int64(d as i64)),
+        DataType::String => Ok(ScalarValue::String(d.to_string())),
+        _ => Err(format!(" Cannot cast Date to {:?}", target)),
+    }
+}
+
+fn coerce_datetime_to(dt: i64, target: &DataType) -> Result<ScalarValue, String> {
+    match target {
+        DataType::DateTime => Ok(ScalarValue::DateTime(dt)),
+        DataType::Date => Ok(ScalarValue::Date(dt as i32)),
+        DataType::Int64 => Ok(ScalarValue::Int64(dt)),
+        DataType::String => Ok(ScalarValue::String(format!("{:?}", dt))),
+        _ => Err(format!(" Cannot cast DateTime to {:?}", target)),
+    }
+}
+
+fn coerce_string_to(s: &str, target: &DataType) -> Result<ScalarValue, String> {
+    match target {
+        DataType::String => Ok(ScalarValue::String(s.to_string())),
+        DataType::Int8 => s.parse::<i8>()
+            .map(ScalarValue::Int8)
+            .map_err(|_| format!(" Cannot parse '{}' as Int8", s)),
+        DataType::Int16 => s.parse::<i16>()
+            .map(ScalarValue::Int16)
+            .map_err(|_| format!(" Cannot parse '{}' as Int16", s)),
+        DataType::Int32 => s.parse::<i32>()
+            .map(ScalarValue::Int32)
+            .map_err(|_| format!(" Cannot parse '{}' as Int32", s)),
+        DataType::Int64 => s.parse::<i64>()
+            .map(ScalarValue::Int64)
+            .map_err(|_| format!(" Cannot parse '{}' as Int64", s)),
+        DataType::Int128 => s.parse::<i128>()
+            .map(ScalarValue::Int128)
+            .map_err(|_| format!(" Cannot parse '{}' as Int128", s)),
+        DataType::Float32 => s.parse::<f32>()
+            .map(ScalarValue::Float32)
+            .map_err(|_| format!(" Cannot parse '{}' as Float32", s)),
+        DataType::Float64 => s.parse::<f64>()
+            .map(ScalarValue::Float64)
+            .map_err(|_| format!(" Cannot parse '{}' as Float64", s)),
+        DataType::Boolean => Ok(ScalarValue::Boolean(s == "true" || s == "1")),
+        DataType::Date => s.replace('-', "").parse::<i32>()
+            .map(ScalarValue::Date)
+            .map_err(|_| format!(" Cannot parse '{}' as Date", s)),
+        _ => Err(format!(" Cannot cast String to {:?}", target)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,5 +842,101 @@ mod tests {
         assert_eq!(block.num_columns(), 1);
         let val = block.column(0).unwrap().scalar_at(0);
         assert_eq!(val, ScalarValue::Int64(5));
+    }
+
+    #[test]
+    fn test_values_to_block_integers() {
+        use fe_sql_parser::ast::{Expr, LiteralValue};
+
+        // INSERT INTO t VALUES (1), (2), (3)
+        let rows = vec![
+            vec![Expr::Literal(LiteralValue::Int64(1))],
+            vec![Expr::Literal(LiteralValue::Int64(2))],
+            vec![Expr::Literal(LiteralValue::Int64(3))],
+        ];
+        let schema = Schema::new(vec![Field::new("a", DataType::Int64, false)]);
+
+        let block = values_to_block(rows, &schema).unwrap();
+        assert_eq!(block.num_rows(), 3);
+        assert_eq!(block.num_columns(), 1);
+        assert_eq!(block.column(0).unwrap().scalar_at(0), ScalarValue::Int64(1));
+        assert_eq!(block.column(0).unwrap().scalar_at(1), ScalarValue::Int64(2));
+        assert_eq!(block.column(0).unwrap().scalar_at(2), ScalarValue::Int64(3));
+    }
+
+    #[test]
+    fn test_values_to_block_with_nulls() {
+        use fe_sql_parser::ast::{Expr, LiteralValue};
+
+        // INSERT INTO t VALUES (1, 'hello'), (NULL, 'world')
+        let rows = vec![
+            vec![Expr::Literal(LiteralValue::Int64(1)), Expr::Literal(LiteralValue::String("hello".to_string()))],
+            vec![Expr::Literal(LiteralValue::Null), Expr::Literal(LiteralValue::String("world".to_string()))],
+        ];
+        let schema = Schema::new(vec![
+            Field::new("a", DataType::Int64, true),
+            Field::new("b", DataType::String, true),
+        ]);
+
+        let block = values_to_block(rows, &schema).unwrap();
+        assert_eq!(block.num_rows(), 2);
+        assert_eq!(block.num_columns(), 2);
+        assert_eq!(block.column(0).unwrap().scalar_at(0), ScalarValue::Int64(1));
+        assert_eq!(block.column(0).unwrap().scalar_at(1), ScalarValue::Null);
+        assert_eq!(block.column(1).unwrap().scalar_at(0), ScalarValue::String("hello".to_string()));
+        assert_eq!(block.column(1).unwrap().scalar_at(1), ScalarValue::String("world".to_string()));
+    }
+
+    #[test]
+    fn test_values_to_block_mixed_types() {
+        use fe_sql_parser::ast::{Expr, LiteralValue};
+
+        // INSERT INTO t VALUES (1, 'alice', true, 3.14)
+        let rows = vec![
+            vec![
+                Expr::Literal(LiteralValue::Int64(1)),
+                Expr::Literal(LiteralValue::String("alice".to_string())),
+                Expr::Literal(LiteralValue::Boolean(true)),
+                Expr::Literal(LiteralValue::Float64(3.14)),
+            ],
+        ];
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::String, false),
+            Field::new("active", DataType::Boolean, false),
+            Field::new("score", DataType::Float64, false),
+        ]);
+
+        let block = values_to_block(rows, &schema).unwrap();
+        assert_eq!(block.num_rows(), 1);
+        assert_eq!(block.num_columns(), 4);
+        assert_eq!(block.column(0).unwrap().scalar_at(0), ScalarValue::Int64(1));
+        assert_eq!(block.column(1).unwrap().scalar_at(0), ScalarValue::String("alice".to_string()));
+        assert_eq!(block.column(2).unwrap().scalar_at(0), ScalarValue::Boolean(true));
+        assert_eq!(block.column(3).unwrap().scalar_at(0), ScalarValue::Float64(3.14));
+    }
+
+    #[test]
+    fn test_values_to_block_wrong_column_count() {
+        use fe_sql_parser::ast::{Expr, LiteralValue};
+
+        let rows = vec![
+            vec![Expr::Literal(LiteralValue::Int64(1)), Expr::Literal(LiteralValue::Int64(2))],
+        ];
+        let schema = Schema::new(vec![Field::new("a", DataType::Int64, false)]);
+
+        let result = values_to_block(rows, &schema);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("has 2 columns but schema expects 1"));
+    }
+
+    #[test]
+    fn test_values_to_block_empty() {
+        let rows = vec![];
+        let schema = Schema::new(vec![Field::new("a", DataType::Int64, false)]);
+
+        let result = values_to_block(rows, &schema);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("VALUES clause cannot be empty"));
     }
 }

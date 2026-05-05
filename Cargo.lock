@@ -318,6 +318,7 @@ dependencies = [
  "be-storage",
  "common",
  "fe-catalog",
+ "fe-sql-parser",
  "fe-sql-planner",
  "thiserror 2.0.18",
  "tokio",

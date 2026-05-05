@@ -9,14 +9,14 @@
 
 use std::sync::Arc;
 use be_storage::StorageEngine;
-use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, UpdateNode, DeleteNode, AlterTableNode};
+use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, UpdateNode, DeleteNode, AlterTableNode, InsertNode};
 use fe_catalog::CatalogManager;
 use types::Schema;
 
 use crate::exec_node::{
     ExecutionPlan, ExecNode, ScanExecNode, FilterExecNode, ProjectExecNode,
     AggregateExecNode, SortExecNode, LimitExecNode, HashJoinExecNode,
-    UpdateExecNode, DeleteExecNode, AlterTableExecNode,
+    UpdateExecNode, DeleteExecNode, AlterTableExecNode, InsertExecNode,
 };
 
 /// Error type for plan execution conversion.
@@ -157,6 +157,9 @@ impl ExecutionContext {
             PlanNodeType::AlterTable(alter) => {
                 self.create_alter_table_node(alter)
             }
+            PlanNodeType::Insert(insert) => {
+                self.create_insert_node(insert, &plan.children)
+            }
             // DDL and other node types - return a no-op scan that returns empty
             _ => {
                 tracing::debug!("Unsupported node type for execution: {:?}", plan.node_type);
@@ -214,6 +217,34 @@ impl ExecutionContext {
         );
 
         Ok(ExecutionPlan::AlterTable(node))
+    }
+
+    fn create_insert_node(&self, insert: &InsertNode, children: &[PlanNode]) -> Result<ExecutionPlan, PlanExecutionError> {
+        let database = insert.database.as_deref().unwrap_or("default");
+        let tablet_id = self.resolve_tablet_id(database, &insert.table_name).ok();
+
+        // Create child execution plan from first child (either Values or Select)
+        let child_plan = if !children.is_empty() {
+            Some(self.create_exec_plan_impl(&children[0])?)
+        } else {
+            None
+        };
+
+        let mut node = InsertExecNode::new(
+            insert.table_name.clone(),
+            database.to_string(),
+        )
+        .with_columns(insert.columns.clone());
+
+        if let Some(child) = child_plan {
+            node = node.with_child(Box::new(child));
+        }
+
+        if let (Some(tid), Some(storage)) = (tablet_id, Some(self.storage.clone())) {
+            node = node.with_storage(tid, storage);
+        }
+
+        Ok(ExecutionPlan::Insert(node))
     }
 
     fn create_scan_node(&self, scan: &ScanNode) -> Result<ExecutionPlan, PlanExecutionError> {
