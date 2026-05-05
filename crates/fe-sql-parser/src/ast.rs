@@ -36,17 +36,16 @@ pub enum Statement {
     DropCatalog(DropCatalogStmt),
     ShowCatalogs,
     RefreshCatalog(RefreshCatalogStmt),
-    // Batch 1 additions
-    AlterDatabase(AlterDatabaseStmt),
-    ShowCreateDatabase(String),
-    DropView(DropViewStmt),
-    AlterView(AlterViewStmt),
-    ShowCreateView(String, String),
-    // Batch 2 DDL additions
-    CreateIndex(CreateIndexStmt),
-    DropIndex(DropIndexStmt),
-    CancelAlterTable(CancelAlterTableStmt),
-    AlterColocateGroup(AlterColocateGroupStmt),
+    Grant(GrantStmt),
+    Revoke(RevokeStmt),
+    CreateRole(CreateRoleStmt),
+    DropRole(DropRoleStmt),
+    AlterUser(AlterUserStmt),
+    SetPassword(SetPasswordStmt),
+    SetProperty(SetPropertyStmt),
+    ShowGrants(Option<String>),
+    ShowRoles,
+    ShowPrivileges(Option<UserIdentity>),
 }
 
 #[derive(Debug, Clone)]
@@ -218,15 +217,6 @@ pub enum AlterOperation {
     DropColumn(String),
     ModifyColumn(ColumnDef),
     RenameTable(String),
-    RenameColumn { old_name: String, new_name: String },
-    SetComment(String),
-    SetProperty(Vec<(String, String)>),
-    AddPartition { partition_name: String, values_less_than: Vec<String>, properties: Vec<(String, String)> },
-    DropPartition { partition_name: String, if_exists: bool, force: bool },
-    AddRollup { rollup_name: String, columns: Vec<String>, properties: Vec<(String, String)> },
-    DropRollup { rollup_name: String, if_exists: bool },
-    Replace { old_table: String, swap: bool, properties: Vec<(String, String)> },
-    AddGeneratedColumn(ColumnDef),
 }
 
 #[derive(Debug, Clone)]
@@ -413,63 +403,69 @@ pub struct RefreshCatalogStmt {
     pub name: String,
 }
 
-// Batch 1: New statement types
-
 #[derive(Debug, Clone)]
-pub struct AlterDatabaseStmt {
-    pub name: String,
-    pub properties: Vec<(String, String)>,
+pub struct GrantStmt {
+    pub privileges: Vec<Privilege>,
+    pub scope: PrivilegeScope,
+    pub roles: Vec<String>,
+    pub users: Vec<UserIdentity>,
 }
 
 #[derive(Debug, Clone)]
-pub struct DropViewStmt {
-    pub database: Option<String>,
-    pub name: String,
+pub struct RevokeStmt {
+    pub privileges: Vec<Privilege>,
+    pub scope: PrivilegeScope,
+    pub roles: Vec<String>,
+    pub users: Vec<UserIdentity>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateRoleStmt {
+    pub role_name: String,
+    pub if_not_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropRoleStmt {
+    pub role_name: String,
     pub if_exists: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct AlterViewStmt {
-    pub database: Option<String>,
-    pub name: String,
-    pub query: String,
+pub struct AlterUserStmt {
+    pub user: UserIdentity,
+    pub auth_plugin: Option<String>,
+    pub password: Option<String>,
 }
 
-// Batch 2: DDL statement types
+#[derive(Debug, Clone)]
+pub struct SetPasswordStmt {
+    pub user: Option<UserIdentity>,
+    pub password: String,
+}
 
 #[derive(Debug, Clone)]
-pub struct CreateIndexStmt {
-    pub index_name: String,
-    pub database: Option<String>,
-    pub table: String,
-    pub columns: Vec<String>,
-    pub index_type: Option<String>,
+pub struct SetPropertyStmt {
+    pub user: UserIdentity,
     pub properties: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
-pub struct DropIndexStmt {
-    pub index_name: String,
-    pub database: Option<String>,
-    pub table: String,
-    pub if_exists: bool,
+pub struct UserIdentity {
+    pub username: String,
+    pub hostname: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CancelAlterTableStmt {
-    pub database: Option<String>,
-    pub table: String,
+pub struct Privilege {
+    pub privilege_type: String,
+    pub columns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AlterColocateGroupStmt {
-    pub group_name: String,
-    pub operation: ColocateGroupOperation,
-}
-
-#[derive(Debug, Clone)]
-pub enum ColocateGroupOperation {
-    AddTable { database: Option<String>, table: String },
-    RemoveTable { database: Option<String>, table: String },
-    SetProperty(Vec<(String, String)>),
+pub enum PrivilegeScope {
+    Global,
+    Database(String),
+    Table(String, String),
+    Column(Vec<String>),
 }

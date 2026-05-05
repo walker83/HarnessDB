@@ -4,7 +4,7 @@
 
 > 参考文档：https://doris.apache.org/docs/sql-manual/sql-statements/
 > RorisDB 版本：v0.1.3
-> 更新时间：2026/05/05（第1、2批 DDL 已完成）
+> 更新时间：2026/05/05 (第3批 Account/Security 已完成)
 
 ---
 
@@ -39,35 +39,27 @@
 | EXPLAIN | ✅ | ✅ | |
 | CREATE USER / DROP USER / SHOW USERS | ✅ | ❌ | 解析完成，未实现 |
 | CREATE/DROP/SHOW/REFRESH CATALOG | ✅ | ❌ | 解析完成，未实现 |
-| ALTER DATABASE | ✅ | ✅ | 第1批 |
-| SHOW CREATE DATABASE | ✅ | ✅ | 第1批 |
-| DROP VIEW | ✅ | ✅ | 第1批 |
-| ALTER VIEW | ✅ | ✅ | 第1批 |
-| SHOW CREATE VIEW | ✅ | ✅ | 第1批 |
-| ALTER TABLE RENAME COLUMN | ✅ | ✅ | 第1批 |
-| ALTER TABLE COMMENT | ✅ | ✅ | 第1批 |
-| ALTER TABLE SET PROPERTY | ✅ | ✅ | 第1批 |
 
 ### 1.1 DDL 语句缺失
 
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
-| ALTER DATABASE | ✅ | ✅ | ~~第1批~~ 已完成 |
-| SHOW CREATE DATABASE | ✅ | ✅ | ~~第1批~~ 已完成 |
-| DROP VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
-| ALTER VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
-| SHOW CREATE VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
-| ALTER TABLE RENAME COLUMN | ✅ | ✅ | ~~第1批~~ 已完成 |
-| ALTER TABLE COMMENT | ✅ | ✅ | ~~第1批~~ 已完成 |
-| ALTER TABLE SET PROPERTY | ✅ | ✅ | ~~第1批~~ 已完成 |
-| ALTER TABLE ADD/DROP PARTITION | ✅ | ✅ | ~~第2批~~ 已完成 |
-| ALTER TABLE ADD/DROP ROLLUP | ✅ | ✅ | ~~第2批~~ 已完成 |
-| ALTER TABLE REPLACE | ✅ | ✅ | ~~第2批~~ 已完成 |
-| ALTER TABLE ADD GENERATED COLUMN | ✅ | ✅ | ~~第2批~~ 已完成 |
-| CANCEL ALTER TABLE | ✅ | ✅ | ~~第2批~~ 已完成 |
-| CREATE INDEX | ✅ | ✅ | ~~第2批~~ 已完成 |
-| DROP INDEX | ✅ | ✅ | ~~第2批~~ 已完成 |
-| ALTER COLOCATE GROUP | ✅ | ✅ | ~~第2批~~ 已完成 |
+| ALTER DATABASE | ✅ | ❌ | 第1批 |
+| SHOW CREATE DATABASE | ✅ | ❌ | 第1批 |
+| DROP VIEW | ✅ | ❌ | 第1批 |
+| ALTER VIEW | ✅ | ❌ | 第1批 |
+| SHOW CREATE VIEW | ✅ | ❌ | 第1批 |
+| ALTER TABLE RENAME COLUMN | ✅ | ❌ | 第1批 |
+| ALTER TABLE COMMENT | ✅ | ❌ | 第1批 |
+| ALTER TABLE SET PROPERTY | ✅ | ❌ | 第1批 |
+| ALTER TABLE ADD/DROP PARTITION | ✅ | ❌ | 第2批 |
+| ALTER TABLE ADD/DROP ROLLUP | ✅ | ❌ | 第2批 |
+| ALTER TABLE REPLACE | ✅ | ❌ | 第2批 |
+| ALTER TABLE ADD GENERATED COLUMN | ✅ | ❌ | 第3批 |
+| CANCEL ALTER TABLE | ✅ | ❌ | 第3批 |
+| CREATE INDEX | ✅ | ❌ | 第2批 |
+| DROP INDEX | ✅ | ❌ | 第2批 |
+| ALTER COLOCATE GROUP | ✅ | ❌ | 第4批 |
 
 ### 1.2 SHOW 语句缺失
 
@@ -79,10 +71,10 @@
 | SHOW PROCESSLIST | ✅ | ❌ | 第2批 |
 | SHOW INDEX | ✅ | ❌ | 第2批 |
 | SHOW ALTER TABLE | ✅ | ❌ | 第3批 |
-| SHOW CREATE VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
+| SHOW CREATE VIEW | ✅ | ❌ | 第1批 |
 | SHOW BACKENDS | ✅ | ❌ | 第3批 |
 | SHOW FRONTENDS | ✅ | ❌ | 第3批 |
-| SHOW CREATE DATABASE | ✅ | ✅ | ~~第1批~~ 已完成 |
+| SHOW CREATE DATABASE | ✅ | ❌ | 第1批 |
 | SHOW ALTER TABLE (MV) | ✅ | ❌ | 第3批 |
 | SHOW TABLE ID / PARTITION ID | ✅ | ❌ | 第4批 |
 | SHOW DYNAMIC PARTITION TABLES | ✅ | ❌ | 第4批 |
@@ -107,13 +99,13 @@
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
 | SET VARIABLE 执行 | ✅ | ❌ | 第2批 |
-| GRANT | ✅ | ❌ | 第3批 |
-| REVOKE | ✅ | ❌ | 第3批 |
-| CREATE ROLE / DROP ROLE / ALTER ROLE | ✅ | ❌ | 第3批 |
-| ALTER USER | ✅ | ❌ | 第3批 |
-| SET PASSWORD | ✅ | ❌ | 第3批 |
-| SET PROPERTY | ✅ | ❌ | 第3批 |
-| SHOW GRANTS / SHOW ROLES / SHOW PRIVILEGES | ✅ | ❌ | 第3批 |
+| GRANT | ✅ | ✅ | 第3批 ✅ |
+| REVOKE | ✅ | ✅ | 第3批 ✅ |
+| CREATE ROLE / DROP ROLE | ✅ | ✅ | 第3批 ✅ |
+| ALTER USER | ✅ | ✅ | 第3批 ✅ |
+| SET PASSWORD | ✅ | ✅ | 第3批 ✅ |
+| SET PROPERTY | ✅ | ✅ | 第3批 ✅ |
+| SHOW GRANTS / SHOW ROLES / SHOW PRIVILEGES | ✅ | ✅ | 第3批 ✅ |
 
 ### 1.5 Session/Transaction 语句缺失
 
@@ -327,61 +319,64 @@
 
 ## 10. SQL 语句补全实施计划
 
-### 第1批：DDL 补全 ✅ 已完成 (2026-05-05)
+### 第1批：DDL 补全（优先级最高）
 
 > 目标：补全最基础的 DDL 语句，使数据库元数据操作完整
 
-| # | 语句 | 语法 | 状态 |
-|---|------|------|------|
-| 1 | ALTER DATABASE | `ALTER DATABASE db SET PROPERTIES ("key"="value")` | ✅ |
-| 2 | SHOW CREATE DATABASE | `SHOW CREATE DATABASE db_name` | ✅ |
-| 3 | DROP VIEW | `DROP VIEW [IF EXISTS] view_name` | ✅ |
-| 4 | ALTER VIEW | `ALTER VIEW view_name AS select_query` | ✅ |
-| 5 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` | ✅ |
-| 6 | ALTER TABLE RENAME COLUMN | `ALTER TABLE t RENAME COLUMN old TO new` | ✅ |
-| 7 | ALTER TABLE COMMENT | `ALTER TABLE t COMMENT 'comment'` | ✅ |
-| 8 | ALTER TABLE SET PROPERTY | `ALTER TABLE t SET PROPERTIES ("key"="value")` | ✅ |
+| # | 语句 | 语法 |
+|---|------|------|
+| 1 | ALTER DATABASE | `ALTER DATABASE db SET PROPERTIES ("key"="value")` |
+| 2 | SHOW CREATE DATABASE | `SHOW CREATE DATABASE db_name` |
+| 3 | DROP VIEW | `DROP VIEW [IF EXISTS] view_name` |
+| 4 | ALTER VIEW | `ALTER VIEW view_name AS select_query` |
+| 5 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` |
+| 6 | ALTER TABLE RENAME COLUMN | `ALTER TABLE t RENAME COLUMN old TO new` |
+| 7 | ALTER TABLE COMMENT | `ALTER TABLE t COMMENT 'comment'` |
+| 8 | ALTER TABLE SET PROPERTY | `ALTER TABLE t SET PROPERTIES ("key"="value")` |
 
 **涉及文件**：
 - `crates/fe-sql-parser/src/ast.rs` — 新增 Statement variant 和 struct
 - `crates/fe-sql-parser/src/parser.rs` — 新增关键字匹配和解析函数
 - `roris-server/src/fe_main.rs` — 新增 execute_statement 分支
 
-### 第2批：DDL 补全 ✅ 已完成 (2026-05-05)
+### 第2批：SHOW 语句 + 索引 + Session
 
-> 目标：补全所有剩余 DDL 语句，包括索引管理、分区操作、Rollup、Colocate Group
+> 目标：补全运维常用的 SHOW 语句，添加索引管理，实现 session variable
 
-| # | 语句 | 语法 | 状态 |
-|---|------|------|------|
-| 9 | CREATE INDEX | `CREATE INDEX idx ON t (col1, col2) [USING BITMAP]` | ✅ |
-| 10 | DROP INDEX | `DROP INDEX idx ON t` | ✅ |
-| 11 | ALTER TABLE ADD/DROP PARTITION | `ALTER TABLE t ADD/DROP PARTITION ...` | ✅ |
-| 12 | ALTER TABLE ADD/DROP ROLLUP | `ALTER TABLE t ADD/DROP ROLLUP ...` | ✅ |
-| 13 | ALTER TABLE REPLACE | `ALTER TABLE t REPLACE WITH TABLE ...` | ✅ |
-| 14 | ALTER TABLE ADD GENERATED COLUMN | `ALTER TABLE t ADD GENERATED COLUMN ...` | ✅ |
-| 15 | CANCEL ALTER TABLE | `CANCEL ALTER TABLE [FROM db] t` | ✅ |
-| 16 | ALTER COLOCATE GROUP | `ALTER COLOCATE GROUP g ADD/REMOVE TABLE t` | ✅ |
+| # | 语句 | 语法 |
+|---|------|------|
+| 9 | CREATE INDEX | `CREATE INDEX idx ON t (col1, col2) [USING BITMAP]` |
+| 10 | DROP INDEX | `DROP INDEX idx ON t` |
+| 11 | SHOW INDEX | `SHOW INDEX FROM t` |
+| 12 | SHOW PARTITIONS | `SHOW PARTITIONS FROM t` |
+| 13 | SHOW TABLE STATUS | `SHOW TABLE STATUS [FROM db]` |
+| 14 | SHOW VARIABLES | `SHOW [GLOBAL\|SESSION] VARIABLES [LIKE 'pattern']` |
+| 15 | SHOW PROCESSLIST | `SHOW [FULL] PROCESSLIST` |
+| 16 | SET VARIABLE 执行 | `SET var = value` / `SET GLOBAL var = value` |
+| 17 | ALTER TABLE ADD/DROP PARTITION | `ALTER TABLE t ADD/DROP PARTITION ...` |
+| 18 | ALTER TABLE ADD/DROP ROLLUP | `ALTER TABLE t ADD/DROP ROLLUP ...` |
+| 19 | ALTER TABLE REPLACE | `ALTER TABLE t REPLACE WITH TABLE ...` |
 
 ### 第3批：Account/Security + 事务 + 高级功能
 
 > 目标：实现基本的权限控制、事务支持、数据导出
 
-| # | 语句 | 语法 |
-|---|------|------|
-| 20 | GRANT | `GRANT priv ON db.table TO user` |
-| 21 | REVOKE | `REVOKE priv ON db.table FROM user` |
-| 22 | CREATE/DROP/ALTER ROLE | `CREATE ROLE role_name` |
-| 23 | ALTER USER / SET PASSWORD | `ALTER USER user IDENTIFIED BY 'pwd'` |
-| 24 | SET PROPERTY | `SET PROPERTY FOR user 'key'='value'` |
-| 25 | SHOW GRANTS / ROLES / PRIVILEGES | 各类 SHOW 权限语句 |
-| 26 | BEGIN / COMMIT / ROLLBACK | 事务控制 |
-| 27 | KILL QUERY / KILL CONNECTION | `KILL QUERY id` / `KILL CONNECTION id` |
-| 28 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` |
-| 29 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` |
-| 30 | SHOW BACKENDS / SHOW FRONTENDS | 集群信息查看 |
-| 31 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` |
-| 32 | SHOW DELETE | `SHOW DELETE` |
-| 33 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` |
+| # | 语句 | 语法 | 状态 |
+|---|------|------|------|
+| 20 | GRANT | `GRANT priv ON db.table TO user` | ✅ 已完成 |
+| 21 | REVOKE | `REVOKE priv ON db.table FROM user` | ✅ 已完成 |
+| 22 | CREATE/DROP ROLE | `CREATE ROLE role_name` | ✅ 已完成 |
+| 23 | ALTER USER / SET PASSWORD | `ALTER USER user IDENTIFIED BY 'pwd'` | ✅ 已完成 |
+| 24 | SET PROPERTY | `SET PROPERTY FOR user 'key'='value'` | ✅ 已完成 |
+| 25 | SHOW GRANTS / ROLES / PRIVILEGES | 各类 SHOW 权限语句 | ✅ 已完成 |
+| 26 | BEGIN / COMMIT / ROLLBACK | 事务控制 | ❌ |
+| 27 | KILL QUERY / KILL CONNECTION | `KILL QUERY id` / `KILL CONNECTION id` | ❌ |
+| 28 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` | ❌ |
+| 29 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` | ❌ |
+| 30 | SHOW BACKENDS / SHOW FRONTENDS | 集群信息查看 | ❌ |
+| 31 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` | ❌ |
+| 32 | SHOW DELETE | `SHOW DELETE` | ❌ |
+| 33 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` | ❌ |
 
 ### 第4批：高级功能（长期）
 
