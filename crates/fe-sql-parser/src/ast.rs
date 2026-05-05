@@ -36,16 +36,62 @@ pub enum Statement {
     DropCatalog(DropCatalogStmt),
     ShowCatalogs,
     RefreshCatalog(RefreshCatalogStmt),
-    Grant(GrantStmt),
-    Revoke(RevokeStmt),
-    CreateRole(CreateRoleStmt),
-    DropRole(DropRoleStmt),
-    AlterUser(AlterUserStmt),
-    SetPassword(SetPasswordStmt),
-    SetProperty(SetPropertyStmt),
-    ShowGrants(Option<String>),
-    ShowRoles,
-    ShowPrivileges(Option<UserIdentity>),
+    // Batch 1 additions
+    AlterDatabase(AlterDatabaseStmt),
+    ShowCreateDatabase(String),
+    DropView(DropViewStmt),
+    AlterView(AlterViewStmt),
+    ShowCreateView(String, String),
+    
+    // Batch 3: Data export statements
+    ExportTable(ExportTableStmt),
+    CancelExport(CancelExportStmt),
+    ShowExport(ShowExportStmt),
+    
+    // Batch 4: UDF function management
+    CreateFunction(CreateFunctionStmt),
+    DropFunction(DropFunctionStmt),
+    ShowFunctions(Option<String>),
+    ShowCreateFunction(String, String),
+    DescFunction(String, String),
+    
+    // Batch 4: Statistics management
+    AnalyzeTable(AnalyzeTableStmt),
+    AlterStats(AlterStatsStmt),
+    DropStats(DropStatsStmt),
+    DropAnalyzeJob(DropAnalyzeJobStmt),
+    KillAnalyzeJob(KillAnalyzeJobStmt),
+    ShowAnalyze(ShowAnalyzeStmt),
+    ShowStats(ShowStatsStmt),
+    ShowTableStats(ShowTableStatsStmt),
+    
+    // Batch 4: Job management
+    CreateJob(CreateJobStmt),
+    DropJob(DropJobStmt),
+    PauseJob(PauseJobStmt),
+    ResumeJob(ResumeJobStmt),
+    CancelTask(CancelTaskStmt),
+    
+    // Batch 4: Plugin management
+    InstallPlugin(InstallPluginStmt),
+    UninstallPlugin(UninstallPluginStmt),
+    ShowPlugins,
+    
+    // Batch 4: Recycle bin management
+    RecoverDatabase(RecoverDatabaseStmt),
+    RecoverTable(RecoverTableStmt),
+    RecoverPartition(RecoverPartitionStmt),
+    DropCatalogRecycleBin(DropCatalogRecycleBinStmt),
+    ShowCatalogRecycleBin,
+    
+    // Batch 4: Data governance
+    CreateSqlBlockRule(CreateSqlBlockRuleStmt),
+    AlterSqlBlockRule(AlterSqlBlockRuleStmt),
+    DropSqlBlockRule(DropSqlBlockRuleStmt),
+    ShowSqlBlockRule(ShowSqlBlockRuleStmt),
+    CreateRowPolicy(CreateRowPolicyStmt),
+    DropRowPolicy(DropRowPolicyStmt),
+    ShowRowPolicy(ShowRowPolicyStmt),
 }
 
 #[derive(Debug, Clone)]
@@ -217,6 +263,9 @@ pub enum AlterOperation {
     DropColumn(String),
     ModifyColumn(ColumnDef),
     RenameTable(String),
+    RenameColumn { old_name: String, new_name: String },
+    SetComment(String),
+    SetProperty(Vec<(String, String)>),
 }
 
 #[derive(Debug, Clone)]
@@ -403,69 +452,264 @@ pub struct RefreshCatalogStmt {
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct GrantStmt {
-    pub privileges: Vec<Privilege>,
-    pub scope: PrivilegeScope,
-    pub roles: Vec<String>,
-    pub users: Vec<UserIdentity>,
-}
+// Batch 1: New statement types
 
 #[derive(Debug, Clone)]
-pub struct RevokeStmt {
-    pub privileges: Vec<Privilege>,
-    pub scope: PrivilegeScope,
-    pub roles: Vec<String>,
-    pub users: Vec<UserIdentity>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CreateRoleStmt {
-    pub role_name: String,
-    pub if_not_exists: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct DropRoleStmt {
-    pub role_name: String,
-    pub if_exists: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct AlterUserStmt {
-    pub user: UserIdentity,
-    pub auth_plugin: Option<String>,
-    pub password: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SetPasswordStmt {
-    pub user: Option<UserIdentity>,
-    pub password: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct SetPropertyStmt {
-    pub user: UserIdentity,
+pub struct AlterDatabaseStmt {
+    pub name: String,
     pub properties: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
-pub struct UserIdentity {
-    pub username: String,
-    pub hostname: Option<String>,
+pub struct DropViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct Privilege {
-    pub privilege_type: String,
+pub struct AlterViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub query: String,
+}
+
+// Batch 3: Data export structures
+
+#[derive(Debug, Clone)]
+pub struct ExportTableStmt {
+    pub database: Option<String>,
+    pub table: String,
+    pub path: String,
+    pub properties: Vec<(String, String)>,
+    pub columns: Option<Vec<String>>,
+    pub where_clause: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CancelExportStmt {
+    pub export_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowExportStmt {
+    pub export_id: Option<String>,
+    pub state: Option<String>,
+}
+
+// Batch 4: UDF function management structures
+
+#[derive(Debug, Clone)]
+pub struct CreateFunctionStmt {
+    pub name: String,
+    pub function_type: String,
+    pub input_types: Vec<String>,
+    pub return_type: String,
+    pub properties: Vec<(String, String)>,
+    pub library_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropFunctionStmt {
+    pub name: String,
+    pub input_types: Option<Vec<String>>,
+    pub if_exists: bool,
+}
+
+// Batch 4: Statistics management structures
+
+#[derive(Debug, Clone)]
+pub struct AnalyzeTableStmt {
+    pub database: Option<String>,
+    pub table: String,
+    pub columns: Option<Vec<String>>,
+    pub analyze_type: AnalyzeType,
+    pub sample_rate: Option<f64>,
+    pub async_mode: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AnalyzeType {
+    Full,
+    Sample,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterStatsStmt {
+    pub database: Option<String>,
+    pub table: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropStatsStmt {
+    pub database: Option<String>,
+    pub table: String,
     pub columns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum PrivilegeScope {
-    Global,
-    Database(String),
-    Table(String, String),
-    Column(Vec<String>),
+pub struct DropAnalyzeJobStmt {
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct KillAnalyzeJobStmt {
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowAnalyzeStmt {
+    pub job_id: Option<String>,
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowStatsStmt {
+    pub database: Option<String>,
+    pub table: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowTableStatsStmt {
+    pub database: Option<String>,
+    pub table: String,
+}
+
+// Batch 4: Job management structures
+
+#[derive(Debug, Clone)]
+pub struct CreateJobStmt {
+    pub name: String,
+    pub database: Option<String>,
+    pub schedule: String,
+    pub job_type: JobType,
+    pub definition: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum JobType {
+    Cron,
+    OneTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropJobStmt {
+    pub name: String,
+    pub database: Option<String>,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PauseJobStmt {
+    pub name: String,
+    pub database: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResumeJobStmt {
+    pub name: String,
+    pub database: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CancelTaskStmt {
+    pub task_id: String,
+}
+
+// Batch 4: Plugin management structures
+
+#[derive(Debug, Clone)]
+pub struct InstallPluginStmt {
+    pub plugin_name: String,
+    pub plugin_path: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UninstallPluginStmt {
+    pub plugin_name: String,
+}
+
+// Batch 4: Recycle bin management structures
+
+#[derive(Debug, Clone)]
+pub struct RecoverDatabaseStmt {
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecoverTableStmt {
+    pub database: String,
+    pub table: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecoverPartitionStmt {
+    pub database: String,
+    pub table: String,
+    pub partition: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropCatalogRecycleBinStmt {
+    pub type_filter: Option<String>,
+    pub name_filter: Option<String>,
+}
+
+// Batch 4: Data governance structures
+
+#[derive(Debug, Clone)]
+pub struct CreateSqlBlockRuleStmt {
+    pub name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterSqlBlockRuleStmt {
+    pub name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropSqlBlockRuleStmt {
+    pub name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowSqlBlockRuleStmt {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateRowPolicyStmt {
+    pub name: String,
+    pub database: String,
+    pub table: String,
+    pub policy_type: RowPolicyType,
+    pub filter: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RowPolicyType {
+    Permit,
+    Restrict,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropRowPolicyStmt {
+    pub name: String,
+    pub database: String,
+    pub table: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowRowPolicyStmt {
+    pub name: Option<String>,
+    pub database: Option<String>,
+    pub table: Option<String>,
 }

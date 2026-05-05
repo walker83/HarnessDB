@@ -68,35 +68,152 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     if trimmed.starts_with("REFRESH CATALOG") {
         return parse_refresh_catalog(sql);
     }
-    if trimmed.starts_with("GRANT") {
-        return parse_grant(sql);
+
+    // Batch 1: ALTER DATABASE, SHOW CREATE DATABASE, DROP VIEW, ALTER VIEW, SHOW CREATE VIEW
+    if trimmed.starts_with("ALTER DATABASE") {
+        return parse_alter_database(sql);
     }
-    if trimmed.starts_with("REVOKE") {
-        return parse_revoke(sql);
+    if trimmed.starts_with("SHOW CREATE DATABASE") {
+        return parse_show_create_database(sql);
     }
-    if trimmed.starts_with("CREATE ROLE") {
-        return parse_create_role(sql);
+    if trimmed.starts_with("DROP VIEW") {
+        return parse_drop_view(sql);
     }
-    if trimmed.starts_with("DROP ROLE") {
-        return parse_drop_role(sql);
+    if trimmed.starts_with("ALTER VIEW") {
+        return parse_alter_view(sql);
     }
-    if trimmed.starts_with("ALTER USER") {
-        return parse_alter_user(sql);
+    if trimmed.starts_with("SHOW CREATE VIEW") {
+        return parse_show_create_view(sql);
     }
-    if trimmed.starts_with("SET PASSWORD") {
-        return parse_set_password(sql);
+    
+    // Batch 3: Data export statements
+    if trimmed.starts_with("EXPORT TABLE") {
+        return parse_export_table(sql);
     }
-    if trimmed.starts_with("SET PROPERTY") {
-        return parse_set_property(sql);
+    if trimmed.starts_with("CANCEL EXPORT") {
+        return parse_cancel_export(sql);
     }
-    if trimmed.starts_with("SHOW GRANTS") {
-        return parse_show_grants(sql);
+    if trimmed.starts_with("SHOW EXPORT") {
+        return parse_show_export(sql);
     }
-    if trimmed.starts_with("SHOW ROLES") {
-        return parse_show_roles(sql);
+    
+    // Batch 4: UDF function management
+    if trimmed.starts_with("CREATE FUNCTION") {
+        return parse_create_function(sql);
     }
-    if trimmed.starts_with("SHOW PRIVILEGES") {
-        return parse_show_privileges(sql);
+    if trimmed.starts_with("DROP FUNCTION") {
+        return parse_drop_function(sql);
+    }
+    if trimmed.starts_with("SHOW FUNCTIONS") {
+        return parse_show_functions(sql);
+    }
+    if trimmed.starts_with("SHOW CREATE FUNCTION") {
+        return parse_show_create_function(sql);
+    }
+    if trimmed.starts_with("DESC FUNCTION") || trimmed.starts_with("DESCRIBE FUNCTION") {
+        return parse_desc_function(sql);
+    }
+    
+    // Batch 4: Statistics management
+    if trimmed.starts_with("ANALYZE TABLE") {
+        return parse_analyze_table(sql);
+    }
+    if trimmed.starts_with("ALTER STATS") {
+        return parse_alter_stats(sql);
+    }
+    if trimmed.starts_with("DROP STATS") {
+        return parse_drop_stats(sql);
+    }
+    if trimmed.starts_with("DROP ANALYZE JOB") {
+        return parse_drop_analyze_job(sql);
+    }
+    if trimmed.starts_with("KILL ANALYZE JOB") {
+        return parse_kill_analyze_job(sql);
+    }
+    if trimmed.starts_with("SHOW ANALYZE") {
+        return parse_show_analyze(sql);
+    }
+    if trimmed.starts_with("SHOW STATS") {
+        return parse_show_stats(sql);
+    }
+    if trimmed.starts_with("SHOW TABLE STATS") || trimmed.starts_with("SHOW TABLE STATISTICS") {
+        return parse_show_table_stats(sql);
+    }
+    
+    // Batch 4: Job management
+    if trimmed.starts_with("CREATE JOB") {
+        return parse_create_job(sql);
+    }
+    if trimmed.starts_with("DROP JOB") {
+        return parse_drop_job(sql);
+    }
+    if trimmed.starts_with("PAUSE JOB") {
+        return parse_pause_job(sql);
+    }
+    if trimmed.starts_with("RESUME JOB") {
+        return parse_resume_job(sql);
+    }
+    if trimmed.starts_with("CANCEL TASK") {
+        return parse_cancel_task(sql);
+    }
+    
+    // Batch 4: Plugin management
+    if trimmed.starts_with("INSTALL PLUGIN") {
+        return parse_install_plugin(sql);
+    }
+    if trimmed.starts_with("UNINSTALL PLUGIN") {
+        return parse_uninstall_plugin(sql);
+    }
+    if trimmed.starts_with("SHOW PLUGINS") {
+        return Ok(vec![Statement::ShowPlugins]);
+    }
+    
+    // Batch 4: Recycle bin management
+    if trimmed.starts_with("RECOVER DATABASE") {
+        return parse_recover_database(sql);
+    }
+    if trimmed.starts_with("RECOVER TABLE") {
+        return parse_recover_table(sql);
+    }
+    if trimmed.starts_with("RECOVER PARTITION") {
+        return parse_recover_partition(sql);
+    }
+    if trimmed.starts_with("DROP CATALOG RECYCLE BIN") {
+        return parse_drop_catalog_recycle_bin(sql);
+    }
+    if trimmed.starts_with("SHOW CATALOG RECYCLE BIN") {
+        return Ok(vec![Statement::ShowCatalogRecycleBin]);
+    }
+    
+    // Batch 4: Data governance
+    if trimmed.starts_with("CREATE SQL_BLOCK_RULE") {
+        return parse_create_sql_block_rule(sql);
+    }
+    if trimmed.starts_with("ALTER SQL_BLOCK_RULE") {
+        return parse_alter_sql_block_rule(sql);
+    }
+    if trimmed.starts_with("DROP SQL_BLOCK_RULE") {
+        return parse_drop_sql_block_rule(sql);
+    }
+    if trimmed.starts_with("SHOW SQL_BLOCK_RULE") {
+        return parse_show_sql_block_rule(sql);
+    }
+    if trimmed.starts_with("CREATE ROW POLICY") {
+        return parse_create_row_policy(sql);
+    }
+    if trimmed.starts_with("DROP ROW POLICY") {
+        return parse_drop_row_policy(sql);
+    }
+    if trimmed.starts_with("SHOW ROW POLICY") {
+        return parse_show_row_policy(sql);
+    }
+
+    // Doris-specific ALTER TABLE operations that sqlparser doesn't handle
+    if trimmed.starts_with("ALTER TABLE") {
+        let upper = trimmed.clone();
+        if upper.contains("RENAME COLUMN") || upper.contains("SET PROPERTIES") || upper.contains("COMMENT") {
+            return parse_alter_table_doris(sql);
+        }
     }
 
     let dialect = sqlparser::dialect::MySqlDialect {};
@@ -1309,21 +1426,22 @@ fn parse_create_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let mut password = None;
     let mut identified_by_password = false;
 
-    if let Some(idx) = rest.to_uppercase().find("IDENTIFIED BY") {
+    let rest_upper = rest.to_uppercase();
+    if rest_upper.contains("IDENTIFIED BY") {
         identified_by_password = true;
-        let pwd_part = &rest[idx + 14..].trim();
-        password = Some(pwd_part.trim().trim_start_matches('\'').trim_start_matches('"').to_string());
-        if rest.to_uppercase().contains("WITH") {
-            if let Some(with_idx) = rest.to_uppercase().find("WITH") {
-                let with_part = &rest[with_idx + 5..].trim();
-                let plugin = with_part.split_whitespace().next().unwrap_or("mysql_native_password");
+        if let Some(pwd_part) = rest_upper.split("IDENTIFIED BY").nth(1) {
+            let pwd = pwd_part.trim().trim_end_matches('\'').trim_end_matches('"');
+            password = Some(pwd.to_string());
+        }
+        if rest_upper.contains("WITH") {
+            if let Some(with_part) = rest_upper.split("WITH").nth(1) {
+                let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
                 auth_plugin = plugin.to_string();
             }
         }
-    } else if rest.to_uppercase().contains("IDENTIFIED WITH") {
-        if let Some(with_idx) = rest.to_uppercase().find("IDENTIFIED WITH") {
-            let with_part = &rest[with_idx + 14..].trim();
-            let plugin = with_part.split_whitespace().next().unwrap_or("mysql_native_password");
+    } else if rest_upper.contains("IDENTIFIED WITH") {
+        if let Some(with_part) = rest_upper.split("IDENTIFIED WITH").nth(1) {
+            let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
             auth_plugin = plugin.to_string();
         }
     }
@@ -1484,365 +1602,1482 @@ fn parse_refresh_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
     })])
 }
 
-fn parse_grant(sql: &str) -> Result<Vec<Statement>, ParseError> {
+// ---- Batch 1: New statement parsers ----
+
+fn parse_alter_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-    let after_grant = sql
-        .strip_prefix("GRANT")
+    let after_alter = sql
+        .strip_prefix("ALTER DATABASE")
+        .or_else(|| sql.strip_prefix("alter database"))
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected GRANT".to_string(),
+            message: "Expected ALTER DATABASE".to_string(),
         })?
         .trim();
 
-    let privileges = parse_privileges(after_grant)?;
-
-    let (rest_after_on, users) = extract_users_after_on(after_grant)?;
-    let scope = parse_privilege_scope(rest_after_on)?;
-
-    Ok(vec![Statement::Grant(GrantStmt {
-        privileges,
-        scope,
-        roles: vec![],
-        users,
-    })])
-}
-
-fn parse_revoke(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    let sql = sql.trim();
-    let after_revoke = sql
-        .strip_prefix("REVOKE")
+    let (name, rest) = extract_identifier(after_alter)
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected REVOKE".to_string(),
-        })?
-        .trim();
-
-    let privileges = parse_privileges(after_revoke)?;
-
-    let (rest_after_on, users) = extract_users_after_on(after_revoke)?;
-    let scope = parse_privilege_scope(rest_after_on)?;
-
-    Ok(vec![Statement::Revoke(RevokeStmt {
-        privileges,
-        scope,
-        roles: vec![],
-        users,
-    })])
-}
-
-fn parse_privileges(sql: &str) -> Result<Vec<Privilege>, ParseError> {
-    let upper = sql.to_uppercase();
-    let mut privileges = vec![];
-
-    let priv_types = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "USAGE", "ALL"];
-    for priv_type in priv_types {
-        if upper.contains(priv_type) {
-            let priv_upper = priv_type.to_string();
-            if priv_upper == "ALL" {
-                privileges.push(Privilege {
-                    privilege_type: "ALL".to_string(),
-                    columns: None,
-                });
-                break;
-            } else {
-                privileges.push(Privilege {
-                    privilege_type: priv_upper,
-                    columns: None,
-                });
-            }
-        }
-    }
-
-    if privileges.is_empty() {
-        return Err(ParseError::SyntaxError {
-            position: 0,
-            message: "Expected privilege type".to_string(),
-        });
-    }
-
-    Ok(privileges)
-}
-
-fn extract_users_after_on(sql: &str) -> Result<(&str, Vec<UserIdentity>), ParseError> {
-    let upper = sql.to_uppercase();
-    if let Some(on_idx) = upper.find(" ON ") {
-        let before_on = &sql[..on_idx];
-        let after_on = sql[on_idx + 4..].trim();
-
-        let user_str = before_on.trim_start_matches("GRANT").trim_start_matches("REVOKE").trim();
-        let users = parse_user_list(user_str)?;
-
-        Ok((after_on, users))
-    } else {
-        Err(ParseError::SyntaxError {
-            position: 0,
-            message: "Expected ON clause".to_string(),
-        })
-    }
-}
-
-fn parse_user_list(sql: &str) -> Result<Vec<UserIdentity>, ParseError> {
-    let parts: Vec<&str> = sql.split(',').map(|s| s.trim()).collect();
-    let mut users = vec![];
-
-    for part in parts {
-        let user = parse_user_identity(part)?;
-        users.push(user);
-    }
-
-    Ok(users)
-}
-
-fn parse_privilege_scope(sql: &str) -> Result<PrivilegeScope, ParseError> {
-    let upper = sql.to_uppercase();
-
-    if upper.starts_with("*.") || upper.starts_with("ON *") {
-        return Ok(PrivilegeScope::Global);
-    }
-
-    if let Some(pos) = upper.find(" ON ") {
-        let scope_part = &sql[pos + 4..];
-        let parts: Vec<&str> = scope_part.split('.').collect();
-
-        if parts.len() == 1 {
-            Ok(PrivilegeScope::Database(parts[0].trim().to_string()))
-        } else if parts.len() == 2 {
-            Ok(PrivilegeScope::Table(parts[0].trim().to_string(), parts[1].trim().to_string()))
-        } else {
-            Err(ParseError::SyntaxError {
-                position: 0,
-                message: "Invalid privilege scope".to_string(),
-            })
-        }
-    } else {
-        Ok(PrivilegeScope::Global)
-    }
-}
-
-fn parse_create_role(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    let sql = sql.trim();
-    let if_not_exists = sql.to_uppercase().contains("IF NOT EXISTS");
-
-    let after_create = sql
-        .strip_prefix("CREATE ROLE")
-        .ok_or_else(|| ParseError::SyntaxError {
-            position: 0,
-            message: "Expected CREATE ROLE".to_string(),
-        })?
-        .trim();
-
-    let (role_name, _) = extract_identifier(after_create)
-        .ok_or_else(|| ParseError::SyntaxError {
-            position: 0,
-            message: "Expected role name".to_string(),
+            message: "Expected database name".to_string(),
         })?;
 
-    Ok(vec![Statement::CreateRole(CreateRoleStmt {
-        role_name: role_name.to_string(),
-        if_not_exists,
+    let rest = rest.trim();
+    let properties = if rest.to_uppercase().starts_with("SET PROPERTIES") {
+        let after_set = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        parse_properties(&format!("PROPERTIES {}", after_set))
+    } else {
+        vec![]
+    };
+
+    Ok(vec![Statement::AlterDatabase(AlterDatabaseStmt {
+        name: name.to_string(),
+        properties,
     })])
 }
 
-fn parse_drop_role(sql: &str) -> Result<Vec<Statement>, ParseError> {
+fn parse_show_create_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-    let if_exists = sql.to_uppercase().contains("IF EXISTS");
+    let after_show = sql
+        .strip_prefix("SHOW CREATE DATABASE")
+        .or_else(|| sql.strip_prefix("show create database"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW CREATE DATABASE".to_string(),
+        })?
+        .trim();
 
+    let (name, _) = extract_identifier(after_show)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+
+    Ok(vec![Statement::ShowCreateDatabase(name.to_string())])
+}
+
+fn parse_drop_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
     let after_drop = sql
-        .strip_prefix("DROP ROLE")
+        .strip_prefix("DROP VIEW")
+        .or_else(|| sql.strip_prefix("drop view"))
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected DROP ROLE".to_string(),
+            message: "Expected DROP VIEW".to_string(),
         })?
         .trim();
 
-    let (role_name, _) = extract_identifier(after_drop)
+    let if_exists = after_drop.to_uppercase().starts_with("IF EXISTS");
+    let rest = if if_exists {
+        after_drop.strip_prefix("IF EXISTS")
+            .or_else(|| after_drop.strip_prefix("if exists"))
+            .unwrap_or(after_drop)
+            .trim()
+    } else {
+        after_drop
+    };
+
+    let (name, _) = extract_identifier(rest)
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected role name".to_string(),
+            message: "Expected view name".to_string(),
         })?;
 
-    Ok(vec![Statement::DropRole(DropRoleStmt {
-        role_name: role_name.to_string(),
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    Ok(vec![Statement::DropView(DropViewStmt {
+        database,
+        name: view_name,
         if_exists,
     })])
 }
 
-fn parse_alter_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
+fn parse_alter_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-
     let after_alter = sql
-        .strip_prefix("ALTER USER")
+        .strip_prefix("ALTER VIEW")
+        .or_else(|| sql.strip_prefix("alter view"))
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected ALTER USER".to_string(),
+            message: "Expected ALTER VIEW".to_string(),
         })?
         .trim();
 
-    let user = parse_user_identity(after_alter)?;
+    let (name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected view name".to_string(),
+        })?;
 
-    let mut auth_plugin = None;
-    let mut password = None;
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
 
-    let rest = after_alter.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
-    let upper = rest.to_uppercase();
-    if upper.contains("IDENTIFIED BY") {
-        if let Some(pwd_part) = upper.split("IDENTIFIED BY").nth(1) {
-            let pwd = pwd_part.trim().trim_end_matches('\'').trim_end_matches('"');
-            password = Some(pwd.to_string());
-        }
-    }
+    let rest = rest.trim();
+    let query = if rest.to_uppercase().starts_with("AS ") {
+        rest[3..].trim().to_string()
+    } else {
+        rest.to_string()
+    };
 
-    Ok(vec![Statement::AlterUser(AlterUserStmt {
-        user,
-        auth_plugin,
-        password,
+    Ok(vec![Statement::AlterView(AlterViewStmt {
+        database,
+        name: view_name,
+        query,
     })])
 }
 
-fn parse_set_password(sql: &str) -> Result<Vec<Statement>, ParseError> {
+fn parse_show_create_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-
-    let after_set = sql
-        .strip_prefix("SET PASSWORD")
-        .or_else(|| sql.strip_prefix("set password"))
+    let after_show = sql
+        .strip_prefix("SHOW CREATE VIEW")
+        .or_else(|| sql.strip_prefix("show create view"))
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected SET PASSWORD".to_string(),
+            message: "Expected SHOW CREATE VIEW".to_string(),
         })?
         .trim();
 
-    let upper = after_set.to_uppercase();
-
-    let user = if after_set.starts_with("FOR ") {
-        let after_for = after_set.trim_start_matches("FOR ").trim_start_matches("for ");
-        let user = parse_user_identity(after_for)?;
-        Some(user)
-    } else {
-        None
-    };
-
-    let password = if let Some(idx) = upper.rfind("=") {
-        let pwd_part = &after_set[idx + 1..].trim();
-        pwd_part.trim().trim_end_matches('\'').trim_end_matches('"').to_string()
-    } else {
-        return Err(ParseError::SyntaxError {
+    let (name, _) = extract_identifier(after_show)
+        .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected password assignment".to_string(),
-        });
+            message: "Expected view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (db, view) = if parts.len() == 2 {
+        (parts[0].to_string(), parts[1].to_string())
+    } else {
+        (String::new(), parts[0].to_string())
     };
 
-    Ok(vec![Statement::SetPassword(SetPasswordStmt { user, password })])
+    Ok(vec![Statement::ShowCreateView(db, view)])
 }
 
-fn parse_set_property(sql: &str) -> Result<Vec<Statement>, ParseError> {
+fn parse_alter_table_doris(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-
-    let after_set = sql
-        .strip_prefix("SET PROPERTY")
-        .or_else(|| sql.strip_prefix("set property"))
+    let after_alter = sql
+        .strip_prefix("ALTER TABLE")
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected SET PROPERTY".to_string(),
+            message: "Expected ALTER TABLE".to_string(),
         })?
         .trim();
 
-    let upper = after_set.to_uppercase();
+    let (name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
 
-    let user = if upper.starts_with("FOR ") {
-        let after_for = after_set.trim_start_matches("FOR ").trim_start_matches("for ");
-        let parts: Vec<&str> = after_for.split_whitespace().collect();
-        if parts.is_empty() {
-            return Err(ParseError::SyntaxError {
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, table_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let rest = rest.trim();
+    let rest_upper = rest.to_uppercase();
+
+    let operation = if rest_upper.starts_with("RENAME COLUMN") {
+        let after_rename = rest.trim_start_matches(|c: char| !c.is_whitespace())
+            .trim()
+            .trim_start_matches("COLUMN")
+            .trim();
+        let (old_name, remaining) = extract_identifier(after_rename)
+            .ok_or_else(|| ParseError::SyntaxError {
                 position: 0,
-                message: "Expected user identity".to_string(),
-            });
+                message: "Expected old column name".to_string(),
+            })?;
+        let remaining = remaining.trim();
+        let remaining = remaining.strip_prefix("TO")
+            .or_else(|| remaining.strip_prefix("to"))
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected TO".to_string(),
+            })?
+            .trim();
+        let (new_name, _) = extract_identifier(remaining)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected new column name".to_string(),
+            })?;
+        AlterOperation::RenameColumn {
+            old_name: old_name.to_string(),
+            new_name: new_name.to_string(),
         }
-        let user_identity = parse_user_identity(parts[0])?;
-        let rest = parts[1..].join(" ");
-        let properties = parse_properties(rest.trim());
-        (user_identity, properties)
+    } else if rest_upper.starts_with("COMMENT") {
+        let comment_part = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let comment = comment_part.trim_matches('\'').trim_matches('"').to_string();
+        AlterOperation::SetComment(comment)
+    } else if rest_upper.starts_with("SET PROPERTIES") {
+        let after_set = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let props = parse_properties(&format!("PROPERTIES {}", after_set));
+        AlterOperation::SetProperty(props)
     } else {
         return Err(ParseError::SyntaxError {
             position: 0,
-            message: "Expected FOR clause".to_string(),
+            message: format!("Unknown ALTER TABLE operation: {}", rest),
         });
     };
 
-    Ok(vec![Statement::SetProperty(SetPropertyStmt {
-        user: user.0,
-        properties: user.1,
+    Ok(vec![Statement::AlterTable(AlterTableStmt {
+        database,
+        table: table_name,
+        operations: vec![operation],
     })])
 }
 
-fn parse_user_identity(s: &str) -> Result<UserIdentity, ParseError> {
-    let s = s.trim();
-    if s.contains('@') {
-        let parts: Vec<&str> = s.split('@').collect();
-        Ok(UserIdentity {
-            username: parts[0].to_string(),
-            hostname: Some(parts[1].to_string()),
-        })
-    } else {
-        Ok(UserIdentity {
-            username: s.to_string(),
-            hostname: None,
-        })
-    }
-}
+// ============================================================================
+// Batch 3: Data export parsing functions
+// ============================================================================
 
-fn parse_show_grants(sql: &str) -> Result<Vec<Statement>, ParseError> {
+fn parse_export_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-
-    let after_show = sql
-        .strip_prefix("SHOW GRANTS")
-        .or_else(|| sql.strip_prefix("show grants"))
+    let after_export = sql.strip_prefix("EXPORT TABLE")
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected SHOW GRANTS".to_string(),
+            message: "Expected EXPORT TABLE".to_string(),
         })?
         .trim();
-
-    let username = if after_show.to_uppercase().starts_with("FOR ") {
-        let after_for = after_show.trim_start_matches("FOR ").trim_start_matches("for ");
-        let user = parse_user_identity(after_for)?;
-        Some(user.username)
-    } else {
-        None
-    };
-
-    Ok(vec![Statement::ShowGrants(username)])
+    
+    let (table_name, rest) = extract_identifier_opt(after_export)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let mut table = table_name.to_string();
+    
+    if table_name.contains('.') {
+        let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+        database = Some(parts[0].to_string());
+        table = parts[1].to_string();
+    }
+    
+    let rest = rest.trim();
+    let mut path = String::new();
+    let mut properties = vec![];
+    let mut columns = None;
+    let mut where_clause = None;
+    
+    if let Some((path_str, rest)) = extract_quoted_string_opt(rest) {
+        path = path_str.to_string();
+        let rest = rest.trim();
+        if rest.starts_with("PROPERTIES") {
+            properties = parse_properties(rest);
+        }
+        
+        if let Some(cols_part) = rest.split("COLUMNS").nth(1) {
+            let cols_part = cols_part.trim();
+            if cols_part.starts_with("(") {
+                let end = cols_part.find(')').unwrap_or(cols_part.len());
+                let cols_str = &cols_part[1..end];
+                columns = Some(cols_str.split(',').map(|s| s.trim().to_string()).collect());
+            }
+        }
+        
+        if let Some(where_part) = rest.split("WHERE").nth(1) {
+            where_clause = Some(where_part.trim().to_string());
+        }
+    }
+    
+    Ok(vec![Statement::ExportTable(ExportTableStmt {
+        database,
+        table,
+        path,
+        properties,
+        columns,
+        where_clause,
+    })])
 }
 
-fn parse_show_roles(sql: &str) -> Result<Vec<Statement>, ParseError> {
+fn parse_cancel_export(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
+    let after_cancel = sql.strip_prefix("CANCEL EXPORT")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CANCEL EXPORT".to_string(),
+        })?
+        .trim();
+    
+    let export_id = after_cancel.to_string();
+    
+    Ok(vec![Statement::CancelExport(CancelExportStmt {
+        export_id,
+    })])
+}
 
-    if !sql.to_uppercase().starts_with("SHOW ROLES") {
+fn parse_show_export(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql.strip_prefix("SHOW EXPORT")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW EXPORT".to_string(),
+        })?
+        .trim();
+    
+    let mut export_id = None;
+    let mut state = None;
+    
+    if !after_show.is_empty() {
+        if let Some(id_part) = after_show.split_whitespace().nth(0) {
+            export_id = Some(id_part.to_string());
+        }
+        
+        if after_show.contains("STATE") {
+            if let Some(state_part) = after_show.split("STATE").nth(1) {
+                state = Some(state_part.trim().to_string());
+            }
+        }
+    }
+    
+    Ok(vec![Statement::ShowExport(ShowExportStmt {
+        export_id,
+        state,
+    })])
+}
+
+// ============================================================================
+// Batch 4: UDF function management parsing functions
+// ============================================================================
+
+fn parse_create_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE FUNCTION")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE FUNCTION".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected function name".to_string(),
+        })?;
+    
+    let rest = rest.trim();
+    let mut function_type = "UDF".to_string();
+    let mut input_types = vec![];
+    let mut return_type = String::new();
+    let mut properties = vec![];
+    let mut library_path = None;
+    
+    if rest.starts_with("(") {
+        if let Some(end) = rest.find(')') {
+            let params_str = &rest[1..end];
+            if !params_str.is_empty() {
+                input_types = params_str.split(',').map(|s| s.trim().to_string()).collect();
+            }
+            let after_params = rest[end+1..].trim();
+            
+            if after_params.starts_with("RETURNS") {
+                let after_returns = after_params.strip_prefix("RETURNS").unwrap().trim();
+                if let Some((ret_type, rest)) = extract_identifier_opt(after_returns) {
+                    return_type = ret_type.to_string();
+                    
+                    let rest = rest.trim();
+                    if rest.contains("PROPERTIES") {
+                        properties = parse_properties(rest);
+                        for (key, value) in &properties {
+                            if key == "type" {
+                                function_type = value.clone();
+                            }
+                            if key == "file" {
+                                library_path = Some(value.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(vec![Statement::CreateFunction(CreateFunctionStmt {
+        name: name.to_string(),
+        function_type,
+        input_types,
+        return_type,
+        properties,
+        library_path,
+    })])
+}
+
+fn parse_drop_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP FUNCTION")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP FUNCTION".to_string(),
+        })?
+        .trim();
+    
+    let mut if_exists = false;
+    let after_drop = if after_drop.starts_with("IF EXISTS") {
+        if_exists = true;
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+    
+    let (name, rest) = extract_identifier_opt(after_drop)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected function name".to_string(),
+        })?;
+    
+    let mut input_types = None;
+    let rest = rest.trim();
+    
+    if rest.starts_with("(") {
+        if let Some(end) = rest.find(')') {
+            let params_str = &rest[1..end];
+            if !params_str.is_empty() {
+                input_types = Some(params_str.split(',').map(|s| s.trim().to_string()).collect());
+            }
+        }
+    }
+    
+    Ok(vec![Statement::DropFunction(DropFunctionStmt {
+        name: name.to_string(),
+        input_types,
+        if_exists,
+    })])
+}
+
+fn parse_show_functions(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql.strip_prefix("SHOW FUNCTIONS")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW FUNCTIONS".to_string(),
+        })?
+        .trim();
+    
+    let mut pattern = None;
+    
+    if after_show.starts_with("LIKE") {
+        let after_like = after_show.strip_prefix("LIKE").unwrap().trim();
+        pattern = Some(after_like.trim_matches('\'').trim_matches('"').to_string());
+    }
+    
+    Ok(vec![Statement::ShowFunctions(pattern)])
+}
+
+fn parse_show_create_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql.strip_prefix("SHOW CREATE FUNCTION")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW CREATE FUNCTION".to_string(),
+        })?
+        .trim();
+    
+    let (name, _) = extract_identifier_opt(after_show)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected function name".to_string(),
+        })?;
+    
+    let mut database = "default".to_string();
+    let mut function_name = name.to_string();
+    
+    if name.contains('.') {
+        let parts: Vec<&str> = name.splitn(2, '.').collect();
+        database = parts[0].to_string();
+        function_name = parts[1].to_string();
+    }
+    
+    Ok(vec![Statement::ShowCreateFunction(database, function_name)])
+}
+
+fn parse_desc_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_desc = if sql.starts_with("DESCRIBE FUNCTION") {
+        sql.strip_prefix("DESCRIBE FUNCTION").unwrap().trim()
+    } else {
+        sql.strip_prefix("DESC FUNCTION")
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected DESC FUNCTION".to_string(),
+            })?
+            .trim()
+    };
+    
+    let (name, _) = extract_identifier_opt(after_desc)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected function name".to_string(),
+        })?;
+    
+    let mut database = "default".to_string();
+    let mut function_name = name.to_string();
+    
+    if name.contains('.') {
+        let parts: Vec<&str> = name.splitn(2, '.').collect();
+        database = parts[0].to_string();
+        function_name = parts[1].to_string();
+    }
+    
+    Ok(vec![Statement::DescFunction(database, function_name)])
+}
+
+// ============================================================================
+// Batch 4: Statistics management parsing functions
+// ============================================================================
+
+fn parse_analyze_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_analyze = sql.strip_prefix("ANALYZE TABLE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ANALYZE TABLE".to_string(),
+        })?
+        .trim();
+    
+    let (table_name, rest) = extract_identifier_opt(after_analyze)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let mut table = table_name.to_string();
+    
+    if table_name.contains('.') {
+        let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+        database = Some(parts[0].to_string());
+        table = parts[1].to_string();
+    }
+    
+    let rest_upper = rest.trim().to_uppercase();
+    let mut columns = None;
+    let mut analyze_type = AnalyzeType::Full;
+    let mut sample_rate = None;
+    let mut async_mode = false;
+    
+    if rest_upper.contains("WITH SAMPLE") {
+        analyze_type = AnalyzeType::Sample;
+        if let Some(rate_str) = rest.split("SAMPLE").nth(1) {
+            let rate_str = rate_str.trim();
+            if rate_str.contains("RATE") {
+                if let Some(rate) = rate_str.split("RATE").nth(1) {
+                    sample_rate = Some(rate.trim().parse::<f64>().unwrap_or(0.1));
+                }
+            }
+        }
+    }
+    
+    if rest_upper.contains("ASYNC") {
+        async_mode = true;
+    }
+    
+    if rest_upper.contains("UPDATE") || rest_upper.contains("COLUMNS") {
+        if let Some(cols_part) = rest.split("COLUMNS").nth(1).or_else(|| rest.split("UPDATE").nth(1)) {
+            let cols_part = cols_part.trim();
+            if cols_part.starts_with("(") {
+                if let Some(end) = cols_part.find(')') {
+                    let cols_str = &cols_part[1..end];
+                    columns = Some(cols_str.split(',').map(|s| s.trim().to_string()).collect());
+                }
+            }
+        }
+    }
+    
+    Ok(vec![Statement::AnalyzeTable(AnalyzeTableStmt {
+        database,
+        table,
+        columns,
+        analyze_type,
+        sample_rate,
+        async_mode,
+    })])
+}
+
+fn parse_alter_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql.strip_prefix("ALTER STATS")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER STATS".to_string(),
+        })?
+        .trim();
+    
+    let (table_name, rest) = extract_identifier_opt(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let mut table = table_name.to_string();
+    
+    if table_name.contains('.') {
+        let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+        database = Some(parts[0].to_string());
+        table = parts[1].to_string();
+    }
+    
+    let properties = parse_properties(rest.trim());
+    
+    Ok(vec![Statement::AlterStats(AlterStatsStmt {
+        database,
+        table,
+        properties,
+    })])
+}
+
+fn parse_drop_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP STATS")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP STATS".to_string(),
+        })?
+        .trim();
+    
+    let (table_name, rest) = extract_identifier_opt(after_drop)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let mut table = table_name.to_string();
+    let mut columns = None;
+    
+    if table_name.contains('.') {
+        let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+        database = Some(parts[0].to_string());
+        table = parts[1].to_string();
+    }
+    
+    let rest_upper = rest.trim().to_uppercase();
+    if rest_upper.contains("COLUMNS") {
+        if let Some(cols_part) = rest.split("COLUMNS").nth(1) {
+            let cols_part = cols_part.trim();
+            if cols_part.starts_with("(") {
+                if let Some(end) = cols_part.find(')') {
+                    let cols_str = &cols_part[1..end];
+                    columns = Some(cols_str.split(',').map(|s| s.trim().to_string()).collect());
+                }
+            }
+        }
+    }
+    
+    Ok(vec![Statement::DropStats(DropStatsStmt {
+        database,
+        table,
+        columns,
+    })])
+}
+
+fn parse_drop_analyze_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP ANALYZE JOB")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP ANALYZE JOB".to_string(),
+        })?
+        .trim();
+    
+    let job_id = after_drop.to_string();
+    
+    Ok(vec![Statement::DropAnalyzeJob(DropAnalyzeJobStmt {
+        job_id,
+    })])
+}
+
+fn parse_kill_analyze_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_kill = sql.strip_prefix("KILL ANALYZE JOB")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected KILL ANALYZE JOB".to_string(),
+        })?
+        .trim();
+    
+    let job_id = after_kill.to_string();
+    
+    Ok(vec![Statement::KillAnalyzeJob(KillAnalyzeJobStmt {
+        job_id,
+    })])
+}
+
+fn parse_show_analyze(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql.strip_prefix("SHOW ANALYZE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW ANALYZE".to_string(),
+        })?
+        .trim();
+    
+    let mut job_id = None;
+    let mut state = None;
+    
+    if !after_show.is_empty() {
+        if after_show.contains("JOB") {
+            if let Some(job_part) = after_show.split("JOB").nth(1) {
+                job_id = Some(job_part.trim().to_string());
+            }
+        }
+        
+        if after_show.contains("STATE") {
+            if let Some(state_part) = after_show.split("STATE").nth(1) {
+                state = Some(state_part.trim().to_string());
+            }
+        }
+    }
+    
+    Ok(vec![Statement::ShowAnalyze(ShowAnalyzeStmt {
+        job_id,
+        state,
+    })])
+}
+
+fn parse_show_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql.strip_prefix("SHOW STATS")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW STATS".to_string(),
+        })?
+        .trim();
+    
+    let (table_name, _) = extract_identifier_opt(after_show)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let mut table = table_name.to_string();
+    
+    if table_name.contains('.') {
+        let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+        database = Some(parts[0].to_string());
+        table = parts[1].to_string();
+    }
+    
+    Ok(vec![Statement::ShowStats(ShowStatsStmt {
+        database,
+        table,
+    })])
+}
+
+fn parse_show_table_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = if sql.starts_with("SHOW TABLE STATISTICS") {
+        sql.strip_prefix("SHOW TABLE STATISTICS").unwrap().trim()
+    } else {
+        sql.strip_prefix("SHOW TABLE STATS")
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected SHOW TABLE STATS".to_string(),
+            })?
+            .trim()
+    };
+    
+    let (table_name, _) = extract_identifier_opt(after_show)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let mut table = table_name.to_string();
+    
+    if table_name.contains('.') {
+        let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+        database = Some(parts[0].to_string());
+        table = parts[1].to_string();
+    }
+    
+    Ok(vec![Statement::ShowTableStats(ShowTableStatsStmt {
+        database,
+        table,
+    })])
+}
+
+// ============================================================================
+// Batch 4: Job management parsing functions
+// ============================================================================
+
+fn parse_create_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE JOB")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE JOB".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected job name".to_string(),
+        })?;
+    
+    let rest = rest.trim();
+    let mut database = None;
+    let mut schedule = String::new();
+    let mut job_type = JobType::OneTime;
+    let mut definition = String::new();
+    let mut properties = vec![];
+    
+    if rest.starts_with("ON SCHEDULE") {
+        let after_schedule = rest.strip_prefix("ON SCHEDULE").unwrap().trim();
+        if after_schedule.starts_with("CRON") {
+            job_type = JobType::Cron;
+            let cron_part = after_schedule.strip_prefix("CRON").unwrap().trim();
+            schedule = cron_part.trim_matches('(').trim_matches(')').to_string();
+        }
+    }
+    
+    if rest.contains("EXECUTE") {
+        if let Some(execute_part) = rest.split("EXECUTE").nth(1) {
+            definition = execute_part.trim().trim_matches('\'').trim_matches('"').to_string();
+        }
+    }
+    
+    if rest.starts_with("IN") {
+        let after_in = rest.strip_prefix("IN").unwrap().trim();
+        if let Some((db_name, _)) = extract_identifier_opt(after_in) {
+            database = Some(db_name.to_string());
+        }
+    }
+    
+    if rest.contains("PROPERTIES") {
+        properties = parse_properties(rest);
+    }
+    
+    Ok(vec![Statement::CreateJob(CreateJobStmt {
+        name: name.to_string(),
+        database,
+        schedule,
+        job_type,
+        definition,
+        properties,
+    })])
+}
+
+fn parse_drop_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP JOB")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP JOB".to_string(),
+        })?
+        .trim();
+    
+    let mut if_exists = false;
+    let after_drop = if after_drop.starts_with("IF EXISTS") {
+        if_exists = true;
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+    
+    let (name, rest) = extract_identifier_opt(after_drop)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected job name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let rest = rest.trim();
+    
+    if rest.starts_with("FROM") || rest.starts_with("IN") {
+        if let Some(after_from) = rest.split("FROM").nth(1).or_else(|| rest.split("IN").nth(1)) {
+            if let Some((db_name, _)) = extract_identifier_opt(after_from.trim()) {
+                database = Some(db_name.to_string());
+            }
+        }
+    }
+    
+    Ok(vec![Statement::DropJob(DropJobStmt {
+        name: name.to_string(),
+        database,
+        if_exists,
+    })])
+}
+
+fn parse_pause_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_pause = sql.strip_prefix("PAUSE JOB")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected PAUSE JOB".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_pause)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected job name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let rest = rest.trim();
+    
+    if rest.starts_with("FROM") || rest.starts_with("IN") {
+        if let Some(after_from) = rest.split("FROM").nth(1).or_else(|| rest.split("IN").nth(1)) {
+            if let Some((db_name, _)) = extract_identifier_opt(after_from.trim()) {
+                database = Some(db_name.to_string());
+            }
+        }
+    }
+    
+    Ok(vec![Statement::PauseJob(PauseJobStmt {
+        name: name.to_string(),
+        database,
+    })])
+}
+
+fn parse_resume_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_resume = sql.strip_prefix("RESUME JOB")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected RESUME JOB".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_resume)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected job name".to_string(),
+        })?;
+    
+    let mut database = None;
+    let rest = rest.trim();
+    
+    if rest.starts_with("FROM") || rest.starts_with("IN") {
+        if let Some(after_from) = rest.split("FROM").nth(1).or_else(|| rest.split("IN").nth(1)) {
+            if let Some((db_name, _)) = extract_identifier_opt(after_from.trim()) {
+                database = Some(db_name.to_string());
+            }
+        }
+    }
+    
+    Ok(vec![Statement::ResumeJob(ResumeJobStmt {
+        name: name.to_string(),
+        database,
+    })])
+}
+
+fn parse_cancel_task(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_cancel = sql.strip_prefix("CANCEL TASK")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CANCEL TASK".to_string(),
+        })?
+        .trim();
+    
+    let task_id = after_cancel.to_string();
+    
+    Ok(vec![Statement::CancelTask(CancelTaskStmt {
+        task_id,
+    })])
+}
+
+// ============================================================================
+// Batch 4: Plugin management parsing functions
+// ============================================================================
+
+fn parse_install_plugin(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_install = sql.strip_prefix("INSTALL PLUGIN")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected INSTALL PLUGIN".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_install)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected plugin name".to_string(),
+        })?;
+    
+    let rest = rest.trim();
+    let mut plugin_path = String::new();
+    let mut properties = vec![];
+    
+    if rest.starts_with("FROM") {
+        let after_from = rest.strip_prefix("FROM").unwrap().trim();
+        if let Some((path, _)) = extract_quoted_string_opt(after_from) {
+            plugin_path = path.to_string();
+        } else if let Some((path, _)) = extract_identifier_opt(after_from) {
+            plugin_path = path.to_string();
+        }
+    }
+    
+    if rest.contains("PROPERTIES") {
+        properties = parse_properties(rest);
+    }
+    
+    Ok(vec![Statement::InstallPlugin(InstallPluginStmt {
+        plugin_name: name.to_string(),
+        plugin_path,
+        properties,
+    })])
+}
+
+fn parse_uninstall_plugin(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_uninstall = sql.strip_prefix("UNINSTALL PLUGIN")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected UNINSTALL PLUGIN".to_string(),
+        })?
+        .trim();
+    
+    let (name, _) = extract_identifier_opt(after_uninstall)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected plugin name".to_string(),
+        })?;
+    
+    Ok(vec![Statement::UninstallPlugin(UninstallPluginStmt {
+        plugin_name: name.to_string(),
+    })])
+}
+
+// ============================================================================
+// Batch 4: Recycle bin management parsing functions
+// ============================================================================
+
+fn parse_recover_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_recover = sql.strip_prefix("RECOVER DATABASE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected RECOVER DATABASE".to_string(),
+        })?
+        .trim();
+    
+    let (name, _) = extract_identifier_opt(after_recover)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+    
+    Ok(vec![Statement::RecoverDatabase(RecoverDatabaseStmt {
+        name: name.to_string(),
+    })])
+}
+
+fn parse_recover_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_recover = sql.strip_prefix("RECOVER TABLE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected RECOVER TABLE".to_string(),
+        })?
+        .trim();
+    
+    let parts: Vec<&str> = after_recover.split_whitespace().collect();
+    
+    if parts.len() < 2 {
         return Err(ParseError::SyntaxError {
             position: 0,
-            message: "Expected SHOW ROLES".to_string(),
+            message: "Expected database.table format".to_string(),
         });
     }
-
-    Ok(vec![Statement::ShowRoles])
+    
+    let database = parts[0].to_string();
+    let table = parts[1].to_string();
+    
+    Ok(vec![Statement::RecoverTable(RecoverTableStmt {
+        database,
+        table,
+    })])
 }
 
-fn parse_show_privileges(sql: &str) -> Result<Vec<Statement>, ParseError> {
+fn parse_recover_partition(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-
-    let after_show = sql
-        .strip_prefix("SHOW PRIVILEGES")
-        .or_else(|| sql.strip_prefix("show privileges"))
+    let after_recover = sql.strip_prefix("RECOVER PARTITION")
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
-            message: "Expected SHOW PRIVILEGES".to_string(),
+            message: "Expected RECOVER PARTITION".to_string(),
         })?
         .trim();
+    
+    let parts: Vec<&str> = after_recover.split_whitespace().collect();
+    
+    if parts.len() < 3 {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database.table.partition format".to_string(),
+        });
+    }
+    
+    let database = parts[0].to_string();
+    let table = parts[1].to_string();
+    let partition = parts[2].to_string();
+    
+    Ok(vec![Statement::RecoverPartition(RecoverPartitionStmt {
+        database,
+        table,
+        partition,
+    })])
+}
 
-    let user = if !after_show.is_empty() {
-        Some(parse_user_identity(after_show)?)
+fn parse_drop_catalog_recycle_bin(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP CATALOG RECYCLE BIN")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP CATALOG RECYCLE BIN".to_string(),
+        })?
+        .trim();
+    
+    let mut type_filter = None;
+    let mut name_filter = None;
+    
+    if after_drop.starts_with("WHERE") {
+        let after_where = after_drop.strip_prefix("WHERE").unwrap().trim();
+        
+        if after_where.contains("Type") {
+            if let Some(type_part) = after_where.split("Type").nth(1) {
+                let type_part = type_part.trim().trim_start_matches('=').trim();
+                if let Some((type_name, _)) = extract_quoted_string_opt(type_part) {
+                    type_filter = Some(type_name.to_string());
+                } else if let Some((type_name, _)) = extract_identifier_opt(type_part) {
+                    type_filter = Some(type_name.to_string());
+                }
+            }
+        }
+        
+        if after_where.contains("Name") {
+            if let Some(name_part) = after_where.split("Name").nth(1) {
+                let name_part = name_part.trim().trim_start_matches('=').trim();
+                if let Some((name, _)) = extract_quoted_string_opt(name_part) {
+                    name_filter = Some(name.to_string());
+                } else if let Some((name, _)) = extract_identifier_opt(name_part) {
+                    name_filter = Some(name.to_string());
+                }
+            }
+        }
+    }
+    
+    Ok(vec![Statement::DropCatalogRecycleBin(DropCatalogRecycleBinStmt {
+        type_filter,
+        name_filter,
+    })])
+}
+
+// ============================================================================
+// Batch 4: Data governance parsing functions
+// ============================================================================
+
+fn parse_create_sql_block_rule(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE SQL_BLOCK_RULE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE SQL_BLOCK_RULE".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected rule name".to_string(),
+        })?;
+    
+    let properties = parse_properties(rest.trim());
+    
+    Ok(vec![Statement::CreateSqlBlockRule(CreateSqlBlockRuleStmt {
+        name: name.to_string(),
+        properties,
+    })])
+}
+
+fn parse_alter_sql_block_rule(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql.strip_prefix("ALTER SQL_BLOCK_RULE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER SQL_BLOCK_RULE".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected rule name".to_string(),
+        })?;
+    
+    let properties = parse_properties(rest.trim());
+    
+    Ok(vec![Statement::AlterSqlBlockRule(AlterSqlBlockRuleStmt {
+        name: name.to_string(),
+        properties,
+    })])
+}
+
+fn parse_drop_sql_block_rule(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP SQL_BLOCK_RULE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP SQL_BLOCK_RULE".to_string(),
+        })?
+        .trim();
+    
+    let mut if_exists = false;
+    let after_drop = if after_drop.starts_with("IF EXISTS") {
+        if_exists = true;
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+    
+    let (name, _) = extract_identifier_opt(after_drop)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected rule name".to_string(),
+        })?;
+    
+    Ok(vec![Statement::DropSqlBlockRule(DropSqlBlockRuleStmt {
+        name: name.to_string(),
+        if_exists,
+    })])
+}
+
+fn parse_show_sql_block_rule(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql.strip_prefix("SHOW SQL_BLOCK_RULE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW SQL_BLOCK_RULE".to_string(),
+        })?
+        .trim();
+    
+    let mut name = None;
+    
+    if !after_show.is_empty() && after_show.starts_with("FOR") {
+        let after_for = after_show.strip_prefix("FOR").unwrap().trim();
+        if let Some((rule_name, _)) = extract_identifier_opt(after_for) {
+            name = Some(rule_name.to_string());
+        }
+    }
+    
+    Ok(vec![Statement::ShowSqlBlockRule(ShowSqlBlockRuleStmt {
+        name,
+    })])
+}
+
+fn parse_create_row_policy(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_create = sql.strip_prefix("CREATE ROW POLICY")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE ROW POLICY".to_string(),
+        })?
+        .trim();
+    
+    let (name, rest) = extract_identifier_opt(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected policy name".to_string(),
+        })?;
+    
+    let rest = rest.trim();
+    let mut database = String::new();
+    let mut table = String::new();
+    let mut policy_type = RowPolicyType::Permit;
+    let mut filter = String::new();
+    let mut properties = vec![];
+    
+    if rest.starts_with("ON") {
+        let after_on = rest.strip_prefix("ON").unwrap().trim();
+        if let Some((table_name, rest)) = extract_identifier_opt(after_on) {
+            if table_name.contains('.') {
+                let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+                database = parts[0].to_string();
+                table = parts[1].to_string();
+            } else {
+                table = table_name.to_string();
+            }
+            
+            let rest = rest.trim();
+            if rest.starts_with("AS") {
+                let after_as = rest.strip_prefix("AS").unwrap().trim();
+                if after_as.starts_with("PERMIT") {
+                    policy_type = RowPolicyType::Permit;
+                } else if after_as.starts_with("RESTRICT") {
+                    policy_type = RowPolicyType::Restrict;
+                }
+                
+                let rest_after_type = after_as.split_whitespace().nth(1).unwrap_or("").trim();
+                if rest_after_type.starts_with("USING") {
+                    let using_part = rest_after_type.strip_prefix("USING").unwrap().trim();
+                    filter = using_part.trim_matches('\'').trim_matches('"').to_string();
+                }
+            }
+            
+            if rest.contains("PROPERTIES") {
+                properties = parse_properties(rest);
+            }
+        }
+    }
+    
+    Ok(vec![Statement::CreateRowPolicy(CreateRowPolicyStmt {
+        name: name.to_string(),
+        database,
+        table,
+        policy_type,
+        filter,
+        properties,
+    })])
+}
+
+fn parse_drop_row_policy(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql.strip_prefix("DROP ROW POLICY")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP ROW POLICY".to_string(),
+        })?
+        .trim();
+    
+    let mut if_exists = false;
+    let after_drop = if after_drop.starts_with("IF EXISTS") {
+        if_exists = true;
+        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+    } else {
+        after_drop
+    };
+    
+    let (name, rest) = extract_identifier_opt(after_drop)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected policy name".to_string(),
+        })?;
+    
+    let rest = rest.trim();
+    let mut database = String::new();
+    let mut table = String::new();
+    
+    if rest.starts_with("ON") {
+        let after_on = rest.strip_prefix("ON").unwrap().trim();
+        if let Some((table_name, _)) = extract_identifier_opt(after_on) {
+            if table_name.contains('.') {
+                let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+                database = parts[0].to_string();
+                table = parts[1].to_string();
+            } else {
+                table = table_name.to_string();
+            }
+        }
+    }
+    
+    Ok(vec![Statement::DropRowPolicy(DropRowPolicyStmt {
+        name: name.to_string(),
+        database,
+        table,
+        if_exists,
+    })])
+}
+
+fn parse_show_row_policy(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql.strip_prefix("SHOW ROW POLICY")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW ROW POLICY".to_string(),
+        })?
+        .trim();
+    
+    let mut name = None;
+    let mut database = None;
+    let mut table = None;
+    
+    if !after_show.is_empty() && after_show.starts_with("FOR") {
+        let after_for = after_show.strip_prefix("FOR").unwrap().trim();
+        if let Some((policy_name, rest)) = extract_identifier_opt(after_for) {
+            name = Some(policy_name.to_string());
+            
+            let rest = rest.trim();
+            if rest.starts_with("ON") {
+                let after_on = rest.strip_prefix("ON").unwrap().trim();
+                if let Some((table_name, _)) = extract_identifier_opt(after_on) {
+                    if table_name.contains('.') {
+                        let parts: Vec<&str> = table_name.splitn(2, '.').collect();
+                        database = Some(parts[0].to_string());
+                        table = Some(parts[1].to_string());
+                    } else {
+                        table = Some(table_name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(vec![Statement::ShowRowPolicy(ShowRowPolicyStmt {
+        name,
+        database,
+        table,
+    })])
+}
+
+// ============================================================================
+// Helper functions for parsing
+// ============================================================================
+
+fn extract_quoted_string_opt(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim();
+    
+    if s.starts_with('\'') {
+        let end = s[1..].find('\'').unwrap_or(s.len()-1);
+        Some((&s[1..end+1], &s[end+2..]))
+    } else if s.starts_with('"') {
+        let end = s[1..].find('"').unwrap_or(s.len()-1);
+        Some((&s[1..end+1], &s[end+2..]))
     } else {
         None
-    };
+    }
+}
 
-    Ok(vec![Statement::ShowPrivileges(user)])
+fn extract_identifier_opt(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim();
+    
+    if s.is_empty() {
+        return None;
+    }
+    
+    if s.starts_with('`') {
+        let end = s[1..].find('`').unwrap_or(s.len()-1);
+        Some((&s[1..end+1], &s[end+2..]))
+    } else {
+        let end = s.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+            .unwrap_or(s.len());
+        if end == 0 {
+            None
+        } else {
+            Some((&s[..end], &s[end..]))
+        }
+    }
 }

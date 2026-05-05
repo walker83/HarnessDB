@@ -4,7 +4,7 @@
 
 > 参考文档：https://doris.apache.org/docs/sql-manual/sql-statements/
 > RorisDB 版本：v0.1.3
-> 更新时间：2026/05/05 (第3批 Account/Security 已完成)
+> 更新时间：2026/05/05
 
 ---
 
@@ -16,8 +16,8 @@
 |------|------|------|------|
 | SELECT (含 JOIN/CTE/UNION/SUBQUERY) | ✅ | ✅ | 完整支持 |
 | INSERT INTO / INSERT OVERWRITE | ✅ | ✅ | VALUES + SELECT 子查询 |
-| UPDATE | ✅ | ✅ | 解析完成，执行层已完成 |
-| DELETE | ✅ | ✅ | 解析完成，执行层已完成 |
+| UPDATE | ✅ | 🚧 | 解析完成，执行层未实现 |
+| DELETE | ✅ | 🚧 | 解析完成，执行层未实现 |
 | CREATE DATABASE | ✅ | ✅ | 含 IF NOT EXISTS, PROPERTIES |
 | DROP DATABASE | ✅ | ✅ | 含 IF EXISTS |
 | CREATE TABLE | ✅ | ✅ | 含 DISTRIBUTED BY, PARTITION BY, PROPERTIES, KeysType |
@@ -85,27 +85,27 @@
 
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
-| UPDATE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
-| DELETE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
-| EXPORT TABLE | ✅ | ✅ | 第3批 → 已完成 |
-| SHOW DELETE | ✅ | ✅ | 第3批 → 已完成 |
-| SHOW LAST INSERT | ✅ | ✅ | 第4批 → 已完成 |
-| BROKER LOAD | ✅ | ✅ | 第4批 → 已完成 |
-| ROUTINE LOAD | ✅ | ✅ | 第4批 → 已完成 |
-| MYSQL LOAD | ✅ | ✅ | 第4批 → 已完成 |
+| UPDATE 执行层 | ✅ | ❌ | 第4批 |
+| DELETE 执行层 | ✅ | ❌ | 第4批 |
+| EXPORT TABLE | ✅ | ❌ | 第3批 |
+| SHOW DELETE | ✅ | ❌ | 第3批 |
+| SHOW LAST INSERT | ✅ | ❌ | 第4批 |
+| BROKER LOAD | ✅ | ❌ | 第4批 |
+| ROUTINE LOAD | ✅ | ❌ | 第4批 |
+| MYSQL LOAD | ✅ | ❌ | 第4批 |
 
 ### 1.4 Account/Security 语句缺失
 
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
 | SET VARIABLE 执行 | ✅ | ❌ | 第2批 |
-| GRANT | ✅ | ✅ | 第3批 ✅ |
-| REVOKE | ✅ | ✅ | 第3批 ✅ |
-| CREATE ROLE / DROP ROLE | ✅ | ✅ | 第3批 ✅ |
-| ALTER USER | ✅ | ✅ | 第3批 ✅ |
-| SET PASSWORD | ✅ | ✅ | 第3批 ✅ |
-| SET PROPERTY | ✅ | ✅ | 第3批 ✅ |
-| SHOW GRANTS / SHOW ROLES / SHOW PRIVILEGES | ✅ | ✅ | 第3批 ✅ |
+| GRANT | ✅ | ❌ | 第3批 |
+| REVOKE | ✅ | ❌ | 第3批 |
+| CREATE ROLE / DROP ROLE / ALTER ROLE | ✅ | ❌ | 第3批 |
+| ALTER USER | ✅ | ❌ | 第3批 |
+| SET PASSWORD | ✅ | ❌ | 第3批 |
+| SET PROPERTY | ✅ | ❌ | 第3批 |
+| SHOW GRANTS / SHOW ROLES / SHOW PRIVILEGES | ✅ | ❌ | 第3批 |
 
 ### 1.5 Session/Transaction 语句缺失
 
@@ -119,14 +119,86 @@
 
 ### 1.6 其他语句缺失
 
-| 功能 | Apache Doris | RorisDB | 计划批次 |
-|------|-------------|---------|---------|
-| CREATE/DROP FUNCTION | ✅ | ❌ | 第4批 |
-| ANALYZE TABLE | ✅ | ❌ | 第4批 |
-| EXPORT | ✅ | ❌ | 第3批 |
-| INSTALL/UNINSTALL PLUGIN | ✅ | ❌ | 第4批 |
-| CREATE/DROP JOB | ✅ | ❌ | 第4批 |
-| RECOVER (回收站恢复) | ✅ | ❌ | 第4批 |
+#### 1.6.1 UDF 函数管理
+
+| 功能 | Apache Doris | RorisDB | 计划批次 | 说明 |
+|------|-------------|---------|---------|------|
+| CREATE FUNCTION | ✅ | ❌ | 第4批 | 创建用户自定义函数（UDF/UDAF） |
+| DROP FUNCTION | ✅ | ❌ | 第4批 | 删除用户自定义函数 |
+| SHOW FUNCTIONS | ✅ | ❌ | 第4批 | 显示数据库中的函数列表 |
+| SHOW CREATE FUNCTION | ✅ | ❌ | 第4批 | 显示函数的创建语句 |
+| DESC FUNCTION | ✅ | ❌ | 第4批 | 查看函数详细信息 |
+
+#### 1.6.2 统计信息管理
+
+| 功能 | Apache Doris | RorisDB | 计划批次 | 说明 |
+|------|-------------|---------|---------|------|
+| ANALYZE TABLE | ✅ | ❌ | 第4批 | 收集表的统计信息（支持全量/采样/异步） |
+| ALTER STATS | ✅ | ❌ | 第4批 | 修改统计信息配置 |
+| DROP STATS | ✅ | ❌ | 第4批 | 删除表的统计信息 |
+| DROP ANALYZE JOB | ✅ | ❌ | 第4批 | 删除统计信息收集任务 |
+| KILL ANALYZE JOB | ✅ | ❌ | 第4批 | 终止正在运行的统计信息收集任务 |
+| SHOW ANALYZE | ✅ | ❌ | 第4批 | 显示统计信息收集任务状态 |
+| SHOW STATS | ✅ | ❌ | 第4批 | 显示列的统计信息 |
+| SHOW TABLE STATS | ✅ | ❌ | 第4批 | 显示表的统计信息摘要 |
+
+#### 1.6.3 定时任务管理
+
+| 功能 | Apache Doris | RorisDB | 计划批次 | 说明 |
+|------|-------------|---------|---------|------|
+| CREATE JOB | ✅ | ❌ | 第4批 | 创建定时任务（支持 cron 表达式） |
+| DROP JOB | ✅ | ❌ | 第4批 | 删除定时任务 |
+| PAUSE JOB | ✅ | ❌ | 第4批 | 暂停定时任务 |
+| RESUME JOB | ✅ | ❌ | 第4批 | 恢复定时任务 |
+| CANCEL TASK | ✅ | ❌ | 第4批 | 取消正在运行的任务实例 |
+
+#### 1.6.4 插件管理
+
+| 功能 | Apache Doris | RorisDB | 计划批次 | 说明 |
+|------|-------------|---------|---------|------|
+| INSTALL PLUGIN | ✅ | ❌ | 第4批 | 安装插件（审计/存储/认证等） |
+| UNINSTALL PLUGIN | ✅ | ❌ | 第4批 | 卸载插件 |
+| SHOW PLUGINS | ✅ | ❌ | 第4批 | 显示已安装的插件列表 |
+
+#### 1.6.5 回收站管理
+
+| 功能 | Apache Doris | RorisDB | 计划批次 | 说明 |
+|------|-------------|---------|---------|------|
+| RECOVER DATABASE | ✅ | ❌ | 第4批 | 从回收站恢复已删除的数据库 |
+| RECOVER TABLE | ✅ | ❌ | 第4批 | 从回收站恢复已删除的表 |
+| RECOVER PARTITION | ✅ | ❌ | 第4批 | 从回收站恢复已删除的分区 |
+| DROP CATALOG RECYCLE BIN | ✅ | ❌ | 第4批 | 清空回收站 |
+| SHOW CATALOG RECYCLE BIN | ✅ | ❌ | 第4批 | 显示回收站内容 |
+
+#### 1.6.6 数据导出
+
+| 功能 | Apache Doris | RorisDB | 计划批次 | 说明 |
+|------|-------------|---------|---------|------|
+| EXPORT TABLE | ✅ | ❌ | 第3批 | 异步导出表数据到外部存储 |
+| CANCEL EXPORT | ✅ | ❌ | 第3批 | 取消正在进行的导出任务 |
+| SHOW EXPORT | ✅ | ❌ | 第3批 | 显示导出任务状态 |
+| SELECT ... INTO OUTFILE | ✅ | ❌ | 第4批 | 同步导出查询结果到文件 |
+
+#### 1.6.7 数据治理
+
+| 功能 | Apache Doris | RorisDB | 计划批次 | 说明 |
+|------|-------------|---------|---------|------|
+| CREATE SQL_BLOCK_RULE | ✅ | ❌ | 第4批 | 创建 SQL 黑名单规则 |
+| ALTER SQL_BLOCK_RULE | ✅ | ❌ | 第4批 | 修改 SQL 黑名单规则 |
+| DROP SQL_BLOCK_RULE | ✅ | ❌ | 第4批 | 删除 SQL 黑名单规则 |
+| SHOW SQL_BLOCK_RULE | ✅ | ❌ | 第4批 | 显示 SQL 黑名单规则 |
+| CREATE ROW POLICY | ✅ | ❌ | 第4批 | 创建行级权限策略 |
+| DROP ROW POLICY | ✅ | ❌ | 第4批 | 删除行级权限策略 |
+| SHOW ROW POLICY | ✅ | ❌ | 第4批 | 显示行级权限策略 |
+
+**说明**：
+- 统计信息是 CBO 优化器的重要依赖，ANALYZE TABLE 收集的统计信息用于查询优化
+- 定时任务支持周期性执行 SQL 语句，适用于数据同步、ETL 等场景
+- 插件系统支持扩展审计、存储引擎、认证等功能
+- 回收站功能提供数据安全保护，防止误删
+- 数据治理功能用于 SQL 审计和行级权限控制
+
+> ✅ **本节已完成** - 2026/05/05
 
 ---
 
@@ -361,22 +433,22 @@
 
 > 目标：实现基本的权限控制、事务支持、数据导出
 
-| # | 语句 | 语法 | 状态 |
-|---|------|------|------|
-| 20 | GRANT | `GRANT priv ON db.table TO user` | ✅ 已完成 |
-| 21 | REVOKE | `REVOKE priv ON db.table FROM user` | ✅ 已完成 |
-| 22 | CREATE/DROP ROLE | `CREATE ROLE role_name` | ✅ 已完成 |
-| 23 | ALTER USER / SET PASSWORD | `ALTER USER user IDENTIFIED BY 'pwd'` | ✅ 已完成 |
-| 24 | SET PROPERTY | `SET PROPERTY FOR user 'key'='value'` | ✅ 已完成 |
-| 25 | SHOW GRANTS / ROLES / PRIVILEGES | 各类 SHOW 权限语句 | ✅ 已完成 |
-| 26 | BEGIN / COMMIT / ROLLBACK | 事务控制 | ❌ |
-| 27 | KILL QUERY / KILL CONNECTION | `KILL QUERY id` / `KILL CONNECTION id` | ❌ |
-| 28 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` | ❌ |
-| 29 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` | ❌ |
-| 30 | SHOW BACKENDS / SHOW FRONTENDS | 集群信息查看 | ❌ |
-| 31 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` | ❌ |
-| 32 | SHOW DELETE | `SHOW DELETE` | ❌ |
-| 33 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` | ❌ |
+| # | 语句 | 语法 |
+|---|------|------|
+| 20 | GRANT | `GRANT priv ON db.table TO user` |
+| 21 | REVOKE | `REVOKE priv ON db.table FROM user` |
+| 22 | CREATE/DROP/ALTER ROLE | `CREATE ROLE role_name` |
+| 23 | ALTER USER / SET PASSWORD | `ALTER USER user IDENTIFIED BY 'pwd'` |
+| 24 | SET PROPERTY | `SET PROPERTY FOR user 'key'='value'` |
+| 25 | SHOW GRANTS / ROLES / PRIVILEGES | 各类 SHOW 权限语句 |
+| 26 | BEGIN / COMMIT / ROLLBACK | 事务控制 |
+| 27 | KILL QUERY / KILL CONNECTION | `KILL QUERY id` / `KILL CONNECTION id` |
+| 28 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` |
+| 29 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` |
+| 30 | SHOW BACKENDS / SHOW FRONTENDS | 集群信息查看 |
+| 31 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` |
+| 32 | SHOW DELETE | `SHOW DELETE` |
+| 33 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` |
 
 ### 第4批：高级功能（长期）
 
