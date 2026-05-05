@@ -14,7 +14,7 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, UpdateStmt, DeleteStmt};
+use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, UpdateStmt, DeleteStmt, ExportTableStmt, BrokerLoadStmt, RoutineLoadStmt, MysqlLoadStmt};
 use types::{DataType, Block, ScalarValue};
 use fe_catalog::table::{Table, TableColumn, KeysType};
 use be_execution::{ExecutionContext, execute_plan};
@@ -117,6 +117,12 @@ impl RorisQueryHandler {
             Statement::Delete(stmt) => self.delete(stmt),
             Statement::Query(_) => self.execute_query(stmt),
             Statement::Explain(explain) => self.explain(&explain.statement),
+            Statement::ExportTable(stmt) => self.export_table(stmt),
+            Statement::ShowDelete { database, table } => self.show_delete(database.clone(), table.clone()),
+            Statement::ShowLastInsert => self.show_last_insert(),
+            Statement::BrokerLoad(stmt) => self.broker_load(stmt),
+            Statement::RoutineLoad(stmt) => self.routine_load(stmt),
+            Statement::MysqlLoad(stmt) => self.mysql_load(stmt),
             _ => Ok(QueryResult::with_rows(
                 vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
                 vec![vec![Some(format!("Statement parsed successfully (execution not fully implemented)"))]],
@@ -489,6 +495,134 @@ impl RorisQueryHandler {
 
     fn explain(&self, stmt: &Statement) -> Result<QueryResult, String> {
         self.execute_query(stmt)
+    }
+
+    fn export_table(&self, stmt: &fe_sql_parser::ast::ExportTableStmt) -> Result<QueryResult, String> {
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (db, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        let catalog = self.catalog.read().unwrap();
+        match catalog.get_table(&db, &table_name) {
+            Some(_) => {
+                drop(catalog);
+                Ok(QueryResult::with_rows(
+                    vec![ColumnDef { name: "Export".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(format!("EXPORT TABLE {}.{} TO {} (format={})", db, table_name, stmt.file_path, stmt.format))]],
+                ))
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, table_name)),
+        }
+    }
+
+    fn show_delete(&self, database: Option<String>, table: Option<String>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Database".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "PartitionId".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "DeleteCondition".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "CreateTime".to_string(), col_type: ColumnType::String },
+            ],
+            vec![],
+        ))
+    }
+
+    fn show_last_insert(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "LastInsertId".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("0".to_string())]],
+        ))
+    }
+
+    fn broker_load(&self, stmt: &fe_sql_parser::ast::BrokerLoadStmt) -> Result<QueryResult, String> {
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (db, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        let catalog = self.catalog.read().unwrap();
+        match catalog.get_table(&db, &table_name) {
+            Some(_) => {
+                drop(catalog);
+                Ok(QueryResult::with_rows(
+                    vec![ColumnDef { name: "BrokerLoad".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(format!("BROKER LOAD {}.{} FROM {} BROKER {}", db, table_name, stmt.file_path, stmt.broker_name))]],
+                ))
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, table_name)),
+        }
+    }
+
+    fn routine_load(&self, stmt: &fe_sql_parser::ast::RoutineLoadStmt) -> Result<QueryResult, String> {
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (db, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        let catalog = self.catalog.read().unwrap();
+        match catalog.get_table(&db, &table_name) {
+            Some(_) => {
+                drop(catalog);
+                Ok(QueryResult::with_rows(
+                    vec![ColumnDef { name: "RoutineLoad".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(format!("ROUTINE LOAD {} ON {}.{}", stmt.job_name, db, table_name))]],
+                ))
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, table_name)),
+        }
+    }
+
+    fn mysql_load(&self, stmt: &fe_sql_parser::ast::MysqlLoadStmt) -> Result<QueryResult, String> {
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (db, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        let catalog = self.catalog.read().unwrap();
+        match catalog.get_table(&db, &table_name) {
+            Some(_) => {
+                drop(catalog);
+                Ok(QueryResult::with_rows(
+                    vec![ColumnDef { name: "MysqlLoad".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(format!("MYSQL LOAD {}.{} FROM {}", db, table_name, stmt.file_path))]],
+                ))
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, table_name)),
+        }
     }
 }
 

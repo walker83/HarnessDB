@@ -36,6 +36,12 @@ pub enum Statement {
     DropCatalog(DropCatalogStmt),
     ShowCatalogs,
     RefreshCatalog(RefreshCatalogStmt),
+    ExportTable(ExportTableStmt),
+    ShowDelete { database: Option<String>, table: Option<String> },
+    ShowLastInsert,
+    BrokerLoad(BrokerLoadStmt),
+    RoutineLoad(RoutineLoadStmt),
+    MysqlLoad(MysqlLoadStmt),
 }
 
 #[derive(Debug, Clone)]
@@ -391,4 +397,40 @@ pub struct DropCatalogStmt {
 #[derive(Debug, Clone)]
 pub struct RefreshCatalogStmt {
     pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExportTableStmt {
+    pub table: String,
+    pub database: Option<String>,
+    pub file_path: String,
+    pub format: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrokerLoadStmt {
+    pub table: String,
+    pub database: Option<String>,
+    pub file_path: String,
+    pub broker_name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoutineLoadStmt {
+    pub table: String,
+    pub database: Option<String>,
+    pub job_name: String,
+    pub kafka_broker_list: Option<String>,
+    pub kafka_topic: Option<String>,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MysqlLoadStmt {
+    pub table: String,
+    pub database: Option<String>,
+    pub file_path: String,
+    pub properties: Vec<(String, String)>,
 }

@@ -87,12 +87,12 @@
 |------|-------------|---------|---------|
 | UPDATE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
 | DELETE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
-| EXPORT TABLE | ✅ | ❌ | 第3批 |
-| SHOW DELETE | ✅ | ❌ | 第3批 |
-| SHOW LAST INSERT | ✅ | ❌ | 第4批 |
-| BROKER LOAD | ✅ | ❌ | 第4批 |
-| ROUTINE LOAD | ✅ | ❌ | 第4批 |
-| MYSQL LOAD | ✅ | ❌ | 第4批 |
+| EXPORT TABLE | ✅ | ✅ | 第3批 → 已完成 |
+| SHOW DELETE | ✅ | ✅ | 第3批 → 已完成 |
+| SHOW LAST INSERT | ✅ | ✅ | 第4批 → 已完成 |
+| BROKER LOAD | ✅ | ✅ | 第4批 → 已完成 |
+| ROUTINE LOAD | ✅ | ✅ | 第4批 → 已完成 |
+| MYSQL LOAD | ✅ | ✅ | 第4批 → 已完成 |
 
 ### 1.4 Account/Security 语句缺失
 

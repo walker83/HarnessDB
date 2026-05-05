@@ -358,5 +358,11 @@ fn format_node_type(nt: &fe_sql_planner::PlanNodeType) -> String {
         T::DropMaterializedView(_) => "DropMaterializedView".into(),
         T::AlterMaterializedView(_) => "AlterMaterializedView".into(),
         T::RefreshMaterializedView(_) => "RefreshMaterializedView".into(),
+        T::ShowDelete(_) => "ShowDelete".into(),
+        T::ShowLastInsert => "ShowLastInsert".into(),
+        T::ExportTable(_) => "ExportTable".into(),
+        T::BrokerLoad(_) => "BrokerLoad".into(),
+        T::RoutineLoad(_) => "RoutineLoad".into(),
+        T::MysqlLoad(_) => "MysqlLoad".into(),
     }
 }

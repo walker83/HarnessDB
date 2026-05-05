@@ -52,6 +52,12 @@ pub enum PlanNodeType {
     DropMaterializedView(DropMaterializedViewNode),
     AlterMaterializedView(AlterMaterializedViewNode),
     RefreshMaterializedView(RefreshMaterializedViewNode),
+    ShowDelete(ShowDeleteNode),
+    ShowLastInsert,
+    ExportTable(ExportTableNode),
+    BrokerLoad(BrokerLoadNode),
+    RoutineLoad(RoutineLoadNode),
+    MysqlLoad(MysqlLoadNode),
 }
 
 // ---- Leaf / scan nodes ----
@@ -243,6 +249,48 @@ pub struct RefreshMaterializedViewNode {
     pub database: Option<String>,
     pub view_name: String,
     pub refresh_type: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShowDeleteNode {
+    pub database: Option<String>,
+    pub table: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExportTableNode {
+    pub table_name: String,
+    pub database: Option<String>,
+    pub file_path: String,
+    pub format: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrokerLoadNode {
+    pub table_name: String,
+    pub database: Option<String>,
+    pub file_path: String,
+    pub broker_name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoutineLoadNode {
+    pub table_name: String,
+    pub database: Option<String>,
+    pub job_name: String,
+    pub kafka_broker_list: Option<String>,
+    pub kafka_topic: Option<String>,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MysqlLoadNode {
+    pub table_name: String,
+    pub database: Option<String>,
+    pub file_path: String,
+    pub properties: Vec<(String, String)>,
 }
 
 // ---- Relational operators ----
@@ -659,6 +707,24 @@ impl PlanNode {
             PlanNodeType::RefreshMaterializedView(mv) => {
                 format!("RefreshMaterializedViewNode: {}{}", mv.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), mv.view_name)
             }
+            PlanNodeType::ShowDelete(sd) => {
+                let db_prefix = sd.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default();
+                let tbl_suffix = sd.table.as_ref().map(|t| format!(" {}", t)).unwrap_or_default();
+                format!("ShowDeleteNode: {}{}", db_prefix, tbl_suffix)
+            }
+            PlanNodeType::ShowLastInsert => "ShowLastInsertNode".to_string(),
+            PlanNodeType::ExportTable(et) => {
+                format!("ExportTableNode: {}{} TO {} FORMAT={}", et.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), et.table_name, et.file_path, et.format)
+            }
+            PlanNodeType::BrokerLoad(bl) => {
+                format!("BrokerLoadNode: {}{} FROM {} BROKER {}", bl.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), bl.table_name, bl.file_path, bl.broker_name)
+            }
+            PlanNodeType::RoutineLoad(rl) => {
+                format!("RoutineLoadNode: {} {}{}", rl.job_name, rl.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), rl.table_name)
+            }
+            PlanNodeType::MysqlLoad(ml) => {
+                format!("MysqlLoadNode: {}{} FROM {}", ml.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), ml.table_name, ml.file_path)
+            }
         }
     }
 
@@ -733,7 +799,13 @@ impl PlanNode {
             | PlanNodeType::CreateMaterializedView(_)
             | PlanNodeType::DropMaterializedView(_)
             | PlanNodeType::AlterMaterializedView(_)
-            | PlanNodeType::RefreshMaterializedView(_) => vec![],
+            | PlanNodeType::RefreshMaterializedView(_)
+            | PlanNodeType::ShowDelete(_)
+            | PlanNodeType::ShowLastInsert
+            | PlanNodeType::ExportTable(_)
+            | PlanNodeType::BrokerLoad(_)
+            | PlanNodeType::RoutineLoad(_)
+            | PlanNodeType::MysqlLoad(_) => vec![],
         }
     }
 }

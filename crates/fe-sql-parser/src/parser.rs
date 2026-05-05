@@ -68,6 +68,24 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     if trimmed.starts_with("REFRESH CATALOG") {
         return parse_refresh_catalog(sql);
     }
+    if trimmed.starts_with("EXPORT TABLE") {
+        return parse_export_table(sql);
+    }
+    if trimmed.starts_with("SHOW DELETE") {
+        return parse_show_delete(sql);
+    }
+    if trimmed.starts_with("SHOW LAST INSERT") {
+        return Ok(vec![Statement::ShowLastInsert]);
+    }
+    if trimmed.starts_with("LOAD") || trimmed.starts_with("BROKER LOAD") {
+        return parse_broker_load(sql);
+    }
+    if trimmed.starts_with("ROUTINE LOAD") {
+        return parse_routine_load(sql);
+    }
+    if trimmed.starts_with("MYSQL LOAD") || trimmed.starts_with("Mysql Load") {
+        return parse_mysql_load(sql);
+    }
 
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, &sql_to_parse)
@@ -1452,5 +1470,338 @@ fn parse_refresh_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     Ok(vec![Statement::RefreshCatalog(RefreshCatalogStmt {
         name: name.to_string(),
+    })])
+}
+
+fn parse_export_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_export = sql
+        .strip_prefix("EXPORT TABLE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected EXPORT TABLE".to_string(),
+        })?
+        .trim();
+
+    let mut table_name = String::new();
+    let mut database = None;
+    let mut file_path = String::new();
+    let mut format = "csv".to_string();
+    let mut properties = Vec::new();
+
+    let rest = after_export;
+
+    if rest.contains('.') {
+        let parts: Vec<&str> = rest.splitn(2, '.').collect();
+        database = Some(parts[0].to_string());
+        let after_db = parts[1];
+        let to_part = after_db.find(" TO ").or_else(|| after_db.find(" TO"));
+        if let Some(idx) = to_part {
+            table_name = after_db[..idx].trim().to_string();
+            let after_to = after_db[idx + 3..].trim();
+            if let Some(path_end) = after_to.find(' ') {
+                file_path = after_to[..path_end].trim().to_string();
+                let remaining = after_to[path_end..].trim();
+                if remaining.to_uppercase().starts_with("FORMAT") {
+                    let format_part = remaining.strip_prefix("FORMAT").unwrap_or(remaining).trim_start_matches('=').trim();
+                    let first_word = format_part.split_whitespace().next().unwrap_or(format_part).trim_matches(|c| c == ',' || c == ';');
+                    format = first_word.to_lowercase();
+                }
+                if remaining.contains('(') && remaining.contains('=') {
+                    properties = parse_properties(remaining);
+                }
+            } else {
+                file_path = after_to.to_string();
+            }
+        }
+    } else {
+        let to_part = rest.find(" TO ").or_else(|| rest.find(" TO"));
+        if let Some(idx) = to_part {
+            table_name = rest[..idx].trim().to_string();
+            let after_to = rest[idx + 3..].trim();
+            if let Some(path_end) = after_to.find(' ') {
+                file_path = after_to[..path_end].trim().to_string();
+                let remaining = after_to[path_end..].trim();
+                if remaining.to_uppercase().starts_with("FORMAT") {
+                    let format_part = remaining.strip_prefix("FORMAT").unwrap_or(remaining).trim_start_matches('=').trim();
+                    let first_word = format_part.split_whitespace().next().unwrap_or(format_part).trim_matches(|c| c == ',' || c == ';');
+                    format = first_word.to_lowercase();
+                }
+                if remaining.contains('(') && remaining.contains('=') {
+                    properties = parse_properties(remaining);
+                }
+            } else {
+                file_path = after_to.to_string();
+            }
+        }
+    }
+
+    Ok(vec![Statement::ExportTable(ExportTableStmt {
+        table: table_name,
+        database,
+        file_path,
+        format,
+        properties,
+    })])
+}
+
+fn parse_show_delete(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show_delete = sql
+        .strip_prefix("SHOW DELETE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW DELETE".to_string(),
+        })?
+        .trim();
+
+    let mut database = None;
+    let mut table = None;
+
+    let upper = after_show_delete.to_uppercase();
+    if upper.starts_with("FROM") || upper.starts_with("FROM") {
+        let rest = after_show_delete[4..].trim();
+        if rest.contains('.') {
+            let parts: Vec<&str> = rest.splitn(2, '.').collect();
+            database = Some(parts[0].to_string());
+            table = Some(parts[1].to_string());
+        } else {
+            table = Some(rest.to_string());
+        }
+    }
+
+    Ok(vec![Statement::ShowDelete { database, table }])
+}
+
+fn parse_broker_load(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_load = sql
+        .strip_prefix("LOAD")
+        .or_else(|| sql.strip_prefix("BROKER LOAD"))
+        .or_else(|| sql.strip_prefix("Broker Load"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected LOAD or BROKER LOAD".to_string(),
+        })?
+        .trim();
+
+    let mut table_name = String::new();
+    let mut database = None;
+    let mut file_path = String::new();
+    let mut broker_name = String::new();
+    let mut properties = Vec::new();
+
+    let rest = after_load;
+
+    let into_pos = rest.to_uppercase().find(" INTO ").or_else(|| rest.find(" INTO"));
+    if let Some(idx) = into_pos {
+        let before_into = rest[..idx].trim();
+        let after_into = rest[idx + 6..].trim();
+
+        let file_pos = before_into.to_uppercase().find("FILE");
+        if let Some(pos) = file_pos {
+            let file_key = "FILE";
+            let start = before_into[pos + file_key.len()..].trim_start_matches('=').trim();
+            if let Some(end) = start.find(' ') {
+                file_path = start[..end].to_string();
+            } else {
+                file_path = start.to_string();
+            }
+        }
+
+        if let Some(tab_end) = after_into.find(" (") {
+            let table_part = after_into[..tab_end].trim();
+            let parts: Vec<&str> = table_part.split('.').collect();
+            if parts.len() == 2 {
+                database = Some(parts[0].to_string());
+                table_name = parts[1].to_string();
+            } else {
+                table_name = table_part.to_string();
+            }
+            let props_part = after_into[tab_end + 1..].trim().strip_prefix('(').unwrap_or("").strip_suffix(')').unwrap_or("");
+            properties = parse_properties(props_part);
+        } else {
+            let table_part = after_into.split_whitespace().next().unwrap_or("").trim();
+            let parts: Vec<&str> = table_part.split('.').collect();
+            if parts.len() == 2 {
+                database = Some(parts[0].to_string());
+                table_name = parts[1].to_string();
+            } else {
+                table_name = table_part.to_string();
+            }
+        }
+
+        let with_pos = rest.to_uppercase().find("WITH");
+        if let Some(pos) = with_pos {
+            let with_part = rest[pos + 5..].trim();
+            if with_part.to_uppercase().starts_with("BROKER") {
+                let broker_rest = with_part[6..].trim();
+                let broker_pos = broker_rest.find(' ');
+                if let Some(bp) = broker_pos {
+                    broker_name = broker_rest[..bp].trim().to_string();
+                } else {
+                    broker_name = broker_rest.to_string();
+                }
+            }
+        }
+    }
+
+    Ok(vec![Statement::BrokerLoad(BrokerLoadStmt {
+        table: table_name,
+        database,
+        file_path,
+        broker_name,
+        properties,
+    })])
+}
+
+fn parse_routine_load(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_routine = sql
+        .strip_prefix("ROUTINE LOAD")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ROUTINE LOAD".to_string(),
+        })?
+        .trim();
+
+    let mut job_name = String::new();
+    let mut table_name = String::new();
+    let mut database = None;
+    let mut kafka_broker_list = None;
+    let mut kafka_topic = None;
+    let mut properties = Vec::new();
+
+    let rest = after_routine;
+
+    let on_pos = rest.to_uppercase().find(" ON ");
+    if let Some(idx) = on_pos {
+        let before_on = rest[..idx].trim();
+        job_name = before_on.split_whitespace().next().unwrap_or("").to_string();
+        let after_on = rest[idx + 4..].trim();
+
+        let columns_pos = after_on.to_uppercase().find("COLUMNS");
+        let final_rest = if let Some(cp) = columns_pos {
+            let table_part = after_on[..cp].trim();
+            if table_part.contains('.') {
+                let parts: Vec<&str> = table_part.splitn(2, '.').collect();
+                database = Some(parts[0].to_string());
+                table_name = parts[1].to_string();
+            } else {
+                table_name = table_part.to_string();
+            }
+            after_on[cp..].trim()
+        } else {
+            if after_on.contains('.') {
+                let parts: Vec<&str> = after_on.splitn(2, '.').collect();
+                database = Some(parts[0].to_string());
+                table_name = parts[1].to_string();
+            } else {
+                table_name = after_on.split_whitespace().next().unwrap_or("").to_string();
+            }
+            ""
+        };
+
+        let kafka_pos = final_rest.to_uppercase().find("KAFKA");
+        if let Some(kp) = kafka_pos {
+            let kafka_rest = final_rest[kp + 6..].trim();
+            let broker_pos = kafka_rest.to_uppercase().find("KAFKA_BROKER_LIST");
+            if let Some(bp) = broker_pos {
+                let after_broker = kafka_rest[bp + 16..].trim().trim_start_matches('=').trim();
+                if let Some(end) = after_broker.find(' ') {
+                    kafka_broker_list = Some(after_broker[..end].to_string());
+                } else {
+                    kafka_broker_list = Some(after_broker.to_string());
+                }
+            }
+            let topic_pos = kafka_rest.to_uppercase().find("TOPIC");
+            if let Some(tp) = topic_pos {
+                let after_topic = kafka_rest[tp + 6..].trim().trim_start_matches('=').trim();
+                if let Some(end) = after_topic.find(' ') {
+                    kafka_topic = Some(after_topic[..end].to_string());
+                } else {
+                    kafka_topic = Some(after_topic.to_string());
+                }
+            }
+        }
+
+        if final_rest.contains('(') && final_rest.contains('=') {
+            properties = parse_properties(&final_rest);
+        }
+    }
+
+    Ok(vec![Statement::RoutineLoad(RoutineLoadStmt {
+        table: table_name,
+        database,
+        job_name,
+        kafka_broker_list,
+        kafka_topic,
+        properties,
+    })])
+}
+
+fn parse_mysql_load(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_mysql = sql
+        .strip_prefix("MYSQL LOAD")
+        .or_else(|| sql.strip_prefix("Mysql Load"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected MYSQL LOAD".to_string(),
+        })?
+        .trim();
+
+    let mut table_name = String::new();
+    let mut database = None;
+    let mut file_path = String::new();
+    let mut properties = Vec::new();
+
+    let rest = after_mysql;
+
+    let into_pos = rest.to_uppercase().find(" INTO ").or_else(|| rest.find(" INTO"));
+    if let Some(idx) = into_pos {
+        let before_into = rest[..idx].trim();
+        let after_into = rest[idx + 6..].trim();
+
+        if before_into.to_uppercase().starts_with("LOAD DATA") {
+            let file_part = before_into.strip_prefix("LOAD DATA").unwrap_or(before_into).trim();
+            if file_part.to_uppercase().starts_with("INFILE") {
+                let infile_rest = file_part[7..].trim();
+                if let Some(end) = infile_rest.find(' ') {
+                    file_path = infile_rest[..end].trim().to_string();
+                } else {
+                    file_path = infile_rest.trim().to_string();
+                }
+            }
+        }
+
+        if let Some(tab_end) = after_into.find(" (") {
+            let table_part = after_into[..tab_end].trim();
+            let parts: Vec<&str> = table_part.split('.').collect();
+            if parts.len() == 2 {
+                database = Some(parts[0].to_string());
+                table_name = parts[1].to_string();
+            } else {
+                table_name = table_part.to_string();
+            }
+            let props_part = after_into[tab_end + 1..].trim().strip_prefix('(').unwrap_or("").strip_suffix(')').unwrap_or("");
+            properties = parse_properties(props_part);
+        } else {
+            let table_part = after_into.split_whitespace().next().unwrap_or("").trim();
+            let parts: Vec<&str> = table_part.split('.').collect();
+            if parts.len() == 2 {
+                database = Some(parts[0].to_string());
+                table_name = parts[1].to_string();
+            } else {
+                table_name = table_part.to_string();
+            }
+        }
+    }
+
+    Ok(vec![Statement::MysqlLoad(MysqlLoadStmt {
+        table: table_name,
+        database,
+        file_path,
+        properties,
     })])
 }

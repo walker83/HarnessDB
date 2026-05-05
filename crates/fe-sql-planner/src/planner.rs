@@ -107,6 +107,12 @@ impl Planner {
             Statement::DropCatalog(stmt) => self.plan_drop_catalog(stmt),
             Statement::ShowCatalogs => self.plan_show_catalogs(),
             Statement::RefreshCatalog(stmt) => self.plan_refresh_catalog(stmt),
+            Statement::ExportTable(stmt) => self.plan_export_table(stmt),
+            Statement::ShowDelete { database, table } => self.plan_show_delete(database, table),
+            Statement::ShowLastInsert => self.plan_show_last_insert(),
+            Statement::BrokerLoad(stmt) => self.plan_broker_load(stmt),
+            Statement::RoutineLoad(stmt) => self.plan_routine_load(stmt),
+            Statement::MysqlLoad(stmt) => self.plan_mysql_load(stmt),
         }
     }
 
@@ -980,6 +986,103 @@ impl Planner {
                 database: stmt.database,
                 view_name: stmt.name,
                 refresh_type: refresh_type.to_string(),
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_export_table(&self, stmt: ExportTableStmt) -> Result<PlanNode, DrorisError> {
+        let (database, table_name) = if stmt.table.contains('.') {
+            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (stmt.database, stmt.table.clone())
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::ExportTable(ExportTableNode {
+                table_name,
+                database,
+                file_path: stmt.file_path,
+                format: stmt.format,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_delete(&self, database: Option<String>, table: Option<String>) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::ShowDelete(ShowDeleteNode {
+                database,
+                table,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_last_insert(&self) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::ShowLastInsert,
+            vec![],
+        ))
+    }
+
+    fn plan_broker_load(&self, stmt: BrokerLoadStmt) -> Result<PlanNode, DrorisError> {
+        let (database, table_name) = if stmt.table.contains('.') {
+            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (stmt.database, stmt.table.clone())
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::BrokerLoad(BrokerLoadNode {
+                table_name,
+                database,
+                file_path: stmt.file_path,
+                broker_name: stmt.broker_name,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_routine_load(&self, stmt: RoutineLoadStmt) -> Result<PlanNode, DrorisError> {
+        let (database, table_name) = if stmt.table.contains('.') {
+            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (stmt.database, stmt.table.clone())
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::RoutineLoad(RoutineLoadNode {
+                table_name,
+                database,
+                job_name: stmt.job_name,
+                kafka_broker_list: stmt.kafka_broker_list,
+                kafka_topic: stmt.kafka_topic,
+                properties: stmt.properties,
+            }),
+            vec![],
+        ))
+    }
+
+    fn plan_mysql_load(&self, stmt: MysqlLoadStmt) -> Result<PlanNode, DrorisError> {
+        let (database, table_name) = if stmt.table.contains('.') {
+            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+            (Some(parts[0].to_string()), parts[1].to_string())
+        } else {
+            (stmt.database, stmt.table.clone())
+        };
+
+        Ok(self.make_node(
+            PlanNodeType::MysqlLoad(MysqlLoadNode {
+                table_name,
+                database,
+                file_path: stmt.file_path,
+                properties: stmt.properties,
             }),
             vec![],
         ))
