@@ -96,6 +96,11 @@ pub enum Statement {
     ShowRowPolicy(Option<String>),
     KillAnalyzeJob(String),
     AlterStats(String, Vec<(String, String)>),
+
+    // Transaction statements
+    StartTransaction,
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, Clone)]
