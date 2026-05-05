@@ -169,14 +169,18 @@
 |------|------|------|
 | **CREATE DATABASE** | ✅ | 创建数据库 |
 | **DROP DATABASE** | ✅ | 删除数据库 |
+| **ALTER DATABASE** | ✅ | 修改数据库属性 |
+| **SHOW CREATE DATABASE** | ✅ | 查看建库语句 |
 | **CREATE TABLE** | ✅ | 创建表（支持 DUPLICATE KEY、分区表） |
-| **ALTER TABLE** | ✅ | ALTER TABLE 解析支持 |
+| **ALTER TABLE** | ✅ | 修改表（重命名列、注释、设置属性） |
 | **DROP TABLE** | ✅ | 删除表 |
 | **TRUNCATE TABLE** | ✅ | 快速清空表 |
 | **INSERT** | ✅ | 插入数据（单条和多条） |
 | **SELECT** | ✅ | 查询数据（支持复杂查询） |
 | **CREATE VIEW** | ✅ | 创建视图 |
 | **DROP VIEW** | ✅ | 删除视图 |
+| **ALTER VIEW** | ✅ | 修改视图定义 |
+| **SHOW CREATE VIEW** | ✅ | 查看建视图语句 |
 
 ### 分区支持
 

@@ -169,14 +169,18 @@ This document provides a detailed overview of the features currently supported b
 |---------|--------|-------------|
 | **CREATE DATABASE** | ✅ | Create database |
 | **DROP DATABASE** | ✅ | Drop database |
+| **ALTER DATABASE** | ✅ | Alter database properties |
+| **SHOW CREATE DATABASE** | ✅ | Show database creation statement |
 | **CREATE TABLE** | ✅ | Create table (supports DUPLICATE KEY, partition tables) |
-| **ALTER TABLE** | ✅ | ALTER TABLE parser support |
+| **ALTER TABLE** | ✅ | Alter table (RENAME COLUMN, COMMENT, SET PROPERTY) |
 | **DROP TABLE** | ✅ | Drop table |
 | **TRUNCATE TABLE** | ✅ | Quick table truncation |
 | **INSERT** | ✅ | Insert data (single and multiple rows) |
 | **SELECT** | ✅ | Query data (supports complex queries) |
 | **CREATE VIEW** | ✅ | Create view |
 | **DROP VIEW** | ✅ | Drop view |
+| **ALTER VIEW** | ✅ | Alter view definition |
+| **SHOW CREATE VIEW** | ✅ | Show view creation statement |
 
 ### Partition Support
 
