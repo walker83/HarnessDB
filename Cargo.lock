@@ -1722,6 +1722,7 @@ dependencies = [
  "mysql-protocol",
  "tokio",
  "tpch-bench",
+ "tracing-subscriber",
  "types",
 ]
 

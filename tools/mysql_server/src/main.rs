@@ -191,6 +191,8 @@ fn scalar_value_to_string(val: &ScalarValue) -> Option<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
     println!("=== RorisDB MySQL Server ===");
     println!("Starting MySQL server on 127.0.0.1:9030...");
 

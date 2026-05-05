@@ -1,15 +1,17 @@
 use bytes::{Buf, Bytes, BytesMut};
 use rand::RngCore;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 use crate::auth::{AuthPlugin, AuthError, AuthUser};
 use crate::packet::{
     self, command, column_type, CapabilityFlags, Column, HandshakeResponse, HandshakeV10,
 };
-use crate::server::{QueryHandler, QueryResult};
+use crate::server::{QueryHandler, QueryResult, ColumnDef, ColumnType};
 
 /// The connection state machine phases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,8 +68,19 @@ impl Connection {
         // Phase 1: Send handshake
         self.send_handshake().await?;
 
-        // Phase 2: Receive auth response
-        self.handle_auth_response().await?;
+        // Phase 2: Receive auth response (with timeout)
+        let auth_result = timeout(Duration::from_secs(1), self.handle_auth_response()).await;
+        match auth_result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                warn!("Auth failed for conn {}: {}", self.conn_id, e);
+                return Err(e);
+            }
+            Err(_) => {
+                warn!("Auth timeout for conn {}", self.conn_id);
+                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "auth timeout"));
+            }
+        }
 
         // Phase 3: Command loop
         self.command_loop().await
@@ -97,10 +110,16 @@ impl Connection {
         let payload = self.read_packet().await?;
         debug!("handle_auth_response: received {} bytes, seq_id now={}", payload.len(), self.seq_id);
 
-        let response = HandshakeResponse::parse(&payload)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let response = match HandshakeResponse::parse(&payload) {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Failed to parse handshake response ({} bytes): {}", payload.len(), e);
+                debug!("Raw payload: {:02x?}", &payload[..payload.len().min(128)]);
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
+            }
+        };
 
-        self.capability_flags = response.capability_flags;
+        self.capability_flags = response.capability_flags & packet::DEFAULT_CAPABILITIES;
         self.charset = response.charset;
         self.username = response.username.clone();
         self.database = response.database.clone();
@@ -233,7 +252,10 @@ impl Connection {
                 command::COM_QUERY => {
                     let sql = String::from_utf8_lossy(data).to_string();
                     debug!("COM_QUERY: {}", sql);
-                    self.handle_query(&sql).await?;
+                    if let Err(e) = self.handle_query(&sql).await {
+                        error!("Query handler error: {}", e);
+                        return Err(e);
+                    }
                 }
                 command::COM_PING => {
                     debug!("COM_PING");
@@ -278,6 +300,14 @@ impl Connection {
                     self.write_all(&pkt).await?;
                     self.seq_id = next;
                 }
+                command::COM_SET_OPTION => {
+                    debug!("COM_SET_OPTION (ignored)");
+                    self.send_ok(0, 0).await?;
+                }
+                command::COM_RESET_CONNECTION => {
+                    debug!("COM_RESET_CONNECTION");
+                    self.send_ok(0, 0).await?;
+                }
                 _ => {
                     warn!("Unsupported command: {:#x}", cmd);
                     self.send_general_err(1047, format!("Unknown command {:#x}", cmd))
@@ -306,6 +336,95 @@ impl Connection {
             }
             self.send_ok(0, 0).await?;
             return Ok(());
+        }
+
+        // Handle common MySQL client initialization queries
+        // These are sent automatically by the mysql CLI on connect
+        if trimmed.starts_with("select") {
+            // select @@version_comment limit 1
+            if trimmed.contains("@@version_comment") {
+                let result = QueryResult::with_rows(
+                    vec![ColumnDef { name: "@@version_comment".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some("RorisDB".to_string())]],
+                );
+                return self.send_result_set(result).await;
+            }
+            // select database()
+            if trimmed.contains("database()") {
+                let db = self.database.clone().unwrap_or_default();
+                let result = QueryResult::with_rows(
+                    vec![ColumnDef { name: "database()".to_string(), col_type: ColumnType::String }],
+                    vec![vec![if db.is_empty() { None } else { Some(db) }]],
+                );
+                return self.send_result_set(result).await;
+            }
+            // select @@variable (various system variables)
+            if trimmed.contains("@@") {
+                let result = QueryResult::with_rows(
+                    vec![ColumnDef { name: "@@variable".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(String::new())]],
+                );
+                return self.send_result_set(result).await;
+            }
+            // Simple expressions without FROM (e.g., "SELECT 1", "SELECT 1+1")
+            if !trimmed.contains("from") {
+                let result = QueryResult::with_rows(
+                    vec![ColumnDef { name: "1".to_string(), col_type: ColumnType::Int }],
+                    vec![vec![Some("1".to_string())]],
+                );
+                return self.send_result_set(result).await;
+            }
+        }
+
+        // Handle SHOW commands
+        if trimmed.starts_with("show ") {
+            if trimmed.contains("warnings") || trimmed.contains("errors") {
+                let result = QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Level".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Code".to_string(), col_type: ColumnType::Int },
+                        ColumnDef { name: "Message".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![],
+                );
+                return self.send_result_set(result).await;
+            }
+            if trimmed.contains("variables") {
+                let result = QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Variable_name".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Value".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![],
+                );
+                return self.send_result_set(result).await;
+            }
+            if trimmed.contains("status") {
+                let result = QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Variable_name".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Value".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![],
+                );
+                return self.send_result_set(result).await;
+            }
+            if trimmed.contains("processlist") {
+                let result = QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Id".to_string(), col_type: ColumnType::Int },
+                        ColumnDef { name: "User".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Host".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "db".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Command".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Time".to_string(), col_type: ColumnType::Int },
+                        ColumnDef { name: "State".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Info".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![],
+                );
+                return self.send_result_set(result).await;
+            }
         }
 
         let result = self.handler.handle_query(sql);
@@ -475,6 +594,7 @@ impl Connection {
 
     /// Read one complete MySQL packet from the stream.
     /// Returns just the payload (without header).
+    /// Updates self.seq_id so the next write uses the correct sequence ID.
     async fn read_packet(&mut self) -> std::io::Result<Bytes> {
         loop {
             // Try to parse a complete packet from the buffer
@@ -486,7 +606,9 @@ impl Connection {
 
                 let total = 4 + payload_len;
                 if self.read_buf.len() >= total {
-                    let _seq_id = self.read_buf[3];
+                    let recv_seq = self.read_buf[3];
+                    // Sync sequence ID: next packet we send should be recv_seq + 1
+                    self.seq_id = recv_seq.wrapping_add(1);
                     // Extract payload bytes
                     let payload: Bytes = self.read_buf[4..total].to_vec().into();
                     // Remove consumed bytes from the buffer: advance past the full packet

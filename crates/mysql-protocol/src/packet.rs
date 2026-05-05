@@ -12,7 +12,7 @@ use crate::value::{encode_lenenc_int, encode_lenenc_str};
 pub const MAX_PACKET_SIZE: usize = 0x00FF_FFFF;
 
 /// Default server capability flags.
-const DEFAULT_CAPABILITIES: u32 =
+pub const DEFAULT_CAPABILITIES: u32 =
     CapabilityFlags::PROTOCOL_41
     | CapabilityFlags::PLUGIN_AUTH
     | CapabilityFlags::SECURE_CONNECTION
@@ -22,8 +22,7 @@ const DEFAULT_CAPABILITIES: u32 =
     | CapabilityFlags::MULTI_STATEMENTS
     | CapabilityFlags::MULTI_RESULTS
     | CapabilityFlags::PS_MULTI_RESULTS
-    | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA
-    | CapabilityFlags::DEPRECATE_EOF;
+    | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA;
 
 /// Server status flags sent in OK packets.
 pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
@@ -356,24 +355,27 @@ impl HandshakeResponse {
 
         // Auth response - starts right after username null terminator
         let auth_start = username_end + 1;
-        let auth_response = if (capability_flags & CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA) != 0 {
+        let (auth_response, auth_total_len) = if (capability_flags & CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA) != 0 {
             // Length-encoded auth response
             let (len, n) = read_lenenc_int(&payload[auth_start..])?;
-            payload[auth_start + n..auth_start + n + len].to_vec()
+            let data = payload[auth_start + n..auth_start + n + len].to_vec();
+            (data, n + len)
         } else if (capability_flags & CapabilityFlags::SECURE_CONNECTION) != 0 {
             let len = payload[auth_start] as usize;
-            payload[auth_start + 1..auth_start + 1 + len].to_vec()
+            let data = payload[auth_start + 1..auth_start + 1 + len].to_vec();
+            (data, 1 + len)
         } else {
             // Null-terminated
             let end = payload[auth_start..]
                 .iter()
                 .position(|&b| b == 0)
                 .unwrap_or(payload.len() - auth_start);
-            payload[auth_start..auth_start + end].to_vec()
+            let data = payload[auth_start..auth_start + end].to_vec();
+            (data, end + 1) // +1 for null terminator
         };
 
         // Database - starts after auth response
-        let db_start = auth_start + 1 + auth_response.len();
+        let db_start = auth_start + auth_total_len;
         let database = if (capability_flags & CapabilityFlags::CONNECT_WITH_DB) != 0
             && db_start < payload.len()
         {
