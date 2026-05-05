@@ -32,17 +32,32 @@ pub fn encode(data: &[u8], codec: CodecType) -> Vec<u8> {
     match codec {
         CodecType::None => data.to_vec(),
         CodecType::Lz4 => {
-            lz4::block::compress(data, Some(lz4::block::CompressionMode::DEFAULT), true)
-                .unwrap_or_else(|_| data.to_vec())
+            let compressed = lz4::block::compress(data, Some(lz4::block::CompressionMode::DEFAULT), true)
+                .unwrap_or_else(|_| data.to_vec());
+            if compressed.len() >= data.len() {
+                data.to_vec()
+            } else {
+                compressed
+            }
         }
         CodecType::Zstd => {
-            zstd::encode_all(data, 3)
-                .unwrap_or_else(|_| data.to_vec())
+            let compressed = zstd::encode_all(data, 3)
+                .unwrap_or_else(|_| data.to_vec());
+            if compressed.len() >= data.len() {
+                data.to_vec()
+            } else {
+                compressed
+            }
         }
         CodecType::Snappy => {
-            snap::raw::Encoder::new()
+            let compressed = snap::raw::Encoder::new()
                 .compress_vec(data)
-                .unwrap_or_else(|_| data.to_vec())
+                .unwrap_or_else(|_| data.to_vec());
+            if compressed.len() >= data.len() {
+                data.to_vec()
+            } else {
+                compressed
+            }
         }
     }
 }
@@ -56,17 +71,32 @@ pub fn encode_with_level(data: &[u8], codec: CodecType, level: i32) -> Vec<u8> {
             } else {
                 lz4::block::CompressionMode::FAST(level.abs().min(16))
             };
-            lz4::block::compress(data, Some(mode), true)
-                .unwrap_or_else(|_| data.to_vec())
+            let compressed = lz4::block::compress(data, Some(mode), true)
+                .unwrap_or_else(|_| data.to_vec());
+            if compressed.len() >= data.len() {
+                data.to_vec()
+            } else {
+                compressed
+            }
         }
         CodecType::Zstd => {
-            zstd::encode_all(data, level.clamp(-22, 22))
-                .unwrap_or_else(|_| data.to_vec())
+            let compressed = zstd::encode_all(data, level.clamp(-22, 22))
+                .unwrap_or_else(|_| data.to_vec());
+            if compressed.len() >= data.len() {
+                data.to_vec()
+            } else {
+                compressed
+            }
         }
         CodecType::Snappy => {
-            snap::raw::Encoder::new()
+            let compressed = snap::raw::Encoder::new()
                 .compress_vec(data)
-                .unwrap_or_else(|_| data.to_vec())
+                .unwrap_or_else(|_| data.to_vec());
+            if compressed.len() >= data.len() {
+                data.to_vec()
+            } else {
+                compressed
+            }
         }
     }
 }

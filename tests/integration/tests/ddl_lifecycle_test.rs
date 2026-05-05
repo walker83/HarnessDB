@@ -244,7 +244,7 @@ fn test_create_table_with_hash_distribution() {
 fn test_create_table_duplicate_key() {
     let catalog = common::create_test_catalog();
     let t = catalog.get_table("test_db", "employees").unwrap();
-    assert_eq!(t.keys_type, KeysType::Duplicate);
+    assert!(matches!(t.keys_type, KeysType::Duplicate));
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn test_create_table_aggregate_key() {
 
     catalog.create_table("test_db", table).unwrap();
     let t = catalog.get_table("test_db", "agg_table").unwrap();
-    assert_eq!(t.keys_type, KeysType::Aggregate);
+    assert!(matches!(t.keys_type, KeysType::Aggregate));
     assert_eq!(t.columns[1].agg_type, Some("SUM".into()));
     assert_eq!(t.columns[2].agg_type, Some("REPLACE".into()));
 }
@@ -303,7 +303,7 @@ fn test_create_table_unique_key() {
 
     catalog.create_table("test_db", table).unwrap();
     let t = catalog.get_table("test_db", "unique_table").unwrap();
-    assert_eq!(t.keys_type, KeysType::Unique);
+    assert!(matches!(t.keys_type, KeysType::Unique));
 }
 
 #[test]
@@ -331,7 +331,7 @@ fn test_create_table_primary_key() {
 
     catalog.create_table("test_db", table).unwrap();
     let t = catalog.get_table("test_db", "pk_table").unwrap();
-    assert_eq!(t.keys_type, KeysType::Primary);
+    assert!(matches!(t.keys_type, KeysType::Primary));
 }
 
 // ===========================================================================

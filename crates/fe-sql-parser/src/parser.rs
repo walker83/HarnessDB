@@ -720,6 +720,57 @@ fn convert_statement(
                 selection,
             }))
         }
+        sqlparser::ast::Statement::AlterTable {
+            name,
+            if_exists: _,
+            only: _,
+            operations,
+            ..
+        } => {
+            let name_str = name.to_string();
+            let parts: Vec<&str> = name_str.split('.').collect();
+            let (database, table_name) = if parts.len() == 2 {
+                (Some(parts[0].to_string()), parts[1].to_string())
+            } else {
+                (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
+            };
+            let alter_ops: Vec<AlterOperation> = operations.into_iter().filter_map(|op| {
+                match op {
+                    sqlparser::ast::AlterTableOperation::AddColumn { column_def, .. } => {
+                        Some(AlterOperation::AddColumn(ColumnDef {
+                            name: column_def.name.value.clone(),
+                            data_type: column_def.data_type.to_string(),
+                            nullable: true,
+                            default_value: None,
+                            agg_type: None,
+                            comment: None,
+                        }))
+                    }
+                    sqlparser::ast::AlterTableOperation::DropColumn { column_name, .. } => {
+                        Some(AlterOperation::DropColumn(column_name.value.clone()))
+                    }
+                    sqlparser::ast::AlterTableOperation::RenameTable { table_name } => {
+                        Some(AlterOperation::RenameTable(table_name.to_string()))
+                    }
+                    sqlparser::ast::AlterTableOperation::ModifyColumn { col_name, data_type, .. } => {
+                        Some(AlterOperation::ModifyColumn(ColumnDef {
+                            name: col_name.value.clone(),
+                            data_type: data_type.to_string(),
+                            nullable: true,
+                            default_value: None,
+                            agg_type: None,
+                            comment: None,
+                        }))
+                    }
+                    _ => None,
+                }
+            }).collect();
+            Ok(Statement::AlterTable(AlterTableStmt {
+                database,
+                table: table_name,
+                operations: alter_ops,
+            }))
+        }
         _ => Err(ParseError::Unsupported(format!(
             "statement type: {:?}",
             stmt
@@ -1002,6 +1053,70 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
             let args = convert_function_args(fun.args);
             Expr::FunctionCall { name, args, distinct: false }
         }
+        sqlparser::ast::Expr::InList { expr, list, negated } => Expr::InList {
+            expr: Box::new(convert_expr(*expr)),
+            list: list.into_iter().map(convert_expr).collect(),
+            negated,
+        },
+        sqlparser::ast::Expr::InSubquery { expr, subquery, negated } => Expr::InSubquery {
+            expr: Box::new(convert_expr(*expr)),
+            query: Box::new(convert_query(*subquery).unwrap_or_else(|_| QueryStmt {
+                select_list: vec![],
+                from: None,
+                r#where: None,
+                group_by: vec![],
+                having: None,
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                with: None,
+            })),
+            negated,
+        },
+        sqlparser::ast::Expr::Exists { subquery, negated } => {
+            let query = convert_query(*subquery).unwrap_or_else(|_| QueryStmt {
+                select_list: vec![],
+                from: None,
+                r#where: None,
+                group_by: vec![],
+                having: None,
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                with: None,
+            });
+            if negated {
+                Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    expr: Box::new(Expr::Exists(Box::new(query))),
+                }
+            } else {
+                Expr::Exists(Box::new(query))
+            }
+        }
+        sqlparser::ast::Expr::Subquery(subquery) => Expr::Subquery(
+            Box::new(convert_query(*subquery).unwrap_or_else(|_| QueryStmt {
+                select_list: vec![],
+                from: None,
+                r#where: None,
+                group_by: vec![],
+                having: None,
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                with: None,
+            }))
+        ),
+        sqlparser::ast::Expr::Between { expr, negated, low, high } => Expr::Between {
+            expr: Box::new(convert_expr(*expr)),
+            low: Box::new(convert_expr(*low)),
+            high: Box::new(convert_expr(*high)),
+            negated,
+        },
+        sqlparser::ast::Expr::IsNull { expr, negated } => Expr::IsNull {
+            expr: Box::new(convert_expr(*expr)),
+            negated,
+        },
         _ => Expr::Wildcard,
     }
 }

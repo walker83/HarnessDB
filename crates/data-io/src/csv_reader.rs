@@ -168,9 +168,8 @@ impl<R: Read + BufRead> CsvReader<R> {
         // Read rows and build columns
         let mut all_rows: Vec<Vec<String>> = Vec::new();
 
-        // If schema was just inferred, we already read one line above
-        if self.schema.is_none() && !self.has_header {
-            // Use the line we already read
+        // If schema was just inferred, we already read one line above — include it
+        if self.schema.is_none() {
             all_rows.push(self.parse_line(line.trim()));
         }
 

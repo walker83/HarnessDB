@@ -64,8 +64,14 @@ pub fn choose_encoding_with_size(data_type: &DataType, cardinality_ratio: f64, i
 }
 
 /// Encode a raw byte buffer with LZ4 compression.
+/// Returns raw data if compression would expand it.
 pub fn lz4_compress(data: &[u8]) -> Vec<u8> {
-    lz4_flex::block::compress(data)
+    let compressed = lz4_flex::block::compress(data);
+    if compressed.len() >= data.len() {
+        data.to_vec()
+    } else {
+        compressed
+    }
 }
 
 /// Decode an LZ4-compressed buffer.
