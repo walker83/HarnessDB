@@ -6,10 +6,22 @@
 
 | 文档 | 优先级 | 模块 | 说明 |
 |------|--------|------|------|
-| [P0-dml-execution.md](P0-dml-execution.md) | P0 | DML 执行层 | UPDATE/DELETE 执行层实现 |
+| [P0-dml-insert.md](P0-dml-insert.md) | P0 | DML | INSERT 执行实现 |
+| [P0-dml-update-delete.md](P0-dml-update-delete.md) | P0 | DML | UPDATE/DELETE 执行实现 |
+| [P0-table-model-syntax.md](P0-table-model-syntax.md) | P0 | Parser | DUPLICATE/AGGREGATE/UNIQUE KEY 语法 |
+| [P0-dml-execution.md](P0-dml-execution.md) | P0 | DML 执行层 | UPDATE/DELETE 执行层实现（参考） |
 | [P0-partition.md](P0-partition.md) | P0 | 分区 | Range/List/Hash 分区 + Partition Pruning |
 | [P0-fe-ha.md](P0-fe-ha.md) | P0 | 高可用 | FE Raft 共识、Master 选举、Quorum |
-| [P1-materialized-view.md](P1-materialized-view.md) | P1 | 优化器 | 物化视图 DDL + 查询透明改写 |
+| [P0-integration-test-requirements.md](P0-integration-test-requirements.md) | P0 | 测试 | 集成测试关键需求（基于 SQL 测试套件） |
+| [P1-bitmap-hll.md](P1-bitmap-hll.md) | P1 | 类型 | BITMAP/HLL 类型和函数 |
+| [P1-fulltext-search.md](P1-fulltext-search.md) | P1 | 检索 | 全文检索 MATCH 语法 |
+| [P1-complex-types.md](P1-complex-types.md) | P1 | 类型 | ARRAY/STRUCT/MAP 复杂类型 |
+| [P1-json-type.md](P1-json-type.md) | P1 | 类型 | JSON 类型和函数 |
+| [P1-materialized-view-v2.md](P1-materialized-view-v2.md) | P1 | 物化视图 | 物化视图完善（SHOW/DROP/REFRESH） |
+| [P1-inverted-index.md](P1-inverted-index.md) | P1 | 索引 | 倒排索引和 Bloom Filter |
+| [P1-alter-table-extensions.md](P1-alter-table-extensions.md) | P1 | DDL | ALTER TABLE 扩展功能 |
+| [P1-view-support.md](P1-view-support.md) | P1 | DDL | 视图 (VIEW) 支持 |
+| [P1-materialized-view.md](P1-materialized-view.md) | P1 | 优化器 | 物化视图 DDL + 查询透明改写（参考） |
 | [P1-runtime-filter.md](P1-runtime-filter.md) | P1 | 优化器 | Runtime Filter Join 优化 |
 | [P1-cbo.md](P1-cbo.md) | P1 | 优化器 | CBO 代价模型 + 统计信息收集 |
 | [P1-rbac.md](P1-rbac.md) | P1 | 安全 | RBAC 角色权限控制 |

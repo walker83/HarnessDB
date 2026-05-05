@@ -7,7 +7,7 @@
 //! The conversion between planner-level expressions (strings) and execution-level
 //! column indices requires additional schema resolution that's not yet implemented.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use be_storage::StorageEngine;
 use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, UpdateNode, DeleteNode, AlterTableNode, InsertNode};
 use fe_catalog::CatalogManager;
@@ -17,6 +17,7 @@ use crate::exec_node::{
     ExecutionPlan, ExecNode, ScanExecNode, FilterExecNode, ProjectExecNode,
     AggregateExecNode, SortExecNode, LimitExecNode, HashJoinExecNode,
     UpdateExecNode, DeleteExecNode, AlterTableExecNode, InsertExecNode,
+    TransactionContext, PendingWrite, WriteOp, PendingDelete,
 };
 
 /// Error type for plan execution conversion.
@@ -40,11 +41,25 @@ pub struct ExecutionContext {
     pub storage: Arc<StorageEngine>,
     /// The catalog for resolving table names to tablet IDs.
     pub catalog: Arc<CatalogManager>,
+    /// Transaction context for staging DML operations in transactions.
+    /// When None, DML executes immediately. When set, DML should be staged
+    /// to the transaction context instead of executed immediately.
+    pub transaction_ctx: Option<Arc<StdRwLock<TransactionContext>>>,
 }
 
 impl ExecutionContext {
     pub fn new(storage: Arc<StorageEngine>, catalog: Arc<CatalogManager>) -> Self {
-        Self { storage, catalog }
+        Self {
+            storage,
+            catalog,
+            transaction_ctx: None,
+        }
+    }
+
+    /// Configure transaction context for DML staging.
+    pub fn with_transaction_ctx(mut self, tx_ctx: Arc<StdRwLock<TransactionContext>>) -> Self {
+        self.transaction_ctx = Some(tx_ctx);
+        self
     }
 
     /// Resolve a table name to a tablet ID.
@@ -186,6 +201,11 @@ impl ExecutionContext {
             node = node.with_storage(tid, storage);
         }
 
+        // Pass transaction context if set
+        if let Some(ref tx_ctx) = self.transaction_ctx {
+            node = node.with_transaction_ctx(tx_ctx.clone());
+        }
+
         Ok(ExecutionPlan::Update(node))
     }
 
@@ -201,6 +221,11 @@ impl ExecutionContext {
 
         if let (Some(tid), Some(storage)) = (tablet_id, Some(self.storage.clone())) {
             node = node.with_storage(tid, storage);
+        }
+
+        // Pass transaction context if set
+        if let Some(ref tx_ctx) = self.transaction_ctx {
+            node = node.with_transaction_ctx(tx_ctx.clone());
         }
 
         Ok(ExecutionPlan::Delete(node))

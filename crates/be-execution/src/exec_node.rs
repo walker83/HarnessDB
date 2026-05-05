@@ -7,7 +7,7 @@ use types::vector::{
 };
 use types::runtime_filter::{MinMaxFilter, InFilter};
 use be_storage::index::BloomFilter;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use std::collections::HashMap;
 use be_storage::StorageEngine;
 use be_storage::index::{ColumnPredicate, apply_predicates_to_block};
@@ -1527,6 +1527,44 @@ impl WindowExecNode {
 
 // ---- DML Execution Nodes ----
 
+/// Transaction context for staging DML operations.
+#[derive(Clone)]
+pub struct TransactionContext {
+    pub in_transaction: bool,
+    pub pending_writes: Vec<PendingWrite>,
+    pub pending_deletes: Vec<PendingDelete>,
+}
+
+#[derive(Clone)]
+pub struct PendingWrite {
+    pub tablet_id: u64,
+    pub block: types::Block,
+    pub op_type: WriteOp,
+}
+
+#[derive(Clone)]
+pub enum WriteOp {
+    Insert,
+    Update,
+    Delete,
+}
+
+#[derive(Clone)]
+pub struct PendingDelete {
+    pub tablet_id: u64,
+    pub predicates: Vec<ColumnPredicate>,
+}
+
+impl TransactionContext {
+    pub fn new() -> Self {
+        Self {
+            in_transaction: false,
+            pending_writes: Vec::new(),
+            pending_deletes: Vec::new(),
+        }
+    }
+}
+
 pub struct UpdateExecNode {
     pub table_name: String,
     pub database: String,
@@ -1534,6 +1572,7 @@ pub struct UpdateExecNode {
     pub selection_predicate: Option<String>,
     pub tablet_id: Option<u64>,
     pub storage: Option<Arc<StorageEngine>>,
+    pub transaction_ctx: Option<Arc<StdRwLock<TransactionContext>>>,
     pub executed: bool,
 }
 
@@ -1551,6 +1590,7 @@ impl UpdateExecNode {
             selection_predicate,
             tablet_id: None,
             storage: None,
+            transaction_ctx: None,
             executed: false,
         }
     }
@@ -1558,6 +1598,11 @@ impl UpdateExecNode {
     pub fn with_storage(mut self, tablet_id: u64, storage: Arc<StorageEngine>) -> Self {
         self.tablet_id = Some(tablet_id);
         self.storage = Some(storage);
+        self
+    }
+
+    pub fn with_transaction_ctx(mut self, tx_ctx: Arc<StdRwLock<TransactionContext>>) -> Self {
+        self.transaction_ctx = Some(tx_ctx);
         self
     }
 }
@@ -1618,6 +1663,26 @@ impl ExecNode for UpdateExecNode {
             }
         }
 
+        // Check if we're in transaction mode
+        if let Some(ref tx_ctx) = self.transaction_ctx {
+            let mut tx = tx_ctx.write().unwrap();
+            if tx.in_transaction {
+                // Stage pending delete for the matching rows
+                tx.pending_deletes.push(PendingDelete {
+                    tablet_id,
+                    predicates: predicates.clone(),
+                });
+                // Stage pending write with the modified block
+                tx.pending_writes.push(PendingWrite {
+                    tablet_id,
+                    block: modified_block,
+                    op_type: WriteOp::Update,
+                });
+                tracing::info!("UPDATE on {}.{} staged to transaction: {} rows affected", self.database, self.table_name, affected_count);
+                return Ok(Some(make_affected_rows_block(affected_count)));
+            }
+        }
+
         // Delete old matching rows, then write back modified rows
         storage.delete(tablet_id, &predicates)?;
         storage.write_batch(tablet_id, &modified_block)?;
@@ -1642,6 +1707,7 @@ pub struct DeleteExecNode {
     pub selection_predicate: Option<String>,
     pub tablet_id: Option<u64>,
     pub storage: Option<Arc<StorageEngine>>,
+    pub transaction_ctx: Option<Arc<StdRwLock<TransactionContext>>>,
     pub executed: bool,
 }
 
@@ -1657,6 +1723,7 @@ impl DeleteExecNode {
             selection_predicate,
             tablet_id: None,
             storage: None,
+            transaction_ctx: None,
             executed: false,
         }
     }
@@ -1664,6 +1731,11 @@ impl DeleteExecNode {
     pub fn with_storage(mut self, tablet_id: u64, storage: Arc<StorageEngine>) -> Self {
         self.tablet_id = Some(tablet_id);
         self.storage = Some(storage);
+        self
+    }
+
+    pub fn with_transaction_ctx(mut self, tx_ctx: Arc<StdRwLock<TransactionContext>>) -> Self {
+        self.transaction_ctx = Some(tx_ctx);
         self
     }
 }
@@ -1694,6 +1766,22 @@ impl ExecNode for DeleteExecNode {
             Some(pred_str) => parse_predicates(pred_str),
             None => vec![],
         };
+
+        // Check if we're in transaction mode
+        if let Some(ref tx_ctx) = self.transaction_ctx {
+            let mut tx = tx_ctx.write().unwrap();
+            if tx.in_transaction {
+                // Stage pending delete
+                tx.pending_deletes.push(PendingDelete {
+                    tablet_id,
+                    predicates: predicates.clone(),
+                });
+                // For delete, we don't have a block to write back, just record affected count
+                // The affected count will be determined at commit time
+                tracing::info!("DELETE on {}.{} staged to transaction", self.database, self.table_name);
+                return Ok(Some(make_affected_rows_block(0)));
+            }
+        }
 
         let affected = storage.delete(tablet_id, &predicates)?;
 

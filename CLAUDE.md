@@ -1,8 +1,6 @@
-# CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Build
+一旦你完成了docs/roadmap以后，你就可以吧对应的文件挪到docs/roadmap/done里，这样就清楚哪些任务未完成
+每次用户发起新的大的任务请求钱，尽量先git commit
 
 ```bash
 cargo build --release
