@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info, info_span, Instrument};
 
-use crate::auth::{AuthPluginType, AuthUser};
+use crate::auth::AuthPluginType;
 use crate::connection::Connection;
 use crate::packet::Column;
 

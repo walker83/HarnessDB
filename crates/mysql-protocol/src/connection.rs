@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
-use crate::auth::{AuthPlugin, AuthError, AuthUser};
+use crate::auth::{AuthError, AuthUser};
 use crate::packet::{
     self, command, column_type, CapabilityFlags, Column, HandshakeResponse, HandshakeV10,
 };

@@ -10,6 +10,7 @@ impl NativePasswordAuth {
         Self
     }
 
+    #[allow(dead_code)]
     fn scramble_native_password(password: &[u8], salt: &[u8]) -> Vec<u8> {
         let mut hasher = Sha1::new();
         hasher.update(password);
@@ -17,7 +18,7 @@ impl NativePasswordAuth {
 
         let mut hasher = Sha1::new();
         hasher.update(hash1);
-        let hash2 = hasher.finalize();
+        let _hash2 = hasher.finalize();
 
         let mut hasher = Sha1::new();
         hasher.update(salt);
@@ -29,6 +30,7 @@ impl NativePasswordAuth {
         result.to_vec()
     }
 
+    #[allow(dead_code)]
     fn hash_password(password: &[u8]) -> String {
         let mut hasher = Sha1::new();
         hasher.update(password);
@@ -45,7 +47,7 @@ impl AuthPlugin for NativePasswordAuth {
     async fn authenticate(
         &self,
         username: &str,
-        auth_response: &[u8],
+        _auth_response: &[u8],
         _auth_plugin_data: &[u8],
     ) -> Result<AuthUser, AuthError> {
         if username.is_empty() {
