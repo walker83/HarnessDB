@@ -14,9 +14,10 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt};
+use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, UpdateStmt, DeleteStmt};
 use types::{DataType, Block, ScalarValue};
 use fe_catalog::table::{Table, TableColumn, KeysType};
+use be_execution::{ExecutionContext, execute_plan};
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
@@ -399,12 +400,70 @@ impl RorisQueryHandler {
         Err(format!("INSERT execution not yet implemented - table: {}.{}", db, table_name))
     }
 
-    fn update(&self, stmt: &fe_sql_parser::ast::UpdateStmt) -> Result<QueryResult, String> {
-        Err(format!("UPDATE execution not yet implemented - table: {}", stmt.table))
+    fn update(&self, stmt: &UpdateStmt) -> Result<QueryResult, String> {
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let _table_name = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let planner = Planner::new(Arc::new(catalog_for_planner));
+        let optimizer = Optimizer::new();
+
+        let plan = planner.plan(Statement::Update(stmt.clone())).map_err(|e| format!("Planning error: {}", e))?;
+        let optimized_plan = optimizer.optimize(plan);
+
+        let catalog_inner = self.catalog.read().unwrap();
+        let exec_context = ExecutionContext::new(self.storage.clone(), Arc::new((*catalog_inner).clone()));
+        drop(catalog_inner);
+
+        let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+        let blocks = rt.block_on(execute_plan(&optimized_plan, &exec_context));
+        match blocks {
+            Ok(blocks) => block_to_query_result(blocks),
+            Err(e) => Err(format!("Execution error: {}", e)),
+        }
     }
 
-    fn delete(&self, stmt: &fe_sql_parser::ast::DeleteStmt) -> Result<QueryResult, String> {
-        Err(format!("DELETE execution not yet implemented - table: {}", stmt.table))
+    fn delete(&self, stmt: &DeleteStmt) -> Result<QueryResult, String> {
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let _table_name = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let planner = Planner::new(Arc::new(catalog_for_planner));
+        let optimizer = Optimizer::new();
+
+        let plan = planner.plan(Statement::Delete(stmt.clone())).map_err(|e| format!("Planning error: {}", e))?;
+        let optimized_plan = optimizer.optimize(plan);
+
+        let catalog_inner = self.catalog.read().unwrap();
+        let exec_context = ExecutionContext::new(self.storage.clone(), Arc::new((*catalog_inner).clone()));
+        drop(catalog_inner);
+
+        let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+        let blocks = rt.block_on(execute_plan(&optimized_plan, &exec_context));
+        match blocks {
+            Ok(blocks) => block_to_query_result(blocks),
+            Err(e) => Err(format!("Execution error: {}", e)),
+        }
     }
 
     fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {

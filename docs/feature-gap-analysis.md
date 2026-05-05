@@ -16,8 +16,8 @@
 |------|------|------|------|
 | SELECT (含 JOIN/CTE/UNION/SUBQUERY) | ✅ | ✅ | 完整支持 |
 | INSERT INTO / INSERT OVERWRITE | ✅ | ✅ | VALUES + SELECT 子查询 |
-| UPDATE | ✅ | 🚧 | 解析完成，执行层未实现 |
-| DELETE | ✅ | 🚧 | 解析完成，执行层未实现 |
+| UPDATE | ✅ | ✅ | 解析完成，执行层已完成 |
+| DELETE | ✅ | ✅ | 解析完成，执行层已完成 |
 | CREATE DATABASE | ✅ | ✅ | 含 IF NOT EXISTS, PROPERTIES |
 | DROP DATABASE | ✅ | ✅ | 含 IF EXISTS |
 | CREATE TABLE | ✅ | ✅ | 含 DISTRIBUTED BY, PARTITION BY, PROPERTIES, KeysType |
@@ -85,8 +85,8 @@
 
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
-| UPDATE 执行层 | ✅ | ❌ | 第4批 |
-| DELETE 执行层 | ✅ | ❌ | 第4批 |
+| UPDATE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
+| DELETE 执行层 | ✅ | ✅ | 第4批 → 已完成 |
 | EXPORT TABLE | ✅ | ❌ | 第3批 |
 | SHOW DELETE | ✅ | ❌ | 第3批 |
 | SHOW LAST INSERT | ✅ | ❌ | 第4批 |
