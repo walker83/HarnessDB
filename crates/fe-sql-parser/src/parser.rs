@@ -4,6 +4,22 @@ use crate::error::ParseError;
 pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let trimmed = sql.trim().to_uppercase();
 
+    // Pre-process Doris-specific CREATE TABLE extensions before sqlparser
+    let sql_to_parse;
+    let mut doris_distribution: Option<DistributionDef> = None;
+    let mut doris_partition: Option<PartitionDef> = None;
+    let mut doris_properties: Vec<(String, String)> = vec![];
+
+    if trimmed.starts_with("CREATE TABLE") {
+        let (clean, dist, part, props) = preprocess_create_table(sql);
+        sql_to_parse = clean;
+        doris_distribution = dist;
+        doris_partition = part;
+        doris_properties = props;
+    } else {
+        sql_to_parse = sql.to_string();
+    }
+
     if trimmed.starts_with("CREATE REPOSITORY") {
         return parse_create_repository(sql);
     }
@@ -54,7 +70,7 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
 
     let dialect = sqlparser::dialect::MySqlDialect {};
-    let statements = sqlparser::parser::Parser::parse_sql(&dialect, sql)
+    let statements = sqlparser::parser::Parser::parse_sql(&dialect, &sql_to_parse)
         .map_err(|e| ParseError::SyntaxError {
             position: 0,
             message: e.to_string(),
@@ -62,7 +78,22 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     statements
         .into_iter()
-        .map(convert_statement)
+        .map(|s| {
+            let mut converted = convert_statement(s)?;
+            // Attach Doris extensions to CreateTable
+            if let Statement::CreateTable(ref mut ct) = converted {
+                if doris_distribution.is_some() {
+                    ct.distribution = doris_distribution.take();
+                }
+                if doris_partition.is_some() {
+                    ct.partition = doris_partition.take();
+                }
+                if !doris_properties.is_empty() {
+                    ct.properties = doris_properties.clone();
+                }
+            }
+            Ok(converted)
+        })
         .collect()
 }
 
@@ -451,6 +482,63 @@ fn parse_refresh_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErr
     })])
 }
 
+fn preprocess_create_table(sql: &str) -> (String, Option<DistributionDef>, Option<PartitionDef>, Vec<(String, String)>) {
+    let sql_upper = sql.to_uppercase();
+    let mut clean_sql = sql.to_string();
+    let mut distribution: Option<DistributionDef> = None;
+    let mut partition: Option<PartitionDef> = None;
+    let mut properties: Vec<(String, String)> = vec![];
+
+    // Extract DISTRIBUTED BY HASH(col1, col2) BUCKETS N
+    if let Some(dist_pos) = sql_upper.find("DISTRIBUTED BY") {
+        let dist_clause = &sql[dist_pos..];
+        let dist_upper = dist_clause.to_uppercase();
+
+        if let Some(hash_pos) = dist_upper.find("HASH") {
+            let after_hash = dist_clause[hash_pos + 4..].trim_start();
+            if after_hash.starts_with('(') {
+                if let Some(end_paren) = after_hash.find(')') {
+                    let cols_str = &after_hash[1..end_paren];
+                    let columns: Vec<String> = cols_str.split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect();
+                    let remaining = after_hash[end_paren + 1..].trim();
+                    let buckets = if remaining.to_uppercase().starts_with("BUCKETS") {
+                        remaining[7..].trim().split_whitespace().next()
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(1)
+                    } else {
+                        1
+                    };
+                    distribution = Some(DistributionDef {
+                        dist_type: "HASH".to_string(),
+                        columns,
+                        buckets,
+                    });
+                }
+            }
+        }
+
+        clean_sql = sql[..dist_pos].trim().to_string();
+    }
+
+    // Extract PROPERTIES (...) from clean_sql
+    if let Some(prop_pos) = clean_sql.to_uppercase().rfind("PROPERTIES") {
+        let props_part = &clean_sql[prop_pos..];
+        properties = parse_properties(props_part);
+        clean_sql = clean_sql[..prop_pos].trim().to_string();
+    }
+
+    // Extract PARTITION BY RANGE/LIST/HASH (...) from clean_sql
+    if let Some(part_pos) = clean_sql.to_uppercase().find("PARTITION BY") {
+        clean_sql = clean_sql[..part_pos].trim().to_string();
+        // Partition parsing can be enhanced later
+        partition = None;
+    }
+
+    (clean_sql, distribution, partition, properties)
+}
+
 fn extract_identifier(s: &str) -> Option<(&str, &str)> {
     let s = s.trim();
     if s.is_empty() {
@@ -574,23 +662,62 @@ fn convert_statement(
             }))
         }
         sqlparser::ast::Statement::Drop {
-            names, if_exists, ..
+            object_type,
+            names,
+            if_exists,
+            ..
         } => {
             let name = names.first().map(|n| n.to_string()).unwrap_or_default();
-            if name.contains('.') {
-                let parts: Vec<&str> = name.splitn(2, '.').collect();
-                Ok(Statement::DropTable(DropTableStmt {
-                    database: Some(parts[0].to_string()),
-                    name: parts[1].to_string(),
-                    if_exists,
-                }))
-            } else {
-                Ok(Statement::DropTable(DropTableStmt {
-                    database: None,
-                    name,
-                    if_exists,
-                }))
+            match object_type {
+                sqlparser::ast::ObjectType::Database => {
+                    Ok(Statement::DropDatabase(DropDatabaseStmt {
+                        name,
+                        if_exists,
+                    }))
+                }
+                _ => {
+                    if name.contains('.') {
+                        let parts: Vec<&str> = name.splitn(2, '.').collect();
+                        Ok(Statement::DropTable(DropTableStmt {
+                            database: Some(parts[0].to_string()),
+                            name: parts[1].to_string(),
+                            if_exists,
+                        }))
+                    } else {
+                        Ok(Statement::DropTable(DropTableStmt {
+                            database: None,
+                            name,
+                            if_exists,
+                        }))
+                    }
+                }
             }
+        }
+        sqlparser::ast::Statement::ShowDatabases { .. } => {
+            Ok(Statement::ShowDatabases)
+        }
+        sqlparser::ast::Statement::CreateDatabase { db_name, if_not_exists, .. } => {
+            Ok(Statement::CreateDatabase(CreateDatabaseStmt {
+                name: db_name.to_string(),
+                if_not_exists,
+                properties: vec![],
+            }))
+        }
+        sqlparser::ast::Statement::ShowTables { show_options, .. } => {
+            let db_name = show_options
+                .show_in
+                .and_then(|si| si.parent_name)
+                .map(|n| n.to_string());
+            Ok(Statement::ShowTables(db_name))
+        }
+        sqlparser::ast::Statement::Use(use_expr) => {
+            let db_name = match use_expr {
+                sqlparser::ast::Use::Database(name) => name.to_string(),
+                sqlparser::ast::Use::Object(name) => name.to_string(),
+                sqlparser::ast::Use::Schema(name) => name.to_string(),
+                other => other.to_string(),
+            };
+            Ok(Statement::UseDatabase(db_name))
         }
         sqlparser::ast::Statement::ExplainTable {
             table_name, ..
@@ -615,15 +742,6 @@ fn convert_statement(
                 (String::new(), parts[0].to_string())
             };
             Ok(Statement::ShowCreateTable(db, tbl))
-        }
-        sqlparser::ast::Statement::ShowColumns {
-            show_options: _, ..
-        } => {
-            // SHOW COLUMNS FROM table - table name is in the filter
-            Ok(Statement::ShowColumns(None, None))
-        }
-        sqlparser::ast::Statement::Use(db) => {
-            Ok(Statement::UseDatabase(db.to_string()))
         }
         sqlparser::ast::Statement::SetVariable {
             variables, value, ..

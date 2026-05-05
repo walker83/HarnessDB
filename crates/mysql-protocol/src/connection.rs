@@ -329,11 +329,7 @@ impl Connection {
         let trimmed = sql.trim().to_lowercase();
 
         // Handle SET commands as no-ops (commonly sent by mysql client)
-        if trimmed.starts_with("set ") || trimmed.starts_with("use ") {
-            if trimmed.starts_with("use ") {
-                let db = sql.trim()[4..].trim().trim_end_matches(';').trim().to_string();
-                self.database = Some(db);
-            }
+        if trimmed.starts_with("set ") {
             self.send_ok(0, 0).await?;
             return Ok(());
         }
@@ -428,6 +424,17 @@ impl Connection {
         }
 
         let result = self.handler.handle_query(sql);
+        // Sync connection database state for USE commands
+        let trimmed_lc = sql.trim().to_lowercase();
+        if trimmed_lc.starts_with("use ") && result.columns.is_empty() && result.rows.is_empty() {
+            if let Some(pos) = sql.trim().find("USE ") {
+                let after_use = &sql.trim()[pos + 4..].trim().trim_end_matches(';').trim();
+                let db_name = after_use.split_whitespace().next().unwrap_or(after_use);
+                if !db_name.is_empty() {
+                    self.database = Some(db_name.to_string());
+                }
+            }
+        }
         self.send_result_set(result).await
     }
 

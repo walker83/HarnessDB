@@ -13,7 +13,7 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt};
+use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt};
 use types::DataType;
 
 #[derive(Parser)]
@@ -92,6 +92,7 @@ impl RorisQueryHandler {
         match stmt {
             Statement::ShowDatabases => self.show_databases(),
             Statement::ShowTables(db) => self.show_tables(db.clone()),
+            Statement::ShowCreateTable(db, table) => self.show_create_table(db.clone(), table.clone()),
             Statement::Describe(db, table) => self.describe(db.clone(), table.clone()),
             Statement::ShowColumns(db, table) => self.show_columns(db.clone(), table.clone()),
             Statement::UseDatabase(db) => self.use_database(db),
@@ -99,6 +100,8 @@ impl RorisQueryHandler {
             Statement::CreateTable(stmt) => self.create_table(stmt),
             Statement::DropDatabase(stmt) => self.drop_database(stmt),
             Statement::DropTable(stmt) => self.drop_table(stmt),
+            Statement::AlterTable(stmt) => self.alter_table(stmt),
+            Statement::TruncateTable { database, table, if_exists } => self.truncate_table(database.clone(), table.to_string(), *if_exists),
             Statement::Query(_) => self.execute_query(stmt),
             Statement::Explain(explain) => self.explain(&explain.statement),
             _ => Ok(QueryResult::with_rows(
@@ -302,6 +305,68 @@ impl RorisQueryHandler {
             Ok(()) => Ok(QueryResult::ok()),
             Err(_) if stmt.if_exists => Ok(QueryResult::ok()),
             Err(e) => Err(format!("{}", e)),
+        }
+    }
+
+    fn show_create_table(&self, db: String, table: String) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let target_db = if db.is_empty() { &current_db } else { &db };
+
+        match catalog.get_table(target_db, &table) {
+            Some(tbl) => {
+                // Build CREATE TABLE statement from table metadata
+                let mut create_sql = format!("CREATE TABLE `{}` (\n", table);
+                for (i, col) in tbl.columns.iter().enumerate() {
+                    let nullable = if col.nullable { "" } else { " NOT NULL" };
+                    let comma = if i < tbl.columns.len() - 1 { "," } else { "" };
+                    create_sql.push_str(&format!("  `{}` {}{}{}\n", col.name, col.data_type, nullable, comma));
+                }
+                create_sql.push_str(") ");
+                if let Some(dist) = &tbl.distribution_info {
+                    create_sql.push_str(&format!("DISTRIBUTED BY HASH({}) BUCKETS {} ",
+                        dist.columns.join(", "), dist.buckets));
+                }
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Create Table".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![vec![Some(table.clone()), Some(create_sql)]],
+                ))
+            }
+            None => Err(format!("Unknown table '{}.{}'", target_db, table)),
+        }
+    }
+
+    fn alter_table(&self, stmt: &AlterTableStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+
+        match catalog.get_table(db, &stmt.table) {
+            Some(_) => {
+                // ALTER TABLE implementation - currently just marks as parsed
+                drop(catalog);
+                Err("ALTER TABLE execution not yet implemented".to_string())
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
+        }
+    }
+
+    fn truncate_table(&self, database: Option<String>, table: String, if_exists: bool) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = database.as_deref().unwrap_or(&current_db);
+
+        match catalog.get_table(db, &table) {
+            Some(_) => {
+                // Truncate implementation - marks as parsed for now
+                drop(catalog);
+                Err("TRUNCATE TABLE execution not yet implemented".to_string())
+            }
+            None if if_exists => Ok(QueryResult::ok()),
+            None => Err(format!("Unknown table '{}.{}'", db, table)),
         }
     }
 
