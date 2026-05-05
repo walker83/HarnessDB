@@ -520,7 +520,7 @@ fn parse_show_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
                 position: 0,
                 message: "Expected table name".to_string(),
             })?;
-        let name_str = name.to_string();
+        let name_str = name.to_string().to_lowercase();
         let parts: Vec<&str> = name_str.split('.').collect();
         if parts.len() == 2 {
             (parts[0].to_string(), parts[1].to_string())
@@ -1987,12 +1987,34 @@ fn parse_cancel_alter_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected CANCEL ALTER TABLE".to_string() })?
         .trim();
     let (database, rest) = if after.to_uppercase().starts_with("FROM") {
-        let after_from = after.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
+        // Find "FROM" position in original string (case-insensitive)
+        let after_upper = after.to_uppercase();
+        let from_pos = after_upper.find("FROM").unwrap();
+        let after_from = after[from_pos + 4..].trim();
         let (db, remaining) = extract_identifier(after_from).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected database name".to_string() })?;
         (Some(db.to_string()), remaining.trim())
     } else { (None, after) };
-    let (table_name, _) = extract_identifier(rest).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
-    Ok(vec![Statement::CancelAlterTable(CancelAlterTableStmt { database, table: table_name.to_string() })])
+    // Handle optional database.table format
+    let rest = rest.trim();
+    let table_name = if rest.starts_with('.') {
+        // rest is like ".t1" - extract table name after the dot
+        let after_dot = rest[1..].trim();
+        let (name, _) = extract_identifier(after_dot).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
+        format!("{}.{}", database.as_ref().unwrap(), name)
+    } else {
+        let (name, remaining) = extract_identifier(rest).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
+        let name_str = name.to_string();
+        let remaining = remaining.trim();
+        if remaining.starts_with('.') {
+            // Fully qualified db.table
+            let after_dot = remaining[1..].trim();
+            let (table_part, _) = extract_identifier(after_dot).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
+            format!("{}.{}", name_str, table_part)
+        } else {
+            name_str
+        }
+    };
+    Ok(vec![Statement::CancelAlterTable(CancelAlterTableStmt { database, table: table_name })])
 }
 
 fn parse_alter_colocate_group(sql: &str) -> Result<Vec<Statement>, ParseError> {
