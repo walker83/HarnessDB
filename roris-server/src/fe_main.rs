@@ -15,9 +15,9 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
 use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt, DeleteStmt};
-use types::{DataType, Block, ScalarValue};
+use types::{DataType, ScalarValue, Block};
 use fe_catalog::table::{Table, TableColumn, KeysType};
-use be_execution::{ExecutionContext, execute_plan};
+use be_execution::planner::{ExecutionContext, execute_plan};
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
