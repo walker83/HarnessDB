@@ -68,6 +68,36 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     if trimmed.starts_with("REFRESH CATALOG") {
         return parse_refresh_catalog(sql);
     }
+    if trimmed.starts_with("GRANT") {
+        return parse_grant(sql);
+    }
+    if trimmed.starts_with("REVOKE") {
+        return parse_revoke(sql);
+    }
+    if trimmed.starts_with("CREATE ROLE") {
+        return parse_create_role(sql);
+    }
+    if trimmed.starts_with("DROP ROLE") {
+        return parse_drop_role(sql);
+    }
+    if trimmed.starts_with("ALTER USER") {
+        return parse_alter_user(sql);
+    }
+    if trimmed.starts_with("SET PASSWORD") {
+        return parse_set_password(sql);
+    }
+    if trimmed.starts_with("SET PROPERTY") {
+        return parse_set_property(sql);
+    }
+    if trimmed.starts_with("SHOW GRANTS") {
+        return parse_show_grants(sql);
+    }
+    if trimmed.starts_with("SHOW ROLES") {
+        return parse_show_roles(sql);
+    }
+    if trimmed.starts_with("SHOW PRIVILEGES") {
+        return parse_show_privileges(sql);
+    }
 
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, &sql_to_parse)
@@ -1279,22 +1309,21 @@ fn parse_create_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let mut password = None;
     let mut identified_by_password = false;
 
-    let rest_upper = rest.to_uppercase();
-    if rest_upper.contains("IDENTIFIED BY") {
+    if let Some(idx) = rest.to_uppercase().find("IDENTIFIED BY") {
         identified_by_password = true;
-        if let Some(pwd_part) = rest_upper.split("IDENTIFIED BY").nth(1) {
-            let pwd = pwd_part.trim().trim_end_matches('\'').trim_end_matches('"');
-            password = Some(pwd.to_string());
-        }
-        if rest_upper.contains("WITH") {
-            if let Some(with_part) = rest_upper.split("WITH").nth(1) {
-                let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
+        let pwd_part = &rest[idx + 14..].trim();
+        password = Some(pwd_part.trim().trim_start_matches('\'').trim_start_matches('"').to_string());
+        if rest.to_uppercase().contains("WITH") {
+            if let Some(with_idx) = rest.to_uppercase().find("WITH") {
+                let with_part = &rest[with_idx + 5..].trim();
+                let plugin = with_part.split_whitespace().next().unwrap_or("mysql_native_password");
                 auth_plugin = plugin.to_string();
             }
         }
-    } else if rest_upper.contains("IDENTIFIED WITH") {
-        if let Some(with_part) = rest_upper.split("IDENTIFIED WITH").nth(1) {
-            let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
+    } else if rest.to_uppercase().contains("IDENTIFIED WITH") {
+        if let Some(with_idx) = rest.to_uppercase().find("IDENTIFIED WITH") {
+            let with_part = &rest[with_idx + 14..].trim();
+            let plugin = with_part.split_whitespace().next().unwrap_or("mysql_native_password");
             auth_plugin = plugin.to_string();
         }
     }
@@ -1453,4 +1482,367 @@ fn parse_refresh_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
     Ok(vec![Statement::RefreshCatalog(RefreshCatalogStmt {
         name: name.to_string(),
     })])
+}
+
+fn parse_grant(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_grant = sql
+        .strip_prefix("GRANT")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected GRANT".to_string(),
+        })?
+        .trim();
+
+    let privileges = parse_privileges(after_grant)?;
+
+    let (rest_after_on, users) = extract_users_after_on(after_grant)?;
+    let scope = parse_privilege_scope(rest_after_on)?;
+
+    Ok(vec![Statement::Grant(GrantStmt {
+        privileges,
+        scope,
+        roles: vec![],
+        users,
+    })])
+}
+
+fn parse_revoke(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_revoke = sql
+        .strip_prefix("REVOKE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected REVOKE".to_string(),
+        })?
+        .trim();
+
+    let privileges = parse_privileges(after_revoke)?;
+
+    let (rest_after_on, users) = extract_users_after_on(after_revoke)?;
+    let scope = parse_privilege_scope(rest_after_on)?;
+
+    Ok(vec![Statement::Revoke(RevokeStmt {
+        privileges,
+        scope,
+        roles: vec![],
+        users,
+    })])
+}
+
+fn parse_privileges(sql: &str) -> Result<Vec<Privilege>, ParseError> {
+    let upper = sql.to_uppercase();
+    let mut privileges = vec![];
+
+    let priv_types = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "USAGE", "ALL"];
+    for priv_type in priv_types {
+        if upper.contains(priv_type) {
+            let priv_upper = priv_type.to_string();
+            if priv_upper == "ALL" {
+                privileges.push(Privilege {
+                    privilege_type: "ALL".to_string(),
+                    columns: None,
+                });
+                break;
+            } else {
+                privileges.push(Privilege {
+                    privilege_type: priv_upper,
+                    columns: None,
+                });
+            }
+        }
+    }
+
+    if privileges.is_empty() {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "Expected privilege type".to_string(),
+        });
+    }
+
+    Ok(privileges)
+}
+
+fn extract_users_after_on(sql: &str) -> Result<(&str, Vec<UserIdentity>), ParseError> {
+    let upper = sql.to_uppercase();
+    if let Some(on_idx) = upper.find(" ON ") {
+        let before_on = &sql[..on_idx];
+        let after_on = sql[on_idx + 4..].trim();
+
+        let user_str = before_on.trim_start_matches("GRANT").trim_start_matches("REVOKE").trim();
+        let users = parse_user_list(user_str)?;
+
+        Ok((after_on, users))
+    } else {
+        Err(ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ON clause".to_string(),
+        })
+    }
+}
+
+fn parse_user_list(sql: &str) -> Result<Vec<UserIdentity>, ParseError> {
+    let parts: Vec<&str> = sql.split(',').map(|s| s.trim()).collect();
+    let mut users = vec![];
+
+    for part in parts {
+        let user = parse_user_identity(part)?;
+        users.push(user);
+    }
+
+    Ok(users)
+}
+
+fn parse_privilege_scope(sql: &str) -> Result<PrivilegeScope, ParseError> {
+    let upper = sql.to_uppercase();
+
+    if upper.starts_with("*.") || upper.starts_with("ON *") {
+        return Ok(PrivilegeScope::Global);
+    }
+
+    if let Some(pos) = upper.find(" ON ") {
+        let scope_part = &sql[pos + 4..];
+        let parts: Vec<&str> = scope_part.split('.').collect();
+
+        if parts.len() == 1 {
+            Ok(PrivilegeScope::Database(parts[0].trim().to_string()))
+        } else if parts.len() == 2 {
+            Ok(PrivilegeScope::Table(parts[0].trim().to_string(), parts[1].trim().to_string()))
+        } else {
+            Err(ParseError::SyntaxError {
+                position: 0,
+                message: "Invalid privilege scope".to_string(),
+            })
+        }
+    } else {
+        Ok(PrivilegeScope::Global)
+    }
+}
+
+fn parse_create_role(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let if_not_exists = sql.to_uppercase().contains("IF NOT EXISTS");
+
+    let after_create = sql
+        .strip_prefix("CREATE ROLE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected CREATE ROLE".to_string(),
+        })?
+        .trim();
+
+    let (role_name, _) = extract_identifier(after_create)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected role name".to_string(),
+        })?;
+
+    Ok(vec![Statement::CreateRole(CreateRoleStmt {
+        role_name: role_name.to_string(),
+        if_not_exists,
+    })])
+}
+
+fn parse_drop_role(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let if_exists = sql.to_uppercase().contains("IF EXISTS");
+
+    let after_drop = sql
+        .strip_prefix("DROP ROLE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP ROLE".to_string(),
+        })?
+        .trim();
+
+    let (role_name, _) = extract_identifier(after_drop)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected role name".to_string(),
+        })?;
+
+    Ok(vec![Statement::DropRole(DropRoleStmt {
+        role_name: role_name.to_string(),
+        if_exists,
+    })])
+}
+
+fn parse_alter_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    let after_alter = sql
+        .strip_prefix("ALTER USER")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER USER".to_string(),
+        })?
+        .trim();
+
+    let user = parse_user_identity(after_alter)?;
+
+    let mut auth_plugin = None;
+    let mut password = None;
+
+    let rest = after_alter.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+    let upper = rest.to_uppercase();
+    if upper.contains("IDENTIFIED BY") {
+        if let Some(pwd_part) = upper.split("IDENTIFIED BY").nth(1) {
+            let pwd = pwd_part.trim().trim_end_matches('\'').trim_end_matches('"');
+            password = Some(pwd.to_string());
+        }
+    }
+
+    Ok(vec![Statement::AlterUser(AlterUserStmt {
+        user,
+        auth_plugin,
+        password,
+    })])
+}
+
+fn parse_set_password(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    let after_set = sql
+        .strip_prefix("SET PASSWORD")
+        .or_else(|| sql.strip_prefix("set password"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SET PASSWORD".to_string(),
+        })?
+        .trim();
+
+    let upper = after_set.to_uppercase();
+
+    let user = if after_set.starts_with("FOR ") {
+        let after_for = after_set.trim_start_matches("FOR ").trim_start_matches("for ");
+        let user = parse_user_identity(after_for)?;
+        Some(user)
+    } else {
+        None
+    };
+
+    let password = if let Some(idx) = upper.rfind("=") {
+        let pwd_part = &after_set[idx + 1..].trim();
+        pwd_part.trim().trim_end_matches('\'').trim_end_matches('"').to_string()
+    } else {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "Expected password assignment".to_string(),
+        });
+    };
+
+    Ok(vec![Statement::SetPassword(SetPasswordStmt { user, password })])
+}
+
+fn parse_set_property(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    let after_set = sql
+        .strip_prefix("SET PROPERTY")
+        .or_else(|| sql.strip_prefix("set property"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SET PROPERTY".to_string(),
+        })?
+        .trim();
+
+    let upper = after_set.to_uppercase();
+
+    let user = if upper.starts_with("FOR ") {
+        let after_for = after_set.trim_start_matches("FOR ").trim_start_matches("for ");
+        let parts: Vec<&str> = after_for.split_whitespace().collect();
+        if parts.is_empty() {
+            return Err(ParseError::SyntaxError {
+                position: 0,
+                message: "Expected user identity".to_string(),
+            });
+        }
+        let user_identity = parse_user_identity(parts[0])?;
+        let rest = parts[1..].join(" ");
+        let properties = parse_properties(rest.trim());
+        (user_identity, properties)
+    } else {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "Expected FOR clause".to_string(),
+        });
+    };
+
+    Ok(vec![Statement::SetProperty(SetPropertyStmt {
+        user: user.0,
+        properties: user.1,
+    })])
+}
+
+fn parse_user_identity(s: &str) -> Result<UserIdentity, ParseError> {
+    let s = s.trim();
+    if s.contains('@') {
+        let parts: Vec<&str> = s.split('@').collect();
+        Ok(UserIdentity {
+            username: parts[0].to_string(),
+            hostname: Some(parts[1].to_string()),
+        })
+    } else {
+        Ok(UserIdentity {
+            username: s.to_string(),
+            hostname: None,
+        })
+    }
+}
+
+fn parse_show_grants(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    let after_show = sql
+        .strip_prefix("SHOW GRANTS")
+        .or_else(|| sql.strip_prefix("show grants"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW GRANTS".to_string(),
+        })?
+        .trim();
+
+    let username = if after_show.to_uppercase().starts_with("FOR ") {
+        let after_for = after_show.trim_start_matches("FOR ").trim_start_matches("for ");
+        let user = parse_user_identity(after_for)?;
+        Some(user.username)
+    } else {
+        None
+    };
+
+    Ok(vec![Statement::ShowGrants(username)])
+}
+
+fn parse_show_roles(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    if !sql.to_uppercase().starts_with("SHOW ROLES") {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW ROLES".to_string(),
+        });
+    }
+
+    Ok(vec![Statement::ShowRoles])
+}
+
+fn parse_show_privileges(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+
+    let after_show = sql
+        .strip_prefix("SHOW PRIVILEGES")
+        .or_else(|| sql.strip_prefix("show privileges"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW PRIVILEGES".to_string(),
+        })?
+        .trim();
+
+    let user = if !after_show.is_empty() {
+        Some(parse_user_identity(after_show)?)
+    } else {
+        None
+    };
+
+    Ok(vec![Statement::ShowPrivileges(user)])
 }

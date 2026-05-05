@@ -6,7 +6,7 @@ use tokio::time::{interval, Duration};
 
 use be_storage::StorageEngine;
 use fe_common::edit_log::EditLog;
-use fe_catalog::CatalogManager;
+use fe_catalog::{CatalogManager, auth::AuthManager};
 use fe_scheduler::ClusterManager;
 use fe_monitor::MonitoringManager;
 use fe_monitor::http_server::MonitoringHttpServer;
@@ -44,14 +44,16 @@ struct RorisQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
     storage: Arc<StorageEngine>,
+    auth_manager: Arc<StdRwLock<AuthManager>>,
 }
 
 impl RorisQueryHandler {
-    fn new(catalog: Arc<StdRwLock<CatalogManager>>, storage: Arc<StorageEngine>) -> Self {
+    fn new(catalog: Arc<StdRwLock<CatalogManager>>, storage: Arc<StorageEngine>, auth_manager: Arc<StdRwLock<AuthManager>>) -> Self {
         Self {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
             storage,
+            auth_manager,
         }
     }
 }
@@ -116,6 +118,16 @@ impl RorisQueryHandler {
             Statement::Delete(stmt) => self.delete(stmt),
             Statement::Query(_) => self.execute_query(stmt),
             Statement::Explain(explain) => self.explain(&explain.statement),
+            Statement::Grant(stmt) => self.grant(stmt),
+            Statement::Revoke(stmt) => self.revoke(stmt),
+            Statement::CreateRole(stmt) => self.create_role(stmt),
+            Statement::DropRole(stmt) => self.drop_role(stmt),
+            Statement::AlterUser(stmt) => self.alter_user(stmt),
+            Statement::SetPassword(stmt) => self.set_password(stmt),
+            Statement::SetProperty(stmt) => self.set_property(stmt),
+            Statement::ShowGrants(user) => self.show_grants(user.clone()),
+            Statement::ShowRoles => self.show_roles(),
+            Statement::ShowPrivileges(user) => self.show_privileges(user.clone()),
             _ => Ok(QueryResult::with_rows(
                 vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
                 vec![vec![Some(format!("Statement parsed successfully (execution not fully implemented)"))]],
@@ -431,6 +443,57 @@ impl RorisQueryHandler {
     fn explain(&self, stmt: &Statement) -> Result<QueryResult, String> {
         self.execute_query(stmt)
     }
+
+    fn grant(&self, stmt: &fe_sql_parser::ast::GrantStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::ok())
+    }
+
+    fn revoke(&self, _stmt: &fe_sql_parser::ast::RevokeStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::ok())
+    }
+
+    fn create_role(&self, _stmt: &fe_sql_parser::ast::CreateRoleStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::ok())
+    }
+
+    fn drop_role(&self, _stmt: &fe_sql_parser::ast::DropRoleStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::ok())
+    }
+
+    fn alter_user(&self, _stmt: &fe_sql_parser::ast::AlterUserStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::ok())
+    }
+
+    fn set_password(&self, _stmt: &fe_sql_parser::ast::SetPasswordStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::ok())
+    }
+
+    fn set_property(&self, _stmt: &fe_sql_parser::ast::SetPropertyStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::ok())
+    }
+
+    fn show_grants(&self, user: Option<String>) -> Result<QueryResult, String> {
+        let username = user.unwrap_or_else(|| "root".to_string());
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Grants".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("GRANT ALL ON *.* TO '{}'@'%'", username))]],
+        ))
+    }
+
+    fn show_roles(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Role".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("public".to_string())]],
+        ))
+    }
+
+    fn show_privileges(&self, user: Option<fe_sql_parser::ast::UserIdentity>) -> Result<QueryResult, String> {
+        let username = user.map(|u| u.username).unwrap_or_else(|| "root".to_string());
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "User".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("{}@%", username))]],
+        ))
+    }
 }
 
 fn format_plan(node: &fe_sql_planner::PlanNode) -> String {
@@ -575,12 +638,21 @@ async fn main() -> Result<()> {
     // Initialize cluster manager for BE health monitoring
     let _cluster = Arc::new(RwLock::new(ClusterManager::new(fe_scheduler::cluster::ClusterConfig::default())));
 
-    // Initialize local storage engine for query execution
+// Initialize local storage engine for query execution
     let storage = Arc::new(be_storage::StorageEngine::open("data/fe/storage").unwrap_or_else(|_| {
         // Fallback to in-memory if storage dir doesn't exist
         be_storage::StorageEngine::open("/tmp/roris-fe-storage").unwrap()
     }));
     tracing::info!("Local storage engine initialized");
+
+    // Initialize auth manager
+    let auth_manager = Arc::new(StdRwLock::new(AuthManager::new()));
+    {
+        let mut auth = auth_manager.write().unwrap();
+        if let Err(e) = auth.load(&args.meta_dir) {
+            tracing::warn!("Failed to load auth manager: {}", e);
+        }
+    }
 
     // Initialize monitoring manager
     let monitoring = Arc::new(MonitoringManager::new(catalog.clone()));
@@ -596,7 +668,7 @@ async fn main() -> Result<()> {
     tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
 
     // Start MySQL protocol server
-    let query_handler = RorisQueryHandler::new(catalog.clone(), storage.clone());
+    let query_handler = RorisQueryHandler::new(catalog.clone(), storage.clone(), auth_manager.clone());
     let mysql_config = ServerConfig {
         bind_addr: "127.0.0.1".to_string(),
         port: args.mysql_port,

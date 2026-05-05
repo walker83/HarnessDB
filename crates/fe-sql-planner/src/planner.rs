@@ -107,6 +107,16 @@ impl Planner {
             Statement::DropCatalog(stmt) => self.plan_drop_catalog(stmt),
             Statement::ShowCatalogs => self.plan_show_catalogs(),
             Statement::RefreshCatalog(stmt) => self.plan_refresh_catalog(stmt),
+            Statement::Grant(stmt) => self.plan_grant(stmt),
+            Statement::Revoke(stmt) => self.plan_revoke(stmt),
+            Statement::CreateRole(stmt) => self.plan_create_role(stmt),
+            Statement::DropRole(stmt) => self.plan_drop_role(stmt),
+            Statement::AlterUser(stmt) => self.plan_alter_user(stmt),
+            Statement::SetPassword(stmt) => self.plan_set_password(stmt),
+            Statement::SetProperty(stmt) => self.plan_set_property(stmt),
+            Statement::ShowGrants(user) => self.plan_show_grants(user),
+            Statement::ShowRoles => self.plan_show_roles(),
+            Statement::ShowPrivileges(user) => self.plan_show_privileges(user),
         }
     }
 
@@ -140,6 +150,46 @@ impl Planner {
 
     fn plan_show_users(&self) -> Result<PlanNode, DrorisError> {
         Err(DrorisError::Internal("SHOW USERS not yet implemented in planner".to_string()))
+    }
+
+    fn plan_grant(&self, _stmt: GrantStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("GRANT not yet implemented in planner".to_string()))
+    }
+
+    fn plan_revoke(&self, _stmt: RevokeStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("REVOKE not yet implemented in planner".to_string()))
+    }
+
+    fn plan_create_role(&self, _stmt: CreateRoleStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("CREATE ROLE not yet implemented in planner".to_string()))
+    }
+
+    fn plan_drop_role(&self, _stmt: DropRoleStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("DROP ROLE not yet implemented in planner".to_string()))
+    }
+
+    fn plan_alter_user(&self, _stmt: AlterUserStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("ALTER USER not yet implemented in planner".to_string()))
+    }
+
+    fn plan_set_password(&self, _stmt: SetPasswordStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("SET PASSWORD not yet implemented in planner".to_string()))
+    }
+
+    fn plan_set_property(&self, _stmt: SetPropertyStmt) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("SET PROPERTY not yet implemented in planner".to_string()))
+    }
+
+    fn plan_show_grants(&self, _user: Option<String>) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("SHOW GRANTS not yet implemented in planner".to_string()))
+    }
+
+    fn plan_show_roles(&self) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("SHOW ROLES not yet implemented in planner".to_string()))
+    }
+
+    fn plan_show_privileges(&self, _user: Option<UserIdentity>) -> Result<PlanNode, DrorisError> {
+        Err(DrorisError::Internal("SHOW PRIVILEGES not yet implemented in planner".to_string()))
     }
 
     // ---- DDL ----

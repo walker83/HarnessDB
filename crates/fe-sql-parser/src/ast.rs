@@ -36,6 +36,16 @@ pub enum Statement {
     DropCatalog(DropCatalogStmt),
     ShowCatalogs,
     RefreshCatalog(RefreshCatalogStmt),
+    Grant(GrantStmt),
+    Revoke(RevokeStmt),
+    CreateRole(CreateRoleStmt),
+    DropRole(DropRoleStmt),
+    AlterUser(AlterUserStmt),
+    SetPassword(SetPasswordStmt),
+    SetProperty(SetPropertyStmt),
+    ShowGrants(Option<String>),
+    ShowRoles,
+    ShowPrivileges(Option<UserIdentity>),
 }
 
 #[derive(Debug, Clone)]
@@ -391,4 +401,71 @@ pub struct DropCatalogStmt {
 #[derive(Debug, Clone)]
 pub struct RefreshCatalogStmt {
     pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GrantStmt {
+    pub privileges: Vec<Privilege>,
+    pub scope: PrivilegeScope,
+    pub roles: Vec<String>,
+    pub users: Vec<UserIdentity>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RevokeStmt {
+    pub privileges: Vec<Privilege>,
+    pub scope: PrivilegeScope,
+    pub roles: Vec<String>,
+    pub users: Vec<UserIdentity>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateRoleStmt {
+    pub role_name: String,
+    pub if_not_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropRoleStmt {
+    pub role_name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterUserStmt {
+    pub user: UserIdentity,
+    pub auth_plugin: Option<String>,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetPasswordStmt {
+    pub user: Option<UserIdentity>,
+    pub password: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetPropertyStmt {
+    pub user: UserIdentity,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserIdentity {
+    pub username: String,
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Privilege {
+    pub privilege_type: String,
+    pub columns: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PrivilegeScope {
+    Global,
+    Database(String),
+    Table(String, String),
+    Column(Vec<String>),
 }
