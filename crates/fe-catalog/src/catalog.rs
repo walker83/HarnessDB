@@ -130,51 +130,40 @@ impl CatalogManager {
 
     /// Serialize catalog state to JSON file
     pub fn save(&self) -> common::Result<()> {
-        use tokio::fs;
-        use tokio::io::AsyncWriteExt;
+        use std::fs;
 
-        let runtime = tokio::runtime::Runtime::new()?;
-        runtime.block_on(async {
-            let catalog_state = CatalogState {
-                databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
-                materialized_views: self.materialized_views.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
-                next_id: self.next_id.load(Ordering::Relaxed),
-            };
-            let json = serde_json::to_string(&catalog_state)
-                .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            let path = format!("{}/catalog.json", self.catalog_path);
-            fs::create_dir_all(&self.catalog_path).await?;
-            let mut file = fs::File::create(&path).await?;
-            file.write_all(json.as_bytes()).await?;
-            Ok(())
-        })
+        let catalog_state = CatalogState {
+            databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+            materialized_views: self.materialized_views.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+            next_id: self.next_id.load(Ordering::Relaxed),
+        };
+        let json = serde_json::to_string(&catalog_state)
+            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let path = format!("{}/catalog.json", self.catalog_path);
+        fs::create_dir_all(&self.catalog_path)?;
+        fs::write(&path, json.as_bytes())?;
+        Ok(())
     }
 
     /// Load catalog state from JSON file
     pub fn load(&mut self) -> common::Result<()> {
-        use tokio::fs;
-        use tokio::io::AsyncReadExt;
+        use std::fs;
 
-        let runtime = tokio::runtime::Runtime::new()?;
-        runtime.block_on(async {
-            let path = format!("{}/catalog.json", self.catalog_path);
-            if !std::path::Path::new(&path).exists() {
-                return Ok(());
-            }
-            let mut file = fs::File::open(&path).await?;
-            let mut contents = String::new();
-            file.read_to_string(&mut contents).await?;
-            let state: CatalogState = serde_json::from_str(&contents)
-                .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            for (key, value) in state.databases {
-                self.databases.insert(key, value);
-            }
-            for (key, value) in state.materialized_views {
-                self.materialized_views.insert(key, value);
-            }
-            self.next_id = AtomicU64::new(state.next_id);
-            Ok(())
-        })
+        let path = format!("{}/catalog.json", self.catalog_path);
+        if !std::path::Path::new(&path).exists() {
+            return Ok(());
+        }
+        let contents = fs::read_to_string(&path)?;
+        let state: CatalogState = serde_json::from_str(&contents)
+            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        for (key, value) in state.databases {
+            self.databases.insert(key, value);
+        }
+        for (key, value) in state.materialized_views {
+            self.materialized_views.insert(key, value);
+        }
+        self.next_id = AtomicU64::new(state.next_id);
+        Ok(())
     }
 
     /// Replay edit log entries into the catalog

@@ -169,13 +169,81 @@ This document provides a detailed overview of the features currently supported b
 |---------|--------|-------------|
 | **CREATE DATABASE** | ✅ | Create database |
 | **DROP DATABASE** | ✅ | Drop database |
-| **CREATE TABLE** | ✅ | Create table (currently primarily supports DUPLICATE KEY model) |
+| **CREATE TABLE** | ✅ | Create table (supports DUPLICATE KEY, partition tables) |
+| **ALTER TABLE** | ✅ | ALTER TABLE parser support |
 | **DROP TABLE** | ✅ | Drop table |
 | **TRUNCATE TABLE** | ✅ | Quick table truncation |
 | **INSERT** | ✅ | Insert data (single and multiple rows) |
 | **SELECT** | ✅ | Query data (supports complex queries) |
 | **CREATE VIEW** | ✅ | Create view |
 | **DROP VIEW** | ✅ | Drop view |
+
+### Partition Support
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Range Partition** | ✅ | Partition by range of values |
+| **List Partition** | ✅ | Partition by list of values |
+| **Hash Partition** | ✅ | Partition by hash of values |
+| **Partition Management** | ✅ | Add/drop partitions dynamically |
+
+### Materialized Views
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **MV Framework** | ✅ | Materialized view creation and metadata management |
+| **Query Rewrite** | ✅ | Transparent query rewrite using materialized views |
+| **MV Maintenance** | 🚧 | Automatic refresh and consistency maintenance |
+
+### CBO Optimizer
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Cost Model** | ✅ | Cost-based optimization with CPU/I/O estimation |
+| **Statistics Collection** | ✅ | Table statistics via ANALYZE TABLE |
+| **Join Reordering** | ✅ | Cost-based join order optimization |
+| **Plan Selection** | ✅ | Optimal plan selection based on statistics |
+
+### Runtime Filter
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Runtime Filter Pushdown** | ✅ | Dynamic filter pushdown for join optimization |
+| **Bloom Filter** | ✅ | Runtime Bloom filters for selective joins |
+| **Filter Propagation** | ✅ | Cross-fragment filter propagation |
+
+### External Catalog
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Catalog Framework** | ✅ | External catalog framework (Hive/Iceberg/Hudi) |
+| **Federation Queries** | 🚧 | Query external data sources directly |
+| **Metadata Sync** | 🚧 | Catalog metadata synchronization |
+
+### Authentication Framework
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **MySQL Native Password** | ✅ | MySQL native password authentication |
+| **LDAP Authentication** | ✅ | External LDAP authentication support |
+| **Token Authentication** | ✅ | Token-based authentication |
+| **Pluggable Auth** | ✅ | Pluggable authentication framework |
+
+### Backup & Restore
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Backup Framework** | ✅ | Backup and restore framework |
+| **Incremental Backup** | 🚧 | Incremental backup support |
+| **Remote Storage** | 🚧 | Backup to S3/GCS remote storage |
+
+### Codec & Compression
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **LZ4 Compression** | ✅ | Improved LZ4 compression with optimizations |
+| **Codec Framework** | ✅ | Extensible codec framework |
+| **External File Scan** | ✅ | Direct scanning of external files (CSV, JSON) |
 
 ## Features In Progress
 

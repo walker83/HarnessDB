@@ -87,6 +87,14 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **TRUNCATE TABLE** | ✅ | Fast table truncation |
 | **CREATE VIEW** | ✅ | View creation and metadata |
 | **SHOW CREATE TABLE** | ✅ | DDLShowCreate result |
+| **ALTER TABLE** | ✅ | ALTER TABLE parser support |
+| **Partition Support** | ✅ | Range/List/Hash partition types (P0) |
+| **Materialized Views** | ✅ | Materialized view framework with query rewrite |
+| **CBO Optimizer** | ✅ | Cost-based optimizer with statistics collection and ANALYZE TABLE |
+| **Runtime Filter** | ✅ | Runtime filter pushdown for join optimization |
+| **External Catalog** | ✅ | Federation queries (Hive/Iceberg/Hudi) framework |
+| **Auth Framework** | ✅ | External authentication (LDAP, Token) with MySQL native password |
+| **Backup & Restore** | ✅ | Backup and restore framework |
 | **gRPC FE-BE** | ✅ | Backend service communication via tonic/prost |
 | **Distributed Query** | ✅ | Fragment planning, exchange operators (HashPartition/Broadcast/Gather) |
 | **Query Scheduler** | ✅ | Load-aware BE node selection, round-robin assignment, failure re-schedule |
@@ -95,6 +103,7 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **CLI Client** | ✅ | REPL with SQL parsing and plan visualization |
 | **Data Import** | ✅ | CSV reader/writer, JSON Lines parser, Stream Load framework |
 | **Data Export** | ✅ | CSV writer from query results |
+| **External File Scan** | ✅ | Direct file scanning for external data sources |
 | **Pipeline Execution** | ✅ | Async Pipeline execution engine with non-blocking operators |
 | **Memory Tracker** | ✅ | Fine-grained resource tracking and memory limit enforcement |
 | **Error Handling** | ✅ | Refined error types with context and source tracing |
@@ -102,16 +111,18 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **Vector Type System** | ✅ | Refactored type system with better extensibility |
 | **ExecNode Static Dispatch** | ✅ | Static dispatch for better performance |
 | **Bitmap Optimization** | ✅ | SetBitIter with trailing_zeros for fast bitmap operations |
+| **Codec Compression** | ✅ | Improved LZ4 compression and codec optimizations |
 
 ### In Progress
 
 | Feature | Status |
 |---------|--------|
-| **Materialized Views** | 🚧 Transparent query rewrite |
 | **HA Consensus** | 🚧 Raft-based FE metadata replication |
 | **Catalog Persistence** | 🚧 EditLog + BDBJE-style durability |
-| **Federation Queries** | 🚧 Hive/Iceberg/Hudi external catalog |
 | **Cloud Mode** | 🚧 S3 shared storage, meta service |
+| **UDF / UDAF** | 🚧 User-defined functions |
+| **UPDATE / DELETE** | 🚧 DML data modification |
+| **TPC-H Benchmarks** | 🚧 End-to-end TPC-H validation |
 
 ### Not Yet Implemented
 

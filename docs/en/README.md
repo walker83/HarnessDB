@@ -53,7 +53,7 @@ docs/
 
 ## Version Information
 
-- **Current Version**: v0.1.3
+- **Current Version**: v0.2.0
 - **Project Status**: Proof-of-Concept (PoC stage)
 - **License**: MIT / Apache-2.0
 
@@ -86,6 +86,7 @@ Documentation is written in Markdown format.
 
 ## Changelog
 
+- **2026-05-05**: Updated to v0.2.0 - Added External Catalog, Authentication Framework, CBO Optimizer, Partition Support, Materialized Views, Runtime Filter, ALTER TABLE, Backup & Restore
 - **2026-05-04**: Created complete documentation system, including product overview, architecture design, installation guide, SQL reference, etc.
 - **2026-05-04**: Added compatibility matrix and performance report
 
