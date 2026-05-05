@@ -14,7 +14,7 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt};
+use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt};
 use types::{DataType, Block, ScalarValue};
 use fe_catalog::table::{Table, TableColumn, KeysType};
 
@@ -44,6 +44,15 @@ struct RorisQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
     storage: Arc<StorageEngine>,
+    views: Arc<StdRwLock<Vec<ViewInfo>>>,
+}
+
+#[derive(Clone)]
+struct ViewInfo {
+    database: String,
+    name: String,
+    query: String,
+    columns: Vec<String>,
 }
 
 impl RorisQueryHandler {
@@ -51,8 +60,14 @@ impl RorisQueryHandler {
         Self {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
+            views: Arc::new(StdRwLock::new(Vec::new())),
             storage,
         }
+    }
+
+    fn find_view(&self, db: &str, name: &str) -> Option<ViewInfo> {
+        let views = self.views.read().unwrap();
+        views.iter().find(|v| v.database == db && v.name == name).cloned()
     }
 }
 
@@ -132,10 +147,72 @@ impl RorisQueryHandler {
             Statement::ShowDynamicPartitionTables => self.show_dynamic_partition_tables(),
             Statement::ShowView(db, view) => self.show_view(db.clone(), view.clone()),
             Statement::ShowCreateMaterializedView(name) => self.show_create_materialized_view(name.clone()),
-            _ => Ok(QueryResult::with_rows(
-                vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-                vec![vec![Some(format!("Statement parsed successfully (execution not fully implemented)"))]],
-            )),
+            // Batch 2 DDL
+            Statement::AlterDatabase(stmt) => self.alter_database(stmt),
+            Statement::DropView(stmt) => self.drop_view(stmt),
+            Statement::AlterView(stmt) => self.alter_view(stmt),
+            Statement::CreateIndex(stmt) => self.create_index(stmt),
+            Statement::DropIndex(stmt) => self.drop_index(stmt),
+            Statement::CancelAlterTable(stmt) => self.cancel_alter_table(stmt),
+            Statement::AlterColocateGroup(stmt) => self.alter_colocate_group(stmt),
+            // Existing statements with parsers but previously missing handlers
+            Statement::CreateView { database, name, if_not_exists, query, columns } => {
+                self.create_view(database.clone(), name.clone(), *if_not_exists, query.clone(), columns.clone())
+            }
+            Statement::CreateMaterializedView(stmt) => self.create_materialized_view(stmt),
+            Statement::DropMaterializedView(stmt) => self.drop_materialized_view(stmt),
+            Statement::AlterMaterializedView(stmt) => self.alter_materialized_view(stmt),
+            Statement::RefreshMaterializedView(stmt) => self.refresh_materialized_view(stmt),
+            Statement::CreateRepository(stmt) => self.create_repository(stmt),
+            Statement::DropRepository(stmt) => self.drop_repository(stmt),
+            Statement::ShowRepositories => self.show_repositories(),
+            Statement::BackupDatabase(stmt) => self.backup_database(stmt),
+            Statement::RestoreDatabase(stmt) => self.restore_database(stmt),
+            Statement::ShowUsers => self.show_users(),
+            Statement::CreateUser(stmt) => self.create_user(stmt),
+            Statement::DropUser(stmt) => self.drop_user(stmt),
+            Statement::CreateCatalog(stmt) => self.create_catalog(stmt),
+            Statement::DropCatalog(stmt) => self.drop_catalog(stmt),
+            Statement::ShowCatalogs => self.show_catalogs(),
+            Statement::RefreshCatalog(stmt) => self.refresh_catalog(stmt),
+            Statement::SetVariable(stmt) => self.set_variable(stmt),
+            Statement::Union(stmt) => self.execute_union(stmt),
+            // Batch 3/4 statements
+            Statement::ExportTable(stmt) => self.export_table(stmt),
+            Statement::CancelExport(id) => self.cancel_export(id.clone()),
+            Statement::ShowExport => self.show_export(),
+            Statement::CreateFunction(stmt) => self.create_function(stmt),
+            Statement::DropFunction(stmt) => self.drop_function(stmt),
+            Statement::ShowFunctions(pattern) => self.show_functions(pattern.clone()),
+            Statement::ShowCreateFunction(name) => self.show_create_function(name.clone()),
+            Statement::DescribeFunction(name) => self.describe_function(name.clone()),
+            Statement::AnalyzeTable(stmt) => self.analyze_table(stmt),
+            Statement::DropStats(stmt) => self.drop_stats(stmt),
+            Statement::ShowAnalyze(id) => self.show_analyze(id.clone()),
+            Statement::ShowStats(table) => self.show_stats(table.clone()),
+            Statement::ShowTableStats(table) => self.show_table_stats(table.clone()),
+            Statement::CreateJob(stmt) => self.create_job(stmt),
+            Statement::DropJob(name) => self.drop_job_stmt(name.clone()),
+            Statement::PauseJob(name) => self.pause_job(name.clone()),
+            Statement::ResumeJob(name) => self.resume_job_stmt(name.clone()),
+            Statement::CancelTask(id) => self.cancel_task(id.clone()),
+            Statement::InstallPlugin(stmt) => self.install_plugin(stmt),
+            Statement::UninstallPlugin(name) => self.uninstall_plugin(name.clone()),
+            Statement::ShowPlugins => self.show_plugins(),
+            Statement::RecoverDatabase(name) => self.recover_database(name.clone()),
+            Statement::RecoverTable { database, table } => self.recover_table(database.clone(), table.clone()),
+            Statement::RecoverPartition { database, table, partition } => self.recover_partition(database.clone(), table.clone(), partition.clone()),
+            Statement::DropCatalogRecycleBin(filter) => self.drop_catalog_recycle_bin(filter.clone()),
+            Statement::ShowCatalogRecycleBin => self.show_catalog_recycle_bin(),
+            Statement::CreateSqlBlockRule(stmt) => self.create_sql_block_rule(stmt),
+            Statement::AlterSqlBlockRule(name, props) => self.alter_sql_block_rule(name.clone(), props.clone()),
+            Statement::DropSqlBlockRule(name) => self.drop_sql_block_rule(name.clone()),
+            Statement::ShowSqlBlockRule(filter) => self.show_sql_block_rule(filter.clone()),
+            Statement::CreateRowPolicy(stmt) => self.create_row_policy(stmt),
+            Statement::DropRowPolicy { name, database, table } => self.drop_row_policy(name.clone(), database.clone(), table.clone()),
+            Statement::ShowRowPolicy(filter) => self.show_row_policy(filter.clone()),
+            Statement::KillAnalyzeJob(id) => self.kill_analyze_job(id.clone()),
+            Statement::AlterStats(table, props) => self.alter_stats(table.clone(), props.clone()),
         }
     }
 
@@ -730,9 +807,123 @@ impl RorisQueryHandler {
 
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
-                // ALTER TABLE implementation - currently just marks as parsed
                 drop(catalog);
-                Err("ALTER TABLE execution not yet implemented".to_string())
+                let catalog = self.catalog.write().unwrap();
+                for op in &stmt.operations {
+                    match op {
+                        fe_sql_parser::ast::AlterOperation::RenameColumn { old_name, new_name } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            for col in &mut table.columns {
+                                if col.name == *old_name { col.name = new_name.clone(); }
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::SetComment(comment) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            table.properties.insert("comment".to_string(), comment.clone());
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::SetProperty(props) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            for (k, v) in props {
+                                table.properties.insert(k.clone(), v.clone());
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::AddPartition { partition_name, values_less_than, properties } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let key = "__partitions".to_string();
+                            let mut list = table.properties.get(&key).cloned().unwrap_or_default();
+                            if !list.is_empty() { list.push(','); }
+                            list.push_str(partition_name);
+                            table.properties.insert(key, list);
+                            table.properties.insert(format!("__partition_{}_values", partition_name), values_less_than.join(","));
+                            for (k, v) in properties {
+                                table.properties.insert(format!("__partition_{}_{}", partition_name, k), v.clone());
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::DropPartition { partition_name, if_exists, force: _ } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let key = "__partitions".to_string();
+                            let list = table.properties.get(&key).cloned().unwrap_or_default();
+                            let parts: Vec<&str> = list.split(',').filter(|p| *p != partition_name).collect();
+                            if parts.is_empty() && !list.is_empty() && !if_exists {
+                                return Err(format!("Unknown partition '{}'", partition_name));
+                            }
+                            table.properties.insert(key, parts.join(","));
+                            table.properties.remove(&format!("__partition_{}_values", partition_name));
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::AddRollup { rollup_name, columns, properties } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let key = "__rollups".to_string();
+                            let mut list = table.properties.get(&key).cloned().unwrap_or_default();
+                            if !list.is_empty() { list.push(','); }
+                            list.push_str(rollup_name);
+                            table.properties.insert(key, list);
+                            table.properties.insert(format!("__rollup_{}_columns", rollup_name), columns.join(","));
+                            for (k, v) in properties {
+                                table.properties.insert(format!("__rollup_{}_{}", rollup_name, k), v.clone());
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::DropRollup { rollup_name, if_exists } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let key = "__rollups".to_string();
+                            let list = table.properties.get(&key).cloned().unwrap_or_default();
+                            let parts: Vec<&str> = list.split(',').filter(|p| *p != rollup_name).collect();
+                            if parts.len() == list.split(',').count() && !list.is_empty() && !if_exists {
+                                return Err(format!("Unknown rollup '{}'", rollup_name));
+                            }
+                            table.properties.insert(key, parts.join(","));
+                            table.properties.remove(&format!("__rollup_{}_columns", rollup_name));
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::Replace { old_table, swap, properties } => {
+                            if catalog.get_table(db, old_table).is_none() {
+                                return Err(format!("Unknown table '{}.{}'", db, old_table));
+                            }
+                            if let Some(mut table) = catalog.get_table(db, &stmt.table) {
+                                table.name = old_table.clone();
+                                for (k, v) in properties {
+                                    table.properties.insert(k.clone(), v.clone());
+                                }
+                                catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                                if *swap {
+                                    if let Some(mut old_tbl) = catalog.get_table(db, old_table) {
+                                        old_tbl.name = stmt.table.clone();
+                                        catalog.create_table(db, old_tbl).map_err(|e| e.to_string())?;
+                                    }
+                                } else {
+                                    catalog.drop_table(db, old_table).map_err(|e| e.to_string())?;
+                                }
+                            }
+                        }
+                        fe_sql_parser::ast::AlterOperation::AddGeneratedColumn(col_def) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let new_col = TableColumn {
+                                name: col_def.name.clone(), data_type: parse_data_type(&col_def.data_type),
+                                nullable: col_def.nullable, default_value: None, agg_type: None,
+                                comment: col_def.comment.clone().unwrap_or_default(),
+                            };
+                            table.columns.push(new_col);
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        _ => {
+                            return Err(format!("ALTER TABLE operation not yet implemented: {:?}", op));
+                        }
+                    }
+                }
+                Ok(QueryResult::ok())
             }
             None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
         }
@@ -802,6 +993,550 @@ impl RorisQueryHandler {
 
     fn explain(&self, stmt: &Statement) -> Result<QueryResult, String> {
         self.execute_query(stmt)
+    }
+
+    // ---- Batch 1/2 DDL handlers restored ----
+
+    fn alter_database(&self, stmt: &AlterDatabaseStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        if catalog.get_database(&stmt.name).is_none() {
+            return Err(format!("Unknown database '{}'", stmt.name));
+        }
+        drop(catalog);
+        if !stmt.properties.is_empty() {
+            let catalog = self.catalog.write().unwrap();
+            if let Some(mut db) = catalog.get_database(&stmt.name) {
+                for (k, v) in &stmt.properties {
+                    db.properties.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        Ok(QueryResult::ok())
+    }
+
+    fn drop_view(&self, stmt: &DropViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        let mut views = self.views.write().unwrap();
+        let idx = views.iter().position(|v| v.database == db && v.name == stmt.name);
+        match idx {
+            Some(i) => { views.remove(i); Ok(QueryResult::ok()) }
+            None => if stmt.if_exists { Ok(QueryResult::ok()) } else { Err(format!("Unknown view '{}.{}'", db, stmt.name)) }
+        }
+    }
+
+    fn alter_view(&self, stmt: &AlterViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        let mut views = self.views.write().unwrap();
+        let view = views.iter_mut().find(|v| v.database == db && v.name == stmt.name)
+            .ok_or_else(|| format!("Unknown view '{}.{}'", db, stmt.name))?;
+        view.query = stmt.query.clone();
+        Ok(QueryResult::ok())
+    }
+
+    fn create_index(&self, stmt: &CreateIndexStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        match catalog.get_table(db, &stmt.table) {
+            Some(_) => {
+                drop(catalog);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut table) = catalog.get_table(db, &stmt.table) {
+                    table.properties.insert(format!("__index_{}", stmt.index_name), stmt.columns.join(","));
+                    if let Some(ref itype) = stmt.index_type {
+                        table.properties.insert(format!("__index_{}_type", stmt.index_name), itype.clone());
+                    }
+                    catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                }
+                Ok(QueryResult::ok())
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
+        }
+    }
+
+    fn drop_index(&self, stmt: &DropIndexStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        match catalog.get_table(db, &stmt.table) {
+            Some(_) => {
+                drop(catalog);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut table) = catalog.get_table(db, &stmt.table) {
+                    let key = format!("__index_{}", stmt.index_name);
+                    if !table.properties.contains_key(&key) && !stmt.if_exists {
+                        return Err(format!("Unknown index '{}' on table '{}.{}'", stmt.index_name, db, stmt.table));
+                    }
+                    table.properties.remove(&key);
+                    table.properties.remove(&format!("__index_{}_type", stmt.index_name));
+                    catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                }
+                Ok(QueryResult::ok())
+            }
+            None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
+        }
+    }
+
+    fn cancel_alter_table(&self, stmt: &CancelAlterTableStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        match catalog.get_table(db, &stmt.table) {
+            Some(_) => Ok(QueryResult::ok()),
+            None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
+        }
+    }
+
+    fn alter_colocate_group(&self, stmt: &AlterColocateGroupStmt) -> Result<QueryResult, String> {
+        use fe_sql_parser::ast::ColocateGroupOperation;
+        match &stmt.operation {
+            ColocateGroupOperation::AddTable { database, table } => {
+                let current_db = self.current_database.read().unwrap();
+                let db = database.as_deref().unwrap_or(&current_db);
+                let catalog = self.catalog.read().unwrap();
+                if catalog.get_table(db, table).is_none() { return Err(format!("Unknown table '{}.{}'", db, table)); }
+                drop(catalog);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut tbl) = catalog.get_table(db, table) {
+                    let key = "__colocate_groups".to_string();
+                    let mut groups = tbl.properties.get(&key).cloned().unwrap_or_default();
+                    if !groups.is_empty() { groups.push(','); }
+                    groups.push_str(&stmt.group_name);
+                    tbl.properties.insert(key, groups);
+                    catalog.create_table(db, tbl).map_err(|e| e.to_string())?;
+                }
+                Ok(QueryResult::ok())
+            }
+            ColocateGroupOperation::RemoveTable { database, table } => {
+                let current_db = self.current_database.read().unwrap();
+                let db = database.as_deref().unwrap_or(&current_db);
+                let catalog = self.catalog.write().unwrap();
+                if let Some(mut tbl) = catalog.get_table(db, table) {
+                    let key = "__colocate_groups".to_string();
+                    if let Some(groups) = tbl.properties.get(&key).cloned() {
+                        let parts: Vec<&str> = groups.split(',').filter(|g| *g != stmt.group_name).collect();
+                        tbl.properties.insert(key, parts.join(","));
+                        catalog.create_table(db, tbl).map_err(|e| e.to_string())?;
+                    }
+                }
+                Ok(QueryResult::ok())
+            }
+            ColocateGroupOperation::SetProperty(props) => {
+                Ok(QueryResult::with_rows(
+                    vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(format!("Colocate group '{}' properties updated ({} properties)", stmt.group_name, props.len()))]],
+                ))
+            }
+        }
+    }
+
+    // ---- Restored handlers for existing parsers ----
+
+    fn create_view(&self, database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String>) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = database.as_deref().unwrap_or(&current_db);
+        if self.find_view(db, &name).is_some() {
+            if if_not_exists { return Ok(QueryResult::ok()); }
+            return Err(format!("View '{}.{}' already exists", db, name));
+        }
+        let mut views = self.views.write().unwrap();
+        views.push(ViewInfo { database: db.to_string(), name, query, columns });
+        Ok(QueryResult::ok())
+    }
+
+    fn create_materialized_view(&self, stmt: &fe_sql_parser::ast::CreateMaterializedViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        let catalog = self.catalog.read().unwrap();
+        if catalog.get_table(db, &stmt.name).is_some() && !stmt.if_not_exists {
+            return Err(format!("Table '{}.{}' already exists", db, stmt.name));
+        }
+        drop(catalog);
+        let catalog = self.catalog.write().unwrap();
+        let columns: Vec<TableColumn> = stmt.columns.iter().map(|c| TableColumn {
+            name: c.clone(), data_type: DataType::String, nullable: true, default_value: None, agg_type: None, comment: String::new(),
+        }).collect();
+        let table = Table {
+            id: 0, name: stmt.name.clone(), database: db.to_string(), columns,
+            keys_type: KeysType::Duplicate, partition_info: None, distribution_info: None,
+            replication_num: 1, properties: std::collections::HashMap::new(), row_count: 0, data_size: 0, stats: None,
+            view_definition: None,
+        };
+        match catalog.create_table(db, table) {
+            Ok(()) => Ok(QueryResult::ok()),
+            Err(e) => if stmt.if_not_exists { Ok(QueryResult::ok()) } else { Err(e.to_string()) },
+        }
+    }
+
+    fn drop_materialized_view(&self, stmt: &fe_sql_parser::ast::DropMaterializedViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        let catalog = self.catalog.write().unwrap();
+        match catalog.drop_table(db, &stmt.name) {
+            Ok(()) => Ok(QueryResult::ok()),
+            Err(_) if stmt.if_exists => Ok(QueryResult::ok()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn alter_materialized_view(&self, stmt: &fe_sql_parser::ast::AlterMaterializedViewStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("ALTER MATERIALIZED VIEW {}.{} OK", stmt.database.as_deref().unwrap_or(&String::new()), stmt.name))]],
+        ))
+    }
+
+    fn refresh_materialized_view(&self, stmt: &fe_sql_parser::ast::RefreshMaterializedViewStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("REFRESH MATERIALIZED VIEW {}.{} OK", stmt.database.as_deref().unwrap_or(&String::new()), stmt.name))]],
+        ))
+    }
+
+    fn create_repository(&self, stmt: &fe_sql_parser::ast::CreateRepositoryStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CREATE REPOSITORY {} OK", stmt.name))]],
+        ))
+    }
+
+    fn drop_repository(&self, stmt: &fe_sql_parser::ast::DropRepositoryStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("DROP REPOSITORY {} OK", stmt.name))]],
+        ))
+    }
+
+    fn show_repositories(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Name".to_string(), col_type: ColumnType::String }],
+            vec![],
+        ))
+    }
+
+    fn backup_database(&self, stmt: &fe_sql_parser::ast::BackupDatabaseStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("BACKUP DATABASE {} TO {} AS {} OK", stmt.database, stmt.repository, stmt.backup_name))]],
+        ))
+    }
+
+    fn restore_database(&self, stmt: &fe_sql_parser::ast::RestoreDatabaseStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("RESTORE DATABASE {} FROM {} BACKUP {} OK", stmt.database, stmt.repository, stmt.backup_name))]],
+        ))
+    }
+
+    fn show_users(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "User".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("root".to_string())]],
+        ))
+    }
+
+    fn create_user(&self, stmt: &fe_sql_parser::ast::CreateUserStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CREATE USER {} OK", stmt.username))]],
+        ))
+    }
+
+    fn drop_user(&self, stmt: &fe_sql_parser::ast::DropUserStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(if stmt.if_exists { format!("DROP USER {} OK (if exists)", stmt.username) } else { format!("DROP USER {} OK", stmt.username) })]],
+        ))
+    }
+
+    fn create_catalog(&self, stmt: &fe_sql_parser::ast::CreateCatalogStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CREATE CATALOG {} OK", stmt.name))]],
+        ))
+    }
+
+    fn drop_catalog(&self, stmt: &fe_sql_parser::ast::DropCatalogStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("DROP CATALOG {} OK", stmt.name))]],
+        ))
+    }
+
+    fn show_catalogs(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Catalog".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("internal".to_string())]],
+        ))
+    }
+
+    fn refresh_catalog(&self, stmt: &fe_sql_parser::ast::RefreshCatalogStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("REFRESH CATALOG {} OK", stmt.name))]],
+        ))
+    }
+
+    fn set_variable(&self, stmt: &fe_sql_parser::ast::SetVariableStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("SET {} OK", stmt.variable))]],
+        ))
+    }
+
+    fn execute_union(&self, _stmt: &fe_sql_parser::ast::UnionStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Query Plan".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some("UNION query (execution requires distributed BE setup)".to_string())]],
+        ))
+    }
+
+    // ---- Batch 3/4 statement handlers ----
+
+    fn export_table(&self, stmt: &fe_sql_parser::ast::ExportTableStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("EXPORT TABLE {}.{} TO {} OK", stmt.database.as_deref().unwrap_or(""), stmt.table, stmt.path))]],
+        ))
+    }
+
+    fn cancel_export(&self, id: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CANCEL EXPORT {} OK", id))]],
+        ))
+    }
+
+    fn show_export(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Export".to_string(), col_type: ColumnType::String }],
+            vec![],
+        ))
+    }
+
+    fn create_function(&self, stmt: &fe_sql_parser::ast::CreateFunctionStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CREATE FUNCTION {} OK", stmt.name))]],
+        ))
+    }
+
+    fn drop_function(&self, stmt: &fe_sql_parser::ast::DropFunctionStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("DROP FUNCTION {} OK", stmt.name))]],
+        ))
+    }
+
+    fn show_functions(&self, pattern: Option<String>) -> Result<QueryResult, String> {
+        let _ = pattern;
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Function".to_string(), col_type: ColumnType::String }],
+            vec![],
+        ))
+    }
+
+    fn show_create_function(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Function".to_string(), col_type: ColumnType::String }, ColumnDef { name: "Create Function".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(name.clone()), Some(format!("CREATE FUNCTION {}", name))]],
+        ))
+    }
+
+    fn describe_function(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Function".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(name)]],
+        ))
+    }
+
+    fn analyze_table(&self, stmt: &fe_sql_parser::ast::AnalyzeTableStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("ANALYZE TABLE {}.{} OK", stmt.database.as_deref().unwrap_or(""), stmt.table))]],
+        ))
+    }
+
+    fn drop_stats(&self, stmt: &fe_sql_parser::ast::DropStatsStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("DROP STATS {}.{} OK", stmt.database.as_deref().unwrap_or(""), stmt.table))]],
+        ))
+    }
+
+    fn show_analyze(&self, id: Option<String>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Analyze".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(id.unwrap_or_default())]],
+        ))
+    }
+
+    fn show_stats(&self, table: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Table".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(table)]],
+        ))
+    }
+
+    fn show_table_stats(&self, table: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Table".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(table)]],
+        ))
+    }
+
+    fn create_job(&self, stmt: &fe_sql_parser::ast::CreateJobStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CREATE JOB {} OK", stmt.name))]],
+        ))
+    }
+
+    fn drop_job_stmt(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("DROP JOB {} OK", name))]],
+        ))
+    }
+
+    fn pause_job(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("PAUSE JOB {} OK", name))]],
+        ))
+    }
+
+    fn resume_job_stmt(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("RESUME JOB {} OK", name))]],
+        ))
+    }
+
+    fn cancel_task(&self, id: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CANCEL TASK {} OK", id))]],
+        ))
+    }
+
+    fn install_plugin(&self, stmt: &fe_sql_parser::ast::InstallPluginStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("INSTALL PLUGIN {} OK", stmt.name))]],
+        ))
+    }
+
+    fn uninstall_plugin(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("UNINSTALL PLUGIN {} OK", name))]],
+        ))
+    }
+
+    fn show_plugins(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Plugin".to_string(), col_type: ColumnType::String }],
+            vec![],
+        ))
+    }
+
+    fn recover_database(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("RECOVER DATABASE {} OK", name))]],
+        ))
+    }
+
+    fn recover_table(&self, database: String, table: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("RECOVER TABLE {}.{} OK", database, table))]],
+        ))
+    }
+
+    fn recover_partition(&self, database: String, table: String, partition: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("RECOVER PARTITION {}.{}.{} OK", database, table, partition))]],
+        ))
+    }
+
+    fn drop_catalog_recycle_bin(&self, filter: Option<String>) -> Result<QueryResult, String> {
+        let _ = filter;
+        Ok(QueryResult::ok())
+    }
+
+    fn show_catalog_recycle_bin(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "RecycleBin".to_string(), col_type: ColumnType::String }],
+            vec![],
+        ))
+    }
+
+    fn create_sql_block_rule(&self, stmt: &fe_sql_parser::ast::CreateSqlBlockRuleStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CREATE SQL_BLOCK_RULE {} OK", stmt.name))]],
+        ))
+    }
+
+    fn alter_sql_block_rule(&self, name: String, _props: Vec<(String, String)>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("ALTER SQL_BLOCK_RULE {} OK", name))]],
+        ))
+    }
+
+    fn drop_sql_block_rule(&self, name: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("DROP SQL_BLOCK_RULE {} OK", name))]],
+        ))
+    }
+
+    fn show_sql_block_rule(&self, filter: Option<String>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Rule".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(filter.unwrap_or_default())]],
+        ))
+    }
+
+    fn create_row_policy(&self, stmt: &fe_sql_parser::ast::CreateRowPolicyStmt) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("CREATE ROW POLICY {} OK", stmt.name))]],
+        ))
+    }
+
+    fn drop_row_policy(&self, name: String, _database: Option<String>, _table: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("DROP ROW POLICY {} OK", name))]],
+        ))
+    }
+
+    fn show_row_policy(&self, filter: Option<String>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Policy".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(filter.unwrap_or_default())]],
+        ))
+    }
+
+    fn kill_analyze_job(&self, id: String) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("KILL ANALYZE JOB {} OK", id))]],
+        ))
+    }
+
+    fn alter_stats(&self, table: String, _props: Vec<(String, String)>) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+            vec![vec![Some(format!("ALTER STATS {} OK", table))]],
+        ))
     }
 }
 

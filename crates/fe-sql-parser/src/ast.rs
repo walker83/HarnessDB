@@ -52,6 +52,50 @@ pub enum Statement {
     DropCatalog(DropCatalogStmt),
     ShowCatalogs,
     RefreshCatalog(RefreshCatalogStmt),
+    // Batch 2 DDL
+    CreateIndex(CreateIndexStmt),
+    DropIndex(DropIndexStmt),
+    CancelAlterTable(CancelAlterTableStmt),
+    AlterColocateGroup(AlterColocateGroupStmt),
+    AlterDatabase(AlterDatabaseStmt),
+    DropView(DropViewStmt),
+    AlterView(AlterViewStmt),
+    // Batch 3/4 generic statements (parsed but simplified execution)
+    ExportTable(ExportTableStmt),
+    CancelExport(String),
+    ShowExport,
+    CreateFunction(CreateFunctionStmt),
+    DropFunction(DropFunctionStmt),
+    ShowFunctions(Option<String>),
+    ShowCreateFunction(String),
+    DescribeFunction(String),
+    AnalyzeTable(AnalyzeTableStmt),
+    DropStats(DropStatsStmt),
+    ShowAnalyze(Option<String>),
+    ShowStats(String),
+    ShowTableStats(String),
+    CreateJob(CreateJobStmt),
+    DropJob(String),
+    PauseJob(String),
+    ResumeJob(String),
+    CancelTask(String),
+    InstallPlugin(InstallPluginStmt),
+    UninstallPlugin(String),
+    ShowPlugins,
+    RecoverDatabase(String),
+    RecoverTable { database: String, table: String },
+    RecoverPartition { database: String, table: String, partition: String },
+    DropCatalogRecycleBin(Option<String>),
+    ShowCatalogRecycleBin,
+    CreateSqlBlockRule(CreateSqlBlockRuleStmt),
+    AlterSqlBlockRule(String, Vec<(String, String)>),
+    DropSqlBlockRule(String),
+    ShowSqlBlockRule(Option<String>),
+    CreateRowPolicy(CreateRowPolicyStmt),
+    DropRowPolicy { name: String, database: Option<String>, table: String },
+    ShowRowPolicy(Option<String>),
+    KillAnalyzeJob(String),
+    AlterStats(String, Vec<(String, String)>),
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +267,15 @@ pub enum AlterOperation {
     DropColumn(String),
     ModifyColumn(ColumnDef),
     RenameTable(String),
+    RenameColumn { old_name: String, new_name: String },
+    SetComment(String),
+    SetProperty(Vec<(String, String)>),
+    AddPartition { partition_name: String, values_less_than: Vec<String>, properties: Vec<(String, String)> },
+    DropPartition { partition_name: String, if_exists: bool, force: bool },
+    AddRollup { rollup_name: String, columns: Vec<String>, properties: Vec<(String, String)> },
+    DropRollup { rollup_name: String, if_exists: bool },
+    Replace { old_table: String, swap: bool, properties: Vec<(String, String)> },
+    AddGeneratedColumn(ColumnDef),
 }
 
 #[derive(Debug, Clone)]
@@ -407,4 +460,132 @@ pub struct DropCatalogStmt {
 #[derive(Debug, Clone)]
 pub struct RefreshCatalogStmt {
     pub name: String,
+}
+
+// Batch 2 DDL types
+
+#[derive(Debug, Clone)]
+pub struct CreateIndexStmt {
+    pub index_name: String,
+    pub database: Option<String>,
+    pub table: String,
+    pub columns: Vec<String>,
+    pub index_type: Option<String>,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropIndexStmt {
+    pub index_name: String,
+    pub database: Option<String>,
+    pub table: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CancelAlterTableStmt {
+    pub database: Option<String>,
+    pub table: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterColocateGroupStmt {
+    pub group_name: String,
+    pub operation: ColocateGroupOperation,
+}
+
+#[derive(Debug, Clone)]
+pub enum ColocateGroupOperation {
+    AddTable { database: Option<String>, table: String },
+    RemoveTable { database: Option<String>, table: String },
+    SetProperty(Vec<(String, String)>),
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterDatabaseStmt {
+    pub name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub query: String,
+}
+
+// Batch 3/4 types
+
+#[derive(Debug, Clone)]
+pub struct ExportTableStmt {
+    pub database: Option<String>,
+    pub table: String,
+    pub path: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateFunctionStmt {
+    pub name: String,
+    pub args: Vec<String>,
+    pub returns: Option<String>,
+    pub properties: Vec<(String, String)>,
+    pub if_not_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropFunctionStmt {
+    pub name: String,
+    pub args: Vec<String>,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnalyzeTableStmt {
+    pub database: Option<String>,
+    pub table: String,
+    pub columns: Vec<String>,
+    pub sample_rate: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropStatsStmt {
+    pub database: Option<String>,
+    pub table: String,
+    pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateJobStmt {
+    pub name: String,
+    pub schedule: String,
+    pub execute: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct InstallPluginStmt {
+    pub name: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateSqlBlockRuleStmt {
+    pub name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateRowPolicyStmt {
+    pub name: String,
+    pub database: Option<String>,
+    pub table: String,
+    pub policy_type: String,
+    pub using_expr: String,
 }

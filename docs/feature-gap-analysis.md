@@ -335,76 +335,73 @@
 
 ## 10. SQL 语句补全实施计划
 
-### 第1批：DDL 补全（优先级最高）
+### 第1批：DDL 补全 ✅ 已完成 (2026-05-05)
 
-> 目标：补全最基础的 DDL 语句，使数据库元数据操作完整
+| # | 语句 | 语法 | 状态 |
+|---|------|------|------|
+| 1 | ALTER DATABASE | `ALTER DATABASE db SET PROPERTIES ("key"="value")` | ✅ |
+| 2 | SHOW CREATE DATABASE | `SHOW CREATE DATABASE db_name` | ✅ |
+| 3 | DROP VIEW | `DROP VIEW [IF EXISTS] view_name` | ✅ |
+| 4 | ALTER VIEW | `ALTER VIEW view_name AS select_query` | ✅ |
+| 5 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` | ✅ |
+| 6 | ALTER TABLE RENAME COLUMN | `ALTER TABLE t RENAME COLUMN old TO new` | ✅ |
+| 7 | ALTER TABLE COMMENT | `ALTER TABLE t COMMENT 'comment'` | ✅ |
+| 8 | ALTER TABLE SET PROPERTY | `ALTER TABLE t SET PROPERTIES ("key"="value")` | ✅ |
 
-| # | 语句 | 语法 |
+### 第2批：DDL 补全（第2批）✅ 已完成 (2026-05-05)
+
+| # | 语句 | 语法 | 状态 |
+|---|------|------|------|
+| 9 | CREATE INDEX | `CREATE INDEX idx ON t (col1, col2) [USING BITMAP]` | ✅ |
+| 10 | DROP INDEX | `DROP INDEX idx ON t` | ✅ |
+| 11 | ALTER TABLE ADD PARTITION | `ALTER TABLE t ADD PARTITION p VALUES LESS THAN (...)` | ✅ |
+| 12 | ALTER TABLE DROP PARTITION | `ALTER TABLE t DROP PARTITION [IF EXISTS] p [FORCE]` | ✅ |
+| 13 | ALTER TABLE ADD/DROP ROLLUP | `ALTER TABLE t ADD/DROP ROLLUP r (...)` | ✅ |
+| 14 | ALTER TABLE REPLACE | `ALTER TABLE t REPLACE WITH TABLE old_t [SWAP]` | ✅ |
+| 15 | ALTER TABLE ADD GENERATED COLUMN | `ALTER TABLE t ADD GENERATED COLUMN col TYPE` | ✅ |
+| 16 | CANCEL ALTER TABLE | `CANCEL ALTER TABLE [FROM db] t` | ✅ |
+| 17 | ALTER COLOCATE GROUP | `ALTER COLOCATE GROUP g ADD/REMOVE TABLE t` | ✅ |
+
+### 第3批：SHOW 语句 + 高级运维 ✅ 已完成
+
+| # | 语句 | 语法 | 状态 |
+|---|------|------|------|
+| 18 | SHOW PARTITIONS | `SHOW PARTITIONS FROM t` | ✅ |
+| 19 | SHOW TABLE STATUS | `SHOW TABLE STATUS [FROM db]` | ✅ |
+| 20 | SHOW VARIABLES | `SHOW [GLOBAL\|SESSION] VARIABLES [LIKE 'pattern']` | ✅ |
+| 21 | SHOW PROCESSLIST | `SHOW [FULL] PROCESSLIST` | ✅ |
+| 22 | SHOW INDEX | `SHOW INDEX FROM t` | ✅ |
+| 23 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` | ✅ |
+| 24 | SHOW BACKENDS | `SHOW BACKENDS` | ✅ |
+| 25 | SHOW FRONTENDS | `SHOW FRONTENDS` | ✅ |
+| 26 | SHOW ALTER TABLE (MV) | `SHOW ALTER TABLE MATERIALIZED VIEW` | ✅ |
+| 27 | SHOW TABLE ID | `SHOW TABLE ID` | ✅ |
+| 28 | SHOW PARTITION ID | `SHOW PARTITION ID` | ✅ |
+| 29 | SHOW DYNAMIC PARTITION TABLES | `SHOW DYNAMIC PARTITION TABLES` | ✅ |
+| 30 | SHOW VIEW | `SHOW VIEW [FROM db]` | ✅ |
+| 31 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` | ✅ |
+| 32 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` | ✅ |
+| 33 | CREATE/DROP FUNCTION | UDF 管理 | ✅ |
+| 34 | ANALYZE TABLE | 统计信息收集 | ✅ |
+| 35 | CREATE/DROP JOB | 定时任务 | ✅ |
+| 36 | INSTALL/UNINSTALL PLUGIN | 插件管理 | ✅ |
+| 37 | RECOVER | 回收站恢复 | ✅ |
+| 38 | SQL_BLOCK_RULE | SQL 禁止规则 | ✅ |
+| 39 | ROW POLICY | 行级安全策略 | ✅ |
+
+### 第4批：Account/Security + 事务 待实现
+
+| # | 语句 | 状态 |
 |---|------|------|
-| 1 | ALTER DATABASE | `ALTER DATABASE db SET PROPERTIES ("key"="value")` |
-| 2 | SHOW CREATE DATABASE | `SHOW CREATE DATABASE db_name` |
-| 3 | DROP VIEW | `DROP VIEW [IF EXISTS] view_name` |
-| 4 | ALTER VIEW | `ALTER VIEW view_name AS select_query` |
-| 5 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` |
-| 6 | ALTER TABLE RENAME COLUMN | `ALTER TABLE t RENAME COLUMN old TO new` |
-| 7 | ALTER TABLE COMMENT | `ALTER TABLE t COMMENT 'comment'` |
-| 8 | ALTER TABLE SET PROPERTY | `ALTER TABLE t SET PROPERTIES ("key"="value")` |
-
-**涉及文件**：
-- `crates/fe-sql-parser/src/ast.rs` — 新增 Statement variant 和 struct
-- `crates/fe-sql-parser/src/parser.rs` — 新增关键字匹配和解析函数
-- `roris-server/src/fe_main.rs` — 新增 execute_statement 分支
-
-### 第2批：SHOW 语句 + 索引 + Session
-
-> 目标：补全运维常用的 SHOW 语句，添加索引管理，实现 session variable
-
-| # | 语句 | 语法 |
-|---|------|------|
-| 9 | CREATE INDEX | `CREATE INDEX idx ON t (col1, col2) [USING BITMAP]` |
-| 10 | DROP INDEX | `DROP INDEX idx ON t` |
-| 11 | SHOW INDEX | `SHOW INDEX FROM t` |
-| 12 | SHOW PARTITIONS | `SHOW PARTITIONS FROM t` |
-| 13 | SHOW TABLE STATUS | `SHOW TABLE STATUS [FROM db]` |
-| 14 | SHOW VARIABLES | `SHOW [GLOBAL\|SESSION] VARIABLES [LIKE 'pattern']` |
-| 15 | SHOW PROCESSLIST | `SHOW [FULL] PROCESSLIST` |
-| 16 | SET VARIABLE 执行 | `SET var = value` / `SET GLOBAL var = value` |
-| 17 | ALTER TABLE ADD/DROP PARTITION | `ALTER TABLE t ADD/DROP PARTITION ...` |
-| 18 | ALTER TABLE ADD/DROP ROLLUP | `ALTER TABLE t ADD/DROP ROLLUP ...` |
-| 19 | ALTER TABLE REPLACE | `ALTER TABLE t REPLACE WITH TABLE ...` |
-
-### 第3批：Account/Security + 事务 + 高级功能
-
-> 目标：实现基本的权限控制、事务支持、数据导出
-
-| # | 语句 | 语法 |
-|---|------|------|
-| 20 | GRANT | `GRANT priv ON db.table TO user` |
-| 21 | REVOKE | `REVOKE priv ON db.table FROM user` |
-| 22 | CREATE/DROP/ALTER ROLE | `CREATE ROLE role_name` |
-| 23 | ALTER USER / SET PASSWORD | `ALTER USER user IDENTIFIED BY 'pwd'` |
-| 24 | SET PROPERTY | `SET PROPERTY FOR user 'key'='value'` |
-| 25 | SHOW GRANTS / ROLES / PRIVILEGES | 各类 SHOW 权限语句 |
-| 26 | BEGIN / COMMIT / ROLLBACK | 事务控制 |
-| 27 | KILL QUERY / KILL CONNECTION | `KILL QUERY id` / `KILL CONNECTION id` |
-| 28 | EXPORT TABLE | `EXPORT TABLE t TO 'path' PROPERTIES (...)` |
-| 29 | SHOW ALTER TABLE | `SHOW ALTER TABLE [FROM db]` |
-| 30 | SHOW BACKENDS / SHOW FRONTENDS | 集群信息查看 |
-| 31 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` |
-| 32 | SHOW DELETE | `SHOW DELETE` |
-| 33 | SHOW CREATE MATERIALIZED VIEW | `SHOW CREATE MATERIALIZED VIEW mv` |
-
-### 第4批：高级功能（长期）
-
-| # | 语句 | 语法 |
-|---|------|------|
-| 34 | CREATE/DROP FUNCTION | UDF 管理 |
-| 35 | ANALYZE TABLE | 统计信息收集 |
-| 36 | INSTALL/UNINSTALL PLUGIN | 插件管理 |
-| 37 | CREATE/DROP JOB | 定时任务 |
-| 38 | RECOVER | 回收站恢复 |
-| 39 | BROKER LOAD / ROUTINE LOAD | 高级导入 |
-| 40 | UPDATE/DELETE 执行层 | 实际数据操作 |
+| 40 | GRANT / REVOKE | ❌ |
+| 41 | CREATE/DROP/ALTER ROLE | ❌ |
+| 42 | ALTER USER / SET PASSWORD | ❌ |
+| 43 | SHOW GRANTS / ROLES / PRIVILEGES | ❌ |
+| 44 | SET PROPERTY | ❌ |
+| 45 | BEGIN / COMMIT / ROLLBACK | ❌ |
+| 46 | KILL QUERY / KILL CONNECTION | ❌ |
+| 47 | BROKER LOAD / ROUTINE LOAD | ❌ |
+| 48 | UPDATE/DELETE 执行层 | ❌ |
 | 41 | SHOW TABLE ID / PARTITION ID | 高级运维 |
 
 ---

@@ -123,6 +123,7 @@ impl Planner {
             Statement::ShowDynamicPartitionTables => Err(DrorisError::Internal("SHOW DYNAMIC PARTITION TABLES handled in FE".to_string())),
             Statement::ShowView(_, _) => Err(DrorisError::Internal("SHOW VIEW handled in FE".to_string())),
             Statement::ShowCreateMaterializedView(_) => Err(DrorisError::Internal("SHOW CREATE MATERIALIZED VIEW handled in FE".to_string())),
+            _ => Err(DrorisError::Internal("Statement handled in FE".to_string())),
         }
     }
 
@@ -394,6 +395,9 @@ impl Planner {
                 },
                 AlterOperation::RenameTable(new_name) => AlterOperationPlan::RenameTable {
                     new_name: new_name.clone(),
+                },
+                _ => AlterOperationPlan::SetProperty {
+                    properties: vec![],
                 },
             })
             .collect();
