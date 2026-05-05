@@ -137,7 +137,6 @@ impl Catalog for InternalCatalog {
 
 pub mod iceberg {
     use super::*;
-    use std::sync::Arc;
     use tokio::sync::RwLock;
 
     pub struct IcebergCatalogConfig {

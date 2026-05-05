@@ -34,6 +34,7 @@ impl LdapConfig {
 }
 
 pub struct LdapAuthenticator {
+    #[allow(dead_code)]
     config: LdapConfig,
 }
 

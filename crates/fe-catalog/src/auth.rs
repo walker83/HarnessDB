@@ -1,7 +1,5 @@
 use dashmap::DashMap;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 use common::DrorisError;
 use mysql_protocol::auth::{AuthPluginType, AuthUser};

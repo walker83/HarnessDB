@@ -192,7 +192,7 @@ impl Scheduler {
             .fragments
             .iter()
             .filter(|(_, fragment)| !fragment.build_runtime_filters.is_empty())
-            .filter_map(|(frag_id, fragment)| {
+            .filter_map(|(_frag_id, fragment)| {
                 fragment
                     .parent_fragment_id
                     .as_ref()

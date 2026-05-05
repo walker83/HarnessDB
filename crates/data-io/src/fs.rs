@@ -41,6 +41,7 @@ impl FileSystem for LocalFileSystem {
 }
 
 pub struct S3FileSystem {
+    #[allow(dead_code)]
     bucket: String,
     prefix: String,
 }

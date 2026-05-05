@@ -51,6 +51,7 @@ fn extract_tables_from_query(query: &QueryStmt) -> Vec<String> {
     }
 }
 
+#[allow(dead_code)]
 fn is_aggregate_column(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.starts_with("count_")
@@ -60,6 +61,7 @@ fn is_aggregate_column(name: &str) -> bool {
         || lower.starts_with("min_")
 }
 
+#[allow(dead_code)]
 fn get_select_item_name(item: &fe_sql_parser::ast::SelectItem) -> Option<String> {
     match &item.expr {
         fe_sql_parser::ast::Expr::ColumnRef { column, .. } => Some(column.clone()),
@@ -68,6 +70,7 @@ fn get_select_item_name(item: &fe_sql_parser::ast::SelectItem) -> Option<String>
     }
 }
 
+#[allow(dead_code)]
 fn can_use_mv_without_groupby(query: &QueryStmt, mv: &MaterializedView) -> bool {
     for item in &query.select_list {
         if let Some(name) = get_select_item_name(item) {
@@ -84,6 +87,7 @@ fn can_use_mv_without_groupby(query: &QueryStmt, mv: &MaterializedView) -> bool 
     true
 }
 
+#[allow(dead_code)]
 fn can_use_mv_with_groupby(query: &QueryStmt, mv: &MaterializedView) -> bool {
     if query.group_by.is_empty() {
         return false;
@@ -111,6 +115,7 @@ fn can_use_mv_with_groupby(query: &QueryStmt, mv: &MaterializedView) -> bool {
     true
 }
 
+#[allow(dead_code)]
 fn expr_column_name(expr: &fe_sql_parser::ast::Expr) -> Option<String> {
     match expr {
         fe_sql_parser::ast::Expr::ColumnRef { column, .. } => Some(column.clone()),
@@ -118,6 +123,7 @@ fn expr_column_name(expr: &fe_sql_parser::ast::Expr) -> Option<String> {
     }
 }
 
+#[allow(dead_code)]
 fn is_aggregate_expr(expr: &fe_sql_parser::ast::Expr) -> bool {
     match expr {
         fe_sql_parser::ast::Expr::FunctionCall { name, .. } => {

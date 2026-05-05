@@ -64,6 +64,7 @@ async fn main() -> Result<()> {
 
         #[derive(Clone)]
         struct BackendServiceImpl {
+            #[allow(dead_code)]
             storage: Arc<RwLock<be_storage::StorageEngine>>,
         }
 

@@ -1144,7 +1144,7 @@ fn convert_binary_op(op: sqlparser::ast::BinaryOperator) -> BinaryOp {
 fn parse_create_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
 
-    let if_not_exists = sql.to_uppercase().contains("IF NOT EXISTS");
+    let _if_not_exists = sql.to_uppercase().contains("IF NOT EXISTS");
 
     let after_create = sql
         .strip_prefix("CREATE USER")
