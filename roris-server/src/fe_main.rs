@@ -14,9 +14,10 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt};
+use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt, DeleteStmt};
 use types::{DataType, Block, ScalarValue};
 use fe_catalog::table::{Table, TableColumn, KeysType};
+use be_execution::{ExecutionContext, execute_plan};
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
@@ -1043,11 +1044,89 @@ impl RorisQueryHandler {
     }
 
     fn update(&self, stmt: &fe_sql_parser::ast::UpdateStmt) -> Result<QueryResult, String> {
-        Err(format!("UPDATE execution not yet implemented - table: {}", stmt.table))
+        use tokio::runtime::Runtime;
+
+        // Resolve table: db.table or just table (use current_db)
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (database, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        // Create planner and plan the UPDATE statement
+        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let planner = Planner::new(Arc::new(catalog_for_planner));
+
+        let plan = planner.plan(Statement::Update(stmt.clone()))
+            .map_err(|e| format!("Planning error: {}", e))?;
+
+        // Create execution context
+        let storage = self.storage.clone();
+        let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
+
+        // Execute synchronously using tokio runtime
+        let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+        let results = runtime.block_on(async { execute_plan(&plan, &exec_context).await })
+            .map_err(|e| format!("Execution error: {}", e))?;
+
+        // Extract affected rows from results
+        let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
+
+        tracing::info!("UPDATE on {}.{}: {} rows affected", database, table_name, affected_rows);
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![vec![Some(affected_rows.to_string())]],
+        ))
     }
 
-    fn delete(&self, stmt: &fe_sql_parser::ast::DeleteStmt) -> Result<QueryResult, String> {
-        Err(format!("DELETE execution not yet implemented - table: {}", stmt.table))
+    fn delete(&self, stmt: &DeleteStmt) -> Result<QueryResult, String> {
+        use tokio::runtime::Runtime;
+
+        // Resolve table: db.table or just table (use current_db)
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (database, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        // Create planner and plan the delete statement
+        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let planner = Planner::new(Arc::new(catalog_for_planner));
+
+        let delete_stmt = Statement::Delete(stmt.clone());
+        let plan = planner.plan(delete_stmt).map_err(|e| format!("Planning error: {}", e))?;
+
+        // Create execution context
+        let storage = self.storage.clone();
+        let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
+
+        // Execute synchronously using tokio runtime
+        let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+        let results = runtime.block_on(async { execute_plan(&plan, &exec_context).await })
+            .map_err(|e| format!("Execution error: {}", e))?;
+
+        // Extract affected rows from results
+        let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
+
+        tracing::info!("DELETE from {}.{}: {} rows affected", database, table_name, affected_rows);
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![vec![Some(affected_rows.to_string())]],
+        ))
     }
 
     fn start_transaction(&self) -> Result<QueryResult, String> {
