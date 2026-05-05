@@ -4,7 +4,6 @@ use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 
-use be_storage::StorageEngine;
 use fe_common::edit_log::EditLog;
 use fe_catalog::CatalogManager;
 use fe_scheduler::ClusterManager;
@@ -16,7 +15,6 @@ use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
 use fe_sql_parser::ast::{AlterDatabaseStmt, AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, DropViewStmt, AlterViewStmt};
 use types::{DataType, Block, ScalarValue};
-use fe_catalog::table::{Table, TableColumn, KeysType};
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
@@ -43,7 +41,6 @@ struct Args {
 struct RorisQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
-    storage: Arc<StorageEngine>,
     views: Arc<StdRwLock<Vec<ViewInfo>>>,
 }
 
@@ -56,11 +53,10 @@ struct ViewInfo {
 }
 
 impl RorisQueryHandler {
-    fn new(catalog: Arc<StdRwLock<CatalogManager>>, storage: Arc<StorageEngine>) -> Self {
+    fn new(catalog: Arc<StdRwLock<CatalogManager>>) -> Self {
         Self {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
-            storage,
             views: Arc::new(StdRwLock::new(Vec::new())),
         }
     }
@@ -591,9 +587,7 @@ impl RorisQueryHandler {
     }
 
     fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {
-        use fe_sql_planner::plan_node::PlanNodeType;
-
-        let current_db = self.current_database.read().unwrap().clone();
+        let _current_db = self.current_database.read().unwrap().clone();
 
         // Create planner and plan the statement
         let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
@@ -646,6 +640,7 @@ fn parse_data_type(s: &str) -> DataType {
     }
 }
 
+#[allow(dead_code)]
 fn block_to_query_result(blocks: Vec<Block>) -> Result<QueryResult, String> {
     if blocks.is_empty() {
         return Ok(QueryResult::with_rows(
@@ -759,7 +754,7 @@ async fn main() -> Result<()> {
     let _cluster = Arc::new(RwLock::new(ClusterManager::new(fe_scheduler::cluster::ClusterConfig::default())));
 
     // Initialize local storage engine for query execution
-    let storage = Arc::new(be_storage::StorageEngine::open("data/fe/storage").unwrap_or_else(|_| {
+    let _storage = Arc::new(be_storage::StorageEngine::open("data/fe/storage").unwrap_or_else(|_| {
         // Fallback to in-memory if storage dir doesn't exist
         be_storage::StorageEngine::open("/tmp/roris-fe-storage").unwrap()
     }));
@@ -779,7 +774,7 @@ async fn main() -> Result<()> {
     tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
 
     // Start MySQL protocol server
-    let query_handler = RorisQueryHandler::new(catalog.clone(), storage.clone());
+    let query_handler = RorisQueryHandler::new(catalog.clone());
     let mysql_config = ServerConfig {
         bind_addr: "127.0.0.1".to_string(),
         port: args.mysql_port,
