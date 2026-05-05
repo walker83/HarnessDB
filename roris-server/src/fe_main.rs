@@ -1145,8 +1145,16 @@ impl RorisQueryHandler {
         }
         // In non-transaction mode, commit is a no-op (writes already applied)
         // The StorageEngine is available at self.storage for actual persistence
-        tx.commit(&self.storage).ok();
-        Ok(QueryResult::ok())
+        match tx.commit(&self.storage) {
+            Ok(_affected) => {
+                tx.in_transaction = false;
+                Ok(QueryResult::ok())
+            }
+            Err(e) => {
+                tx.rollback();
+                Err(format!("Commit failed: {}", e))
+            }
+        }
     }
 
     fn rollback_tx(&self) -> Result<QueryResult, String> {
