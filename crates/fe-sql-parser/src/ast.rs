@@ -36,6 +36,12 @@ pub enum Statement {
     DropCatalog(DropCatalogStmt),
     ShowCatalogs,
     RefreshCatalog(RefreshCatalogStmt),
+    // Batch 1 additions
+    AlterDatabase(AlterDatabaseStmt),
+    ShowCreateDatabase(String),
+    DropView(DropViewStmt),
+    AlterView(AlterViewStmt),
+    ShowCreateView(String, String),
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +213,9 @@ pub enum AlterOperation {
     DropColumn(String),
     ModifyColumn(ColumnDef),
     RenameTable(String),
+    RenameColumn { old_name: String, new_name: String },
+    SetComment(String),
+    SetProperty(Vec<(String, String)>),
 }
 
 #[derive(Debug, Clone)]
@@ -391,4 +400,26 @@ pub struct DropCatalogStmt {
 #[derive(Debug, Clone)]
 pub struct RefreshCatalogStmt {
     pub name: String,
+}
+
+// Batch 1: New statement types
+
+#[derive(Debug, Clone)]
+pub struct AlterDatabaseStmt {
+    pub name: String,
+    pub properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterViewStmt {
+    pub database: Option<String>,
+    pub name: String,
+    pub query: String,
 }

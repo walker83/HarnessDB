@@ -107,6 +107,11 @@ impl Planner {
             Statement::DropCatalog(stmt) => self.plan_drop_catalog(stmt),
             Statement::ShowCatalogs => self.plan_show_catalogs(),
             Statement::RefreshCatalog(stmt) => self.plan_refresh_catalog(stmt),
+            Statement::AlterDatabase(stmt) => self.plan_alter_database(stmt),
+            Statement::ShowCreateDatabase(name) => self.plan_show_create_database(name),
+            Statement::DropView(stmt) => self.plan_drop_view(stmt),
+            Statement::AlterView(stmt) => self.plan_alter_view(stmt),
+            Statement::ShowCreateView(db, name) => self.plan_show_create_view(db, name),
         }
     }
 
@@ -140,6 +145,43 @@ impl Planner {
 
     fn plan_show_users(&self) -> Result<PlanNode, DrorisError> {
         Err(DrorisError::Internal("SHOW USERS not yet implemented in planner".to_string()))
+    }
+
+    // ---- Batch 1: New statement handlers ----
+
+    fn plan_alter_database(&self, stmt: fe_sql_parser::ast::AlterDatabaseStmt) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("ALTER DATABASE {}", stmt.name) }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_create_database(&self, name: String) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("SHOW CREATE DATABASE {}", name) }),
+            vec![],
+        ))
+    }
+
+    fn plan_drop_view(&self, stmt: fe_sql_parser::ast::DropViewStmt) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("DROP VIEW {}", stmt.name) }),
+            vec![],
+        ))
+    }
+
+    fn plan_alter_view(&self, stmt: fe_sql_parser::ast::AlterViewStmt) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("ALTER VIEW {}", stmt.name) }),
+            vec![],
+        ))
+    }
+
+    fn plan_show_create_view(&self, db: String, name: String) -> Result<PlanNode, DrorisError> {
+        Ok(self.make_node(
+            PlanNodeType::DdlCommand(DdlCommandNode { command: format!("SHOW CREATE VIEW {}.{}", db, name) }),
+            vec![],
+        ))
     }
 
     // ---- DDL ----
@@ -378,6 +420,16 @@ impl Planner {
                 },
                 AlterOperation::RenameTable(new_name) => AlterOperationPlan::RenameTable {
                     new_name: new_name.clone(),
+                },
+                AlterOperation::RenameColumn { old_name, new_name } => AlterOperationPlan::RenameColumn {
+                    old_name: old_name.clone(),
+                    new_name: new_name.clone(),
+                },
+                AlterOperation::SetComment(comment) => AlterOperationPlan::SetComment {
+                    comment: comment.clone(),
+                },
+                AlterOperation::SetProperty(props) => AlterOperationPlan::SetProperty {
+                    properties: props.clone(),
                 },
             })
             .collect();

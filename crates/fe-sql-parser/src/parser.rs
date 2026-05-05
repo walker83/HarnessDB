@@ -69,6 +69,31 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         return parse_refresh_catalog(sql);
     }
 
+    // Batch 1: ALTER DATABASE, SHOW CREATE DATABASE, DROP VIEW, ALTER VIEW, SHOW CREATE VIEW
+    if trimmed.starts_with("ALTER DATABASE") {
+        return parse_alter_database(sql);
+    }
+    if trimmed.starts_with("SHOW CREATE DATABASE") {
+        return parse_show_create_database(sql);
+    }
+    if trimmed.starts_with("DROP VIEW") {
+        return parse_drop_view(sql);
+    }
+    if trimmed.starts_with("ALTER VIEW") {
+        return parse_alter_view(sql);
+    }
+    if trimmed.starts_with("SHOW CREATE VIEW") {
+        return parse_show_create_view(sql);
+    }
+
+    // Doris-specific ALTER TABLE operations that sqlparser doesn't handle
+    if trimmed.starts_with("ALTER TABLE") {
+        let upper = trimmed.clone();
+        if upper.contains("RENAME COLUMN") || upper.contains("SET PROPERTIES") || upper.contains("COMMENT") {
+            return parse_alter_table_doris(sql);
+        }
+    }
+
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, &sql_to_parse)
         .map_err(|e| ParseError::SyntaxError {
@@ -1452,5 +1477,246 @@ fn parse_refresh_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     Ok(vec![Statement::RefreshCatalog(RefreshCatalogStmt {
         name: name.to_string(),
+    })])
+}
+
+// ---- Batch 1: New statement parsers ----
+
+fn parse_alter_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql
+        .strip_prefix("ALTER DATABASE")
+        .or_else(|| sql.strip_prefix("alter database"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER DATABASE".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+
+    let rest = rest.trim();
+    let properties = if rest.to_uppercase().starts_with("SET PROPERTIES") {
+        let after_set = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        parse_properties(&format!("PROPERTIES {}", after_set))
+    } else {
+        vec![]
+    };
+
+    Ok(vec![Statement::AlterDatabase(AlterDatabaseStmt {
+        name: name.to_string(),
+        properties,
+    })])
+}
+
+fn parse_show_create_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql
+        .strip_prefix("SHOW CREATE DATABASE")
+        .or_else(|| sql.strip_prefix("show create database"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW CREATE DATABASE".to_string(),
+        })?
+        .trim();
+
+    let (name, _) = extract_identifier(after_show)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected database name".to_string(),
+        })?;
+
+    Ok(vec![Statement::ShowCreateDatabase(name.to_string())])
+}
+
+fn parse_drop_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_drop = sql
+        .strip_prefix("DROP VIEW")
+        .or_else(|| sql.strip_prefix("drop view"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected DROP VIEW".to_string(),
+        })?
+        .trim();
+
+    let if_exists = after_drop.to_uppercase().starts_with("IF EXISTS");
+    let rest = if if_exists {
+        after_drop.strip_prefix("IF EXISTS")
+            .or_else(|| after_drop.strip_prefix("if exists"))
+            .unwrap_or(after_drop)
+            .trim()
+    } else {
+        after_drop
+    };
+
+    let (name, _) = extract_identifier(rest)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    Ok(vec![Statement::DropView(DropViewStmt {
+        database,
+        name: view_name,
+        if_exists,
+    })])
+}
+
+fn parse_alter_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql
+        .strip_prefix("ALTER VIEW")
+        .or_else(|| sql.strip_prefix("alter view"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER VIEW".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, view_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let rest = rest.trim();
+    let query = if rest.to_uppercase().starts_with("AS ") {
+        rest[3..].trim().to_string()
+    } else {
+        rest.to_string()
+    };
+
+    Ok(vec![Statement::AlterView(AlterViewStmt {
+        database,
+        name: view_name,
+        query,
+    })])
+}
+
+fn parse_show_create_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_show = sql
+        .strip_prefix("SHOW CREATE VIEW")
+        .or_else(|| sql.strip_prefix("show create view"))
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW CREATE VIEW".to_string(),
+        })?
+        .trim();
+
+    let (name, _) = extract_identifier(after_show)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected view name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (db, view) = if parts.len() == 2 {
+        (parts[0].to_string(), parts[1].to_string())
+    } else {
+        (String::new(), parts[0].to_string())
+    };
+
+    Ok(vec![Statement::ShowCreateView(db, view)])
+}
+
+fn parse_alter_table_doris(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql = sql.trim();
+    let after_alter = sql
+        .strip_prefix("ALTER TABLE")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected ALTER TABLE".to_string(),
+        })?
+        .trim();
+
+    let (name, rest) = extract_identifier(after_alter)
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected table name".to_string(),
+        })?;
+
+    let name_str = name.to_string();
+    let parts: Vec<&str> = name_str.split('.').collect();
+    let (database, table_name) = if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name_str)
+    };
+
+    let rest = rest.trim();
+    let rest_upper = rest.to_uppercase();
+
+    let operation = if rest_upper.starts_with("RENAME COLUMN") {
+        let after_rename = rest.trim_start_matches(|c: char| !c.is_whitespace())
+            .trim()
+            .trim_start_matches("COLUMN")
+            .trim();
+        let (old_name, remaining) = extract_identifier(after_rename)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected old column name".to_string(),
+            })?;
+        let remaining = remaining.trim();
+        let remaining = remaining.strip_prefix("TO")
+            .or_else(|| remaining.strip_prefix("to"))
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected TO".to_string(),
+            })?
+            .trim();
+        let (new_name, _) = extract_identifier(remaining)
+            .ok_or_else(|| ParseError::SyntaxError {
+                position: 0,
+                message: "Expected new column name".to_string(),
+            })?;
+        AlterOperation::RenameColumn {
+            old_name: old_name.to_string(),
+            new_name: new_name.to_string(),
+        }
+    } else if rest_upper.starts_with("COMMENT") {
+        let comment_part = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let comment = comment_part.trim_matches('\'').trim_matches('"').to_string();
+        AlterOperation::SetComment(comment)
+    } else if rest_upper.starts_with("SET PROPERTIES") {
+        let after_set = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ')
+            .trim();
+        let props = parse_properties(&format!("PROPERTIES {}", after_set));
+        AlterOperation::SetProperty(props)
+    } else {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: format!("Unknown ALTER TABLE operation: {}", rest),
+        });
+    };
+
+    Ok(vec![Statement::AlterTable(AlterTableStmt {
+        database,
+        table: table_name,
+        operations: vec![operation],
     })])
 }

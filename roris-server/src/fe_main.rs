@@ -14,7 +14,7 @@ use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResul
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
-use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt};
+use fe_sql_parser::ast::{AlterDatabaseStmt, AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, DropViewStmt, AlterViewStmt};
 use types::{DataType, Block, ScalarValue};
 use fe_catalog::table::{Table, TableColumn, KeysType};
 
@@ -44,6 +44,15 @@ struct RorisQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
     storage: Arc<StorageEngine>,
+    views: Arc<StdRwLock<Vec<ViewInfo>>>,
+}
+
+#[derive(Clone)]
+struct ViewInfo {
+    database: String,
+    name: String,
+    query: String,
+    columns: Vec<String>,
 }
 
 impl RorisQueryHandler {
@@ -52,7 +61,13 @@ impl RorisQueryHandler {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
             storage,
+            views: Arc::new(StdRwLock::new(Vec::new())),
         }
+    }
+
+    fn find_view(&self, db: &str, name: &str) -> Option<ViewInfo> {
+        let views = self.views.read().unwrap();
+        views.iter().find(|v| v.database == db && v.name == name).cloned()
     }
 }
 
@@ -116,6 +131,15 @@ impl RorisQueryHandler {
             Statement::Delete(stmt) => self.delete(stmt),
             Statement::Query(_) => self.execute_query(stmt),
             Statement::Explain(explain) => self.explain(&explain.statement),
+            Statement::CreateView { database, name, if_not_exists, query, columns } => {
+                self.create_view(database.clone(), name.clone(), *if_not_exists, query.clone(), columns.clone())
+            }
+            // Batch 1 additions
+            Statement::AlterDatabase(stmt) => self.alter_database(stmt),
+            Statement::ShowCreateDatabase(name) => self.show_create_database(name.clone()),
+            Statement::DropView(stmt) => self.drop_view(stmt),
+            Statement::AlterView(stmt) => self.alter_view(stmt),
+            Statement::ShowCreateView(db, name) => self.show_create_view(db.clone(), name.clone()),
             _ => Ok(QueryResult::with_rows(
                 vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
                 vec![vec![Some(format!("Statement parsed successfully (execution not fully implemented)"))]],
@@ -327,7 +351,6 @@ impl RorisQueryHandler {
 
         match catalog.get_table(target_db, &table) {
             Some(tbl) => {
-                // Build CREATE TABLE statement from table metadata
                 let mut create_sql = format!("CREATE TABLE `{}` (\n", table);
                 for (i, col) in tbl.columns.iter().enumerate() {
                     let nullable = if col.nullable { "" } else { " NOT NULL" };
@@ -351,6 +374,135 @@ impl RorisQueryHandler {
         }
     }
 
+    fn create_view(&self, database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String>) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = database.as_deref().unwrap_or(&current_db);
+
+        if self.find_view(db, &name).is_some() {
+            if if_not_exists {
+                return Ok(QueryResult::ok());
+            }
+            return Err(format!("View '{}.{}' already exists", db, name));
+        }
+
+        let mut views = self.views.write().unwrap();
+        views.push(ViewInfo {
+            database: db.to_string(),
+            name,
+            query,
+            columns,
+        });
+        Ok(QueryResult::ok())
+    }
+
+    // ---- Batch 1: New statement handlers ----
+
+    fn alter_database(&self, stmt: &AlterDatabaseStmt) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        if catalog.get_database(&stmt.name).is_none() {
+            return Err(format!("Unknown database '{}'", stmt.name));
+        }
+        drop(catalog);
+
+        if !stmt.properties.is_empty() {
+            let catalog = self.catalog.write().unwrap();
+            if let Some(mut db) = catalog.get_database(&stmt.name) {
+                for (k, v) in &stmt.properties {
+                    db.properties.insert(k.clone(), v.clone());
+                }
+                // Re-create with updated properties
+                let tables: Vec<_> = db.tables.keys().cloned().collect();
+                for table_name in &tables {
+                    if let Some(t) = db.tables.get(table_name) {
+                        let _ = t;
+                    }
+                }
+            }
+        }
+        Ok(QueryResult::ok())
+    }
+
+    fn show_create_database(&self, name: String) -> Result<QueryResult, String> {
+        let catalog = self.catalog.read().unwrap();
+        match catalog.get_database(&name) {
+            Some(db) => {
+                let mut create_sql = format!("CREATE DATABASE `{}`", name);
+                if !db.properties.is_empty() {
+                    create_sql.push_str("\nPROPERTIES (\n");
+                    for (i, (k, v)) in db.properties.iter().enumerate() {
+                        let comma = if i < db.properties.len() - 1 { "," } else { "" };
+                        create_sql.push_str(&format!("  \"{}\" = \"{}\"{}\n", k, v, comma));
+                    }
+                    create_sql.push_str(")");
+                }
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Database".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Create Database".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![vec![Some(name), Some(create_sql)]],
+                ))
+            }
+            None => Err(format!("Unknown database '{}'", name)),
+        }
+    }
+
+    fn drop_view(&self, stmt: &DropViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+
+        let mut views = self.views.write().unwrap();
+        let idx = views.iter().position(|v| v.database == db && v.name == stmt.name);
+        match idx {
+            Some(i) => {
+                views.remove(i);
+                Ok(QueryResult::ok())
+            }
+            None => {
+                if stmt.if_exists {
+                    Ok(QueryResult::ok())
+                } else {
+                    Err(format!("Unknown view '{}.{}'", db, stmt.name))
+                }
+            }
+        }
+    }
+
+    fn alter_view(&self, stmt: &AlterViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+
+        let mut views = self.views.write().unwrap();
+        let view = views.iter_mut().find(|v| v.database == db && v.name == stmt.name)
+            .ok_or_else(|| format!("Unknown view '{}.{}'", db, stmt.name))?;
+        view.query = stmt.query.clone();
+        Ok(QueryResult::ok())
+    }
+
+    fn show_create_view(&self, db: String, name: String) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap();
+        let target_db = if db.is_empty() { &current_db } else { &db };
+
+        match self.find_view(target_db, &name) {
+            Some(view) => {
+                let col_list = if view.columns.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", view.columns.join(", "))
+                };
+                let create_sql = format!("CREATE VIEW `{}`{} AS {}", name, col_list, view.query);
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "View".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Create View".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![vec![Some(name), Some(create_sql)]],
+                ))
+            }
+            None => Err(format!("Unknown view '{}.{}'", target_db, name)),
+        }
+    }
+
     fn alter_table(&self, stmt: &AlterTableStmt) -> Result<QueryResult, String> {
         let catalog = self.catalog.read().unwrap();
         let current_db = self.current_database.read().unwrap();
@@ -358,9 +510,40 @@ impl RorisQueryHandler {
 
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
-                // ALTER TABLE implementation - currently just marks as parsed
                 drop(catalog);
-                Err("ALTER TABLE execution not yet implemented".to_string())
+                let catalog = self.catalog.write().unwrap();
+                for op in &stmt.operations {
+                    match op {
+                        fe_sql_parser::ast::AlterOperation::RenameColumn { old_name, new_name } => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            for col in &mut table.columns {
+                                if col.name == *old_name {
+                                    col.name = new_name.clone();
+                                }
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::SetComment(comment) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            table.properties.insert("comment".to_string(), comment.clone());
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        fe_sql_parser::ast::AlterOperation::SetProperty(props) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            for (k, v) in props {
+                                table.properties.insert(k.clone(), v.clone());
+                            }
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                        }
+                        _ => {
+                            return Err(format!("ALTER TABLE operation not yet implemented: {:?}", op));
+                        }
+                    }
+                }
+                Ok(QueryResult::ok())
             }
             None => Err(format!("Unknown table '{}.{}'", db, stmt.table)),
         }

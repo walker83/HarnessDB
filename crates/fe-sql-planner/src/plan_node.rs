@@ -52,6 +52,7 @@ pub enum PlanNodeType {
     DropMaterializedView(DropMaterializedViewNode),
     AlterMaterializedView(AlterMaterializedViewNode),
     RefreshMaterializedView(RefreshMaterializedViewNode),
+    DdlCommand(DdlCommandNode),
 }
 
 // ---- Leaf / scan nodes ----
@@ -114,6 +115,9 @@ pub enum AlterOperationPlan {
     DropColumn { name: String },
     ModifyColumn { name: String, data_type: String },
     RenameTable { new_name: String },
+    RenameColumn { old_name: String, new_name: String },
+    SetComment { comment: String },
+    SetProperty { properties: Vec<(String, String)> },
 }
 
 #[derive(Debug, Clone)]
@@ -243,6 +247,11 @@ pub struct RefreshMaterializedViewNode {
     pub database: Option<String>,
     pub view_name: String,
     pub refresh_type: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DdlCommandNode {
+    pub command: String,
 }
 
 // ---- Relational operators ----
@@ -659,6 +668,7 @@ impl PlanNode {
             PlanNodeType::RefreshMaterializedView(mv) => {
                 format!("RefreshMaterializedViewNode: {}{}", mv.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), mv.view_name)
             }
+            PlanNodeType::DdlCommand(cmd) => format!("DdlCommand({})", cmd.command),
         }
     }
 
@@ -733,7 +743,8 @@ impl PlanNode {
             | PlanNodeType::CreateMaterializedView(_)
             | PlanNodeType::DropMaterializedView(_)
             | PlanNodeType::AlterMaterializedView(_)
-            | PlanNodeType::RefreshMaterializedView(_) => vec![],
+            | PlanNodeType::RefreshMaterializedView(_)
+            | PlanNodeType::DdlCommand(_) => vec![],
         }
     }
 }
