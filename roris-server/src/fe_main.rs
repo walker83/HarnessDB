@@ -45,6 +45,7 @@ struct RorisQueryHandler {
     current_database: Arc<StdRwLock<String>>,
     storage: Arc<StorageEngine>,
     views: Arc<StdRwLock<Vec<ViewInfo>>>,
+    transaction: Arc<StdRwLock<TransactionContext>>,
 }
 
 #[derive(Clone)]
@@ -55,6 +56,80 @@ struct ViewInfo {
     columns: Vec<String>,
 }
 
+/// A pending write operation waiting to be committed in a transaction.
+#[derive(Clone)]
+struct PendingWrite {
+    tablet_id: u64,
+    block: types::Block,
+    op_type: WriteOp,
+}
+
+#[derive(Clone)]
+enum WriteOp {
+    Insert,
+    Update,
+    Delete,
+}
+
+/// Session-scoped transaction context for ACID semantics.
+#[derive(Clone)]
+struct TransactionContext {
+    in_transaction: bool,
+    pending_writes: Vec<PendingWrite>,
+    // For UPDATE/DELETE, we track the predicates to apply at commit time
+    pending_deletes: Vec<PendingDelete>,
+}
+
+#[derive(Clone)]
+struct PendingDelete {
+    tablet_id: u64,
+    predicates: Vec<be_storage::index::ColumnPredicate>,
+}
+
+impl TransactionContext {
+    fn new() -> Self {
+        Self {
+            in_transaction: false,
+            pending_writes: Vec::new(),
+            pending_deletes: Vec::new(),
+        }
+    }
+
+    fn begin(&mut self) {
+        self.in_transaction = true;
+        self.pending_writes.clear();
+        self.pending_deletes.clear();
+    }
+
+    fn commit(&mut self, storage: &StorageEngine) -> Result<usize, String> {
+        let mut affected = 0;
+        // Apply all pending deletes first
+        for pd in &self.pending_deletes {
+            match storage.delete(pd.tablet_id, &pd.predicates) {
+                Ok(n) => affected += n,
+                Err(e) => return Err(format!("commit delete failed: {}", e)),
+            }
+        }
+        // Then apply all pending writes
+        for pw in &self.pending_writes {
+            match storage.write_batch(pw.tablet_id, &pw.block) {
+                Ok(_) => affected += pw.block.num_rows(),
+                Err(e) => return Err(format!("commit write failed: {}", e)),
+            }
+        }
+        self.in_transaction = false;
+        self.pending_writes.clear();
+        self.pending_deletes.clear();
+        Ok(affected)
+    }
+
+    fn rollback(&mut self) {
+        self.in_transaction = false;
+        self.pending_writes.clear();
+        self.pending_deletes.clear();
+    }
+}
+
 impl RorisQueryHandler {
     fn new(catalog: Arc<StdRwLock<CatalogManager>>, storage: Arc<StorageEngine>) -> Self {
         Self {
@@ -62,6 +137,7 @@ impl RorisQueryHandler {
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
             views: Arc::new(StdRwLock::new(Vec::new())),
             storage,
+            transaction: Arc::new(StdRwLock::new(TransactionContext::new())),
         }
     }
 
@@ -131,6 +207,10 @@ impl RorisQueryHandler {
             Statement::Insert(stmt) => self.insert(stmt),
             Statement::Update(stmt) => self.update(stmt),
             Statement::Delete(stmt) => self.delete(stmt),
+            // Transaction statements
+            Statement::StartTransaction => self.start_transaction(),
+            Statement::Commit => self.commit_tx(),
+            Statement::Rollback => self.rollback_tx(),
             Statement::Query(_) => self.execute_query(stmt),
             Statement::Explain(explain) => self.explain(&explain.statement),
             Statement::ShowPartitions(db, table) => self.show_partitions(db.clone(), table.clone()),
@@ -968,6 +1048,18 @@ impl RorisQueryHandler {
 
     fn delete(&self, stmt: &fe_sql_parser::ast::DeleteStmt) -> Result<QueryResult, String> {
         Err(format!("DELETE execution not yet implemented - table: {}", stmt.table))
+    }
+
+    fn start_transaction(&self) -> Result<QueryResult, String> {
+        Err("START TRANSACTION not yet implemented".to_string())
+    }
+
+    fn commit_tx(&self) -> Result<QueryResult, String> {
+        Err("COMMIT not yet implemented".to_string())
+    }
+
+    fn rollback_tx(&self) -> Result<QueryResult, String> {
+        Err("ROLLBACK not yet implemented".to_string())
     }
 
     fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {
