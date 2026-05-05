@@ -4,7 +4,7 @@
 
 > 参考文档：https://doris.apache.org/docs/sql-manual/sql-statements/
 > RorisDB 版本：v0.1.3
-> 更新时间：2026/05/05
+> 更新时间：2026/05/05（第1批已完成）
 
 ---
 
@@ -39,19 +39,27 @@
 | EXPLAIN | ✅ | ✅ | |
 | CREATE USER / DROP USER / SHOW USERS | ✅ | ❌ | 解析完成，未实现 |
 | CREATE/DROP/SHOW/REFRESH CATALOG | ✅ | ❌ | 解析完成，未实现 |
+| ALTER DATABASE | ✅ | ✅ | 第1批 |
+| SHOW CREATE DATABASE | ✅ | ✅ | 第1批 |
+| DROP VIEW | ✅ | ✅ | 第1批 |
+| ALTER VIEW | ✅ | ✅ | 第1批 |
+| SHOW CREATE VIEW | ✅ | ✅ | 第1批 |
+| ALTER TABLE RENAME COLUMN | ✅ | ✅ | 第1批 |
+| ALTER TABLE COMMENT | ✅ | ✅ | 第1批 |
+| ALTER TABLE SET PROPERTY | ✅ | ✅ | 第1批 |
 
 ### 1.1 DDL 语句缺失
 
 | 功能 | Apache Doris | RorisDB | 计划批次 |
 |------|-------------|---------|---------|
-| ALTER DATABASE | ✅ | ❌ | 第1批 |
-| SHOW CREATE DATABASE | ✅ | ❌ | 第1批 |
-| DROP VIEW | ✅ | ❌ | 第1批 |
-| ALTER VIEW | ✅ | ❌ | 第1批 |
-| SHOW CREATE VIEW | ✅ | ❌ | 第1批 |
-| ALTER TABLE RENAME COLUMN | ✅ | ❌ | 第1批 |
-| ALTER TABLE COMMENT | ✅ | ❌ | 第1批 |
-| ALTER TABLE SET PROPERTY | ✅ | ❌ | 第1批 |
+| ALTER DATABASE | ✅ | ✅ | ~~第1批~~ 已完成 |
+| SHOW CREATE DATABASE | ✅ | ✅ | ~~第1批~~ 已完成 |
+| DROP VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
+| ALTER VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
+| SHOW CREATE VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
+| ALTER TABLE RENAME COLUMN | ✅ | ✅ | ~~第1批~~ 已完成 |
+| ALTER TABLE COMMENT | ✅ | ✅ | ~~第1批~~ 已完成 |
+| ALTER TABLE SET PROPERTY | ✅ | ✅ | ~~第1批~~ 已完成 |
 | ALTER TABLE ADD/DROP PARTITION | ✅ | ❌ | 第2批 |
 | ALTER TABLE ADD/DROP ROLLUP | ✅ | ❌ | 第2批 |
 | ALTER TABLE REPLACE | ✅ | ❌ | 第2批 |
@@ -71,10 +79,10 @@
 | SHOW PROCESSLIST | ✅ | ❌ | 第2批 |
 | SHOW INDEX | ✅ | ❌ | 第2批 |
 | SHOW ALTER TABLE | ✅ | ❌ | 第3批 |
-| SHOW CREATE VIEW | ✅ | ❌ | 第1批 |
+| SHOW CREATE VIEW | ✅ | ✅ | ~~第1批~~ 已完成 |
 | SHOW BACKENDS | ✅ | ❌ | 第3批 |
 | SHOW FRONTENDS | ✅ | ❌ | 第3批 |
-| SHOW CREATE DATABASE | ✅ | ❌ | 第1批 |
+| SHOW CREATE DATABASE | ✅ | ✅ | ~~第1批~~ 已完成 |
 | SHOW ALTER TABLE (MV) | ✅ | ❌ | 第3批 |
 | SHOW TABLE ID / PARTITION ID | ✅ | ❌ | 第4批 |
 | SHOW DYNAMIC PARTITION TABLES | ✅ | ❌ | 第4批 |
@@ -319,20 +327,20 @@
 
 ## 10. SQL 语句补全实施计划
 
-### 第1批：DDL 补全（优先级最高）
+### 第1批：DDL 补全 ✅ 已完成 (2026-05-05)
 
 > 目标：补全最基础的 DDL 语句，使数据库元数据操作完整
 
-| # | 语句 | 语法 |
-|---|------|------|
-| 1 | ALTER DATABASE | `ALTER DATABASE db SET PROPERTIES ("key"="value")` |
-| 2 | SHOW CREATE DATABASE | `SHOW CREATE DATABASE db_name` |
-| 3 | DROP VIEW | `DROP VIEW [IF EXISTS] view_name` |
-| 4 | ALTER VIEW | `ALTER VIEW view_name AS select_query` |
-| 5 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` |
-| 6 | ALTER TABLE RENAME COLUMN | `ALTER TABLE t RENAME COLUMN old TO new` |
-| 7 | ALTER TABLE COMMENT | `ALTER TABLE t COMMENT 'comment'` |
-| 8 | ALTER TABLE SET PROPERTY | `ALTER TABLE t SET PROPERTIES ("key"="value")` |
+| # | 语句 | 语法 | 状态 |
+|---|------|------|------|
+| 1 | ALTER DATABASE | `ALTER DATABASE db SET PROPERTIES ("key"="value")` | ✅ |
+| 2 | SHOW CREATE DATABASE | `SHOW CREATE DATABASE db_name` | ✅ |
+| 3 | DROP VIEW | `DROP VIEW [IF EXISTS] view_name` | ✅ |
+| 4 | ALTER VIEW | `ALTER VIEW view_name AS select_query` | ✅ |
+| 5 | SHOW CREATE VIEW | `SHOW CREATE VIEW view_name` | ✅ |
+| 6 | ALTER TABLE RENAME COLUMN | `ALTER TABLE t RENAME COLUMN old TO new` | ✅ |
+| 7 | ALTER TABLE COMMENT | `ALTER TABLE t COMMENT 'comment'` | ✅ |
+| 8 | ALTER TABLE SET PROPERTY | `ALTER TABLE t SET PROPERTIES ("key"="value")` | ✅ |
 
 **涉及文件**：
 - `crates/fe-sql-parser/src/ast.rs` — 新增 Statement variant 和 struct
