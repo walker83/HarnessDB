@@ -13,6 +13,10 @@ pub struct UserAuth {
     pub roles: Vec<String>,
     pub max_connections: u32,
     pub timeout_secs: u64,
+    /// LDAP configuration ID for LDAP-authenticated users
+    pub ldap_config_id: Option<String>,
+    /// Kerberos realm for Kerberos-authenticated users
+    pub kerberos_realm: Option<String>,
 }
 
 impl UserAuth {
@@ -25,6 +29,8 @@ impl UserAuth {
             roles: vec!["public".to_string()],
             max_connections: 100,
             timeout_secs: 3600,
+            ldap_config_id: None,
+            kerberos_realm: None,
         }
     }
 
@@ -37,6 +43,36 @@ impl UserAuth {
             roles: vec!["public".to_string()],
             max_connections: 100,
             timeout_secs: 3600,
+            ldap_config_id: None,
+            kerberos_realm: None,
+        }
+    }
+
+    pub fn new_ldap_auth(username: String, ldap_config_id: String) -> Self {
+        Self {
+            username,
+            hostname: None,
+            auth_plugin: AuthPluginType::Ldap,
+            password_hash: None,
+            roles: vec!["public".to_string()],
+            max_connections: 100,
+            timeout_secs: 3600,
+            ldap_config_id: Some(ldap_config_id),
+            kerberos_realm: None,
+        }
+    }
+
+    pub fn new_kerberos_auth(username: String, kerberos_realm: String) -> Self {
+        Self {
+            username,
+            hostname: None,
+            auth_plugin: AuthPluginType::Kerberos,
+            password_hash: None,
+            roles: vec!["public".to_string()],
+            max_connections: 100,
+            timeout_secs: 3600,
+            ldap_config_id: None,
+            kerberos_realm: Some(kerberos_realm),
         }
     }
 }
@@ -206,5 +242,19 @@ mod tests {
         manager.grant_role("testuser", "admin").unwrap();
         let user = manager.get_user("testuser", None).unwrap();
         assert!(user.roles.contains(&"admin".to_string()));
+    }
+
+    #[test]
+    fn test_create_ldap_user() {
+        let manager = AuthManager::new();
+        let user = UserAuth::new_ldap_auth("ldapuser".to_string(), "default".to_string());
+        assert!(manager.create_user(user).is_ok());
+    }
+
+    #[test]
+    fn test_create_kerberos_user() {
+        let manager = AuthManager::new();
+        let user = UserAuth::new_kerberos_auth("krbuser".to_string(), "EXAMPLE.COM".to_string());
+        assert!(manager.create_user(user).is_ok());
     }
 }

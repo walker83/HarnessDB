@@ -123,6 +123,13 @@ impl Planner {
             Statement::ShowDynamicPartitionTables => Err(DrorisError::Internal("SHOW DYNAMIC PARTITION TABLES handled in FE".to_string())),
             Statement::ShowView(_, _) => Err(DrorisError::Internal("SHOW VIEW handled in FE".to_string())),
             Statement::ShowCreateMaterializedView(_) => Err(DrorisError::Internal("SHOW CREATE MATERIALIZED VIEW handled in FE".to_string())),
+            // Advanced SQL: Load Data
+            Statement::LoadData(stmt) => self.plan_load_data(stmt),
+            Statement::ShowLoad(_) => self.plan_show_load(),
+            Statement::ShowLoadProfile(_) => Err(DrorisError::Internal("SHOW LOAD PROFILE handled in FE".to_string())),
+            // Advanced SQL: DDL for Index
+            Statement::CreateIndex(stmt) => self.plan_create_index(stmt),
+            Statement::DropIndex(stmt) => self.plan_drop_index(stmt),
             _ => Err(DrorisError::Internal("Statement handled in FE".to_string())),
         }
     }

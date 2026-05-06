@@ -254,6 +254,18 @@ pub struct DdlCommandNode {
     pub command: String,
 }
 
+// ---- Statistics / ANALYZE ----
+
+/// A node that triggers statistics collection (ANALYZE TABLE).
+/// The executor reads table data and computes column statistics.
+#[derive(Debug, Clone)]
+pub struct AnalyzeStatsNode {
+    pub database: Option<String>,
+    pub table_name: String,
+    pub columns: Vec<String>,
+    pub sample_rate: Option<f64>,
+}
+
 // ---- Relational operators ----
 
 #[derive(Debug, Clone)]
@@ -669,6 +681,23 @@ impl PlanNode {
                 format!("RefreshMaterializedViewNode: {}{}", mv.database.as_ref().map(|d| format!("{}.", d)).unwrap_or_default(), mv.view_name)
             }
             PlanNodeType::DdlCommand(cmd) => format!("DdlCommand({})", cmd.command),
+            PlanNodeType::AnalyzeStats(analyze) => {
+                let db_prefix = analyze
+                    .database
+                    .as_ref()
+                    .map(|d| format!("{}.", d))
+                    .unwrap_or_default();
+                let cols = if analyze.columns.is_empty() {
+                    "ALL".to_string()
+                } else {
+                    analyze.columns.join(", ")
+                };
+                let sample = analyze
+                    .sample_rate
+                    .map(|r| format!(" (sample={})", r))
+                    .unwrap_or_default();
+                format!("AnalyzeStatsNode: {}{} [{}]{}", db_prefix, analyze.table_name, cols, sample)
+            }
         }
     }
 
@@ -744,7 +773,8 @@ impl PlanNode {
             | PlanNodeType::DropMaterializedView(_)
             | PlanNodeType::AlterMaterializedView(_)
             | PlanNodeType::RefreshMaterializedView(_)
-            | PlanNodeType::DdlCommand(_) => vec![],
+            | PlanNodeType::DdlCommand(_)
+            | PlanNodeType::AnalyzeStats(_) => vec![],
         }
     }
 }
