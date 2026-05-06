@@ -1077,8 +1077,14 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
                     }
 
                     // Remove this key clause from clean_sql
+                    // Also remove trailing comma before the key clause if present
                     let key_end = cols_start + end_paren + 1;
-                    clean_sql = format!("{}{}", clean_sql[..key_pos].trim(), clean_sql[key_end..].trim());
+                    let mut clean_start = key_pos;
+                    // Check if there's a trailing comma before the key clause
+                    if clean_start > 0 && clean_sql[..clean_start].trim().ends_with(',') {
+                        clean_start = clean_sql[..clean_start].trim().trim_end_matches(',').len();
+                    }
+                    clean_sql = format!("{}{}", clean_sql[..clean_start].trim(), clean_sql[key_end..].trim());
                 }
             }
         }

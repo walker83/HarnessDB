@@ -17,6 +17,7 @@ use fe_sql_parser::{parse_sql, Statement};
 use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt, DeleteStmt};
 use types::{DataType, ScalarValue, Block};
 use fe_catalog::table::{Table, TableColumn, KeysType};
+use be_execution::exec_node::TransactionContext;
 use be_execution::planner::{ExecutionContext, execute_plan};
 
 #[derive(Parser)]
@@ -55,131 +56,6 @@ struct ViewInfo {
     name: String,
     query: String,
     columns: Vec<String>,
-}
-
-/// A pending write operation waiting to be committed in a transaction.
-#[derive(Clone)]
-struct PendingWrite {
-    tablet_id: u64,
-    block: types::Block,
-    op_type: WriteOp,
-}
-
-#[derive(Clone)]
-enum WriteOp {
-    Insert,
-    Update,
-    Delete,
-}
-
-/// Session-scoped transaction context for ACID semantics.
-#[derive(Clone)]
-struct TransactionContext {
-    in_transaction: bool,
-    pending_writes: Vec<PendingWrite>,
-    // For UPDATE/DELETE, we track the predicates to apply at commit time
-    pending_deletes: Vec<PendingDelete>,
-    // Savepoints for nested transaction control
-    savepoints: Vec<Savepoint>,
-}
-
-/// A named savepoint that stores the state of pending writes/deletes at the time of creation.
-#[derive(Clone)]
-struct Savepoint {
-    name: String,
-    pending_writes_len: usize,
-    pending_deletes_len: usize,
-}
-
-#[derive(Clone)]
-struct PendingDelete {
-    tablet_id: u64,
-    predicates: Vec<be_storage::index::ColumnPredicate>,
-}
-
-impl TransactionContext {
-    fn new() -> Self {
-        Self {
-            in_transaction: false,
-            pending_writes: Vec::new(),
-            pending_deletes: Vec::new(),
-            savepoints: Vec::new(),
-        }
-    }
-
-    fn begin(&mut self) {
-        self.in_transaction = true;
-        self.pending_writes.clear();
-        self.pending_deletes.clear();
-        self.savepoints.clear();
-    }
-
-    fn savepoint(&mut self, name: String) -> Result<(), String> {
-        if !self.in_transaction {
-            return Err("No active transaction".to_string());
-        }
-        self.savepoints.push(Savepoint {
-            name,
-            pending_writes_len: self.pending_writes.len(),
-            pending_deletes_len: self.pending_deletes.len(),
-        });
-        Ok(())
-    }
-
-    fn commit(&mut self, storage: &StorageEngine) -> Result<usize, String> {
-        let mut affected = 0;
-        // Apply all pending deletes first
-        for pd in &self.pending_deletes {
-            match storage.delete(pd.tablet_id, &pd.predicates) {
-                Ok(n) => affected += n,
-                Err(e) => return Err(format!("commit delete failed: {}", e)),
-            }
-        }
-        // Then apply all pending writes
-        for pw in &self.pending_writes {
-            match storage.write_batch(pw.tablet_id, &pw.block) {
-                Ok(_) => affected += pw.block.num_rows(),
-                Err(e) => return Err(format!("commit write failed: {}", e)),
-            }
-        }
-        self.in_transaction = false;
-        self.pending_writes.clear();
-        self.pending_deletes.clear();
-        Ok(affected)
-    }
-
-    fn rollback(&mut self) {
-        self.in_transaction = false;
-        self.pending_writes.clear();
-        self.pending_deletes.clear();
-        self.savepoints.clear();
-    }
-
-    fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), String> {
-        if !self.in_transaction {
-            return Err("No active transaction".to_string());
-        }
-        // Find the savepoint
-        let pos = self.savepoints.iter().position(|s| s.name == name)
-            .ok_or_else(|| format!("Savepoint '{}' not found", name))?;
-        let sp = &self.savepoints[pos];
-        // Truncate pending writes/deletes to savepoint state
-        self.pending_writes.truncate(sp.pending_writes_len);
-        self.pending_deletes.truncate(sp.pending_deletes_len);
-        // Remove savepoints after this one (nested savepoints)
-        self.savepoints.truncate(pos);
-        Ok(())
-    }
-
-    fn release_savepoint(&mut self, name: &str) -> Result<(), String> {
-        if !self.in_transaction {
-            return Err("No active transaction".to_string());
-        }
-        let pos = self.savepoints.iter().position(|s| s.name == name)
-            .ok_or_else(|| format!("Savepoint '{}' not found", name))?;
-        self.savepoints.remove(pos);
-        Ok(())
-    }
 }
 
 impl RorisQueryHandler {
@@ -1347,8 +1223,6 @@ impl RorisQueryHandler {
     }
 
     fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {
-        use fe_sql_planner::plan_node::PlanNodeType;
-
         let current_db = self.current_database.read().unwrap().clone();
 
         // Create planner and plan the statement
