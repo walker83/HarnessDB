@@ -291,6 +291,7 @@ impl ExecutionContext {
             database.to_string(),
         )
         .with_columns(insert.columns.clone())
+        .with_table_schema(values_schema.clone())
         .with_on_duplicate_key_update(
             insert.on_duplicate_key_update.iter()
                 .map(|s| (s.column.clone(), s.value.clone()))

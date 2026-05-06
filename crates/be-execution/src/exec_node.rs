@@ -451,7 +451,7 @@ pub struct InsertExecNode {
     pub on_duplicate_key_update: Vec<(String, String)>,
     /// Raw VALUES rows for partial column INSERT (when columns list is specified)
     pub raw_rows: Vec<Vec<Expr>>,
-    /// Table schema for expanding raw_rows to full rows
+    /// Table schema for expanding raw_rows to full rows and for creating tablet on-demand
     pub table_schema: Option<Schema>,
 }
 
@@ -470,6 +470,11 @@ impl InsertExecNode {
             raw_rows: Vec::new(),
             table_schema: None,
         }
+    }
+
+    pub fn with_table_schema(mut self, schema: Schema) -> Self {
+        self.table_schema = Some(schema);
+        self
     }
 
     pub fn with_raw_rows(mut self, rows: Vec<Vec<Expr>>, table_schema: Schema) -> Self {
@@ -774,7 +779,7 @@ impl ExecNode for InsertExecNode {
         // Create tablet on-demand if it doesn't exist
         if !storage.get_tablet(tablet_id) {
             tracing::info!("Creating tablet {} on-demand for {}.{}", tablet_id, self.database, self.table_name);
-            // Get schema from ValuesExecNode child only
+            // Get schema from ValuesExecNode child first, then fall back to table_schema
             let block_schema = if let Some(ref child) = self.child {
                 if let ExecutionPlan::Values(values_node) = child.as_ref() {
                     Some(values_node.schema.clone())
@@ -784,7 +789,9 @@ impl ExecNode for InsertExecNode {
             } else {
                 None
             };
-            if let Some(schema) = block_schema {
+            // Also check self.table_schema which is set for INSERT ... SELECT and partial column INSERT
+            let schema_to_use = block_schema.or(self.table_schema.clone());
+            if let Some(schema) = schema_to_use {
                 let columns: Vec<be_storage::tablet::TabletColumn> = schema.fields().iter().enumerate().map(|(idx, f)| {
                     be_storage::tablet::TabletColumn {
                         name: f.name.clone(),
