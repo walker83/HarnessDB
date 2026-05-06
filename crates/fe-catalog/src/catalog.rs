@@ -73,6 +73,10 @@ impl CatalogManager {
         self.databases.get(name).map(|r| r.value().clone())
     }
 
+    pub fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
     pub fn create_table(&self, db_name: &str, table: Table) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name)
             .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
