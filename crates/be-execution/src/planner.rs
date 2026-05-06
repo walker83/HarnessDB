@@ -302,7 +302,8 @@ impl ExecutionContext {
             insert.on_duplicate_key_update.iter()
                 .map(|s| (s.column.clone(), s.value.clone()))
                 .collect()
-        );
+        )
+        .with_unique_keys(insert.unique_keys.clone());
 
         // If partial column INSERT with VALUES, pass raw rows for expansion
         if !insert.columns.is_empty() && !children.is_empty() {

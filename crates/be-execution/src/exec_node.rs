@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use common::{Result, DrorisError};
+use fe_catalog::UniqueKeyDef;
 use types::{Block, Bitmap, Vector, Schema, ScalarValue};
 use types::vector::{
     BooleanVector, Int8Vector, Int16Vector, Int32Vector, Int64Vector, Int128Vector,
@@ -453,6 +454,8 @@ pub struct InsertExecNode {
     pub raw_rows: Vec<Vec<Expr>>,
     /// Table schema for expanding raw_rows to full rows and for creating tablet on-demand
     pub table_schema: Option<Schema>,
+    /// UNIQUE key definitions for constraint checking
+    pub unique_keys: Vec<UniqueKeyDef>,
 }
 
 impl InsertExecNode {
@@ -469,6 +472,7 @@ impl InsertExecNode {
             on_duplicate_key_update: Vec::new(),
             raw_rows: Vec::new(),
             table_schema: None,
+            unique_keys: Vec::new(),
         }
     }
 
@@ -506,6 +510,11 @@ impl InsertExecNode {
 
     pub fn with_on_duplicate_key_update(mut self, updates: Vec<(String, String)>) -> Self {
         self.on_duplicate_key_update = updates;
+        self
+    }
+
+    pub fn with_unique_keys(mut self, unique_keys: Vec<UniqueKeyDef>) -> Self {
+        self.unique_keys = unique_keys;
         self
     }
 
@@ -592,6 +601,143 @@ impl InsertExecNode {
 
         let block = Block::new(table_schema.clone(), vectors);
         Ok(vec![block])
+    }
+
+    /// Check UNIQUE constraint violations for a block of rows.
+    /// Returns an error if any unique key constraints are violated.
+    fn check_unique_constraints(&self, block: &Block) -> std::result::Result<(), DrorisError> {
+        use std::collections::HashSet;
+
+        for uk in &self.unique_keys {
+            // Build a map from column name to column index
+            let mut col_indices: Vec<usize> = Vec::new();
+            for col_name in &uk.columns {
+                if let Some(idx) = block.schema().index_of(col_name) {
+                    col_indices.push(idx);
+                } else {
+                    // Column not found in block, skip this constraint
+                    tracing::warn!("UNIQUE constraint column {} not found in block", col_name);
+                    continue;
+                }
+            }
+
+            if col_indices.is_empty() {
+                continue;
+            }
+
+            // Check for duplicates within the block
+            let mut seen_keys: HashSet<String> = HashSet::new();
+            for row_idx in 0..block.num_rows() {
+                // Build key tuple from the unique key columns
+                let mut key_parts: Vec<String> = Vec::new();
+                for &col_idx in &col_indices {
+                    if let Some(col) = block.column(col_idx) {
+                        key_parts.push(format!("{:?}", col.scalar_at(row_idx)));
+                    }
+                }
+                let key_str = key_parts.join("|");
+
+                if seen_keys.contains(&key_str) {
+                    return Err(DrorisError::Internal(format!(
+                        "Duplicate entry in UNIQUE KEY constraint on columns ({})",
+                        uk.columns.join(", ")
+                    )));
+                }
+                seen_keys.insert(key_str);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check existing rows in storage for UNIQUE constraint violations.
+    /// This is called before inserting new rows to ensure no duplicates with existing data.
+    fn check_existing_for_unique_constraints(
+        &self,
+        storage: &Arc<StorageEngine>,
+        tablet_id: u64,
+        block: &Block,
+    ) -> std::result::Result<(), DrorisError> {
+        use be_storage::index::{ColumnPredicate, PredicateOp};
+
+        for uk in &self.unique_keys {
+            let mut col_indices: Vec<usize> = Vec::new();
+            for col_name in &uk.columns {
+                if let Some(idx) = block.schema().index_of(col_name) {
+                    col_indices.push(idx);
+                } else {
+                    continue;
+                }
+            }
+
+            if col_indices.is_empty() {
+                continue;
+            }
+
+            for row_idx in 0..block.num_rows() {
+                // Build key tuple for each row
+                let mut key_parts: Vec<String> = Vec::new();
+                for &col_idx in &col_indices {
+                    if let Some(col) = block.column(col_idx) {
+                        key_parts.push(format!("{:?}", col.scalar_at(row_idx)));
+                    }
+                }
+
+                // Check if this key exists in storage
+                if key_parts.len() == 1 {
+                    // Single column unique key - use direct read
+                    let key_value = block.column(col_indices[0])
+                        .map(|c| c.scalar_at(row_idx))
+                        .unwrap_or(ScalarValue::Null);
+
+                    let predicate = ColumnPredicate {
+                        column_name: uk.columns[0].clone(),
+                        op: PredicateOp::Eq,
+                        value: key_value.clone(),
+                        values: vec![],
+                    };
+
+                    tracing::info!("Checking UNIQUE constraint for id={:?} on tablet {}", key_value, tablet_id);
+                    let existing = storage.read_tablet(tablet_id, None, &[predicate])?;
+                    tracing::info!("UNIQUE check: found {} existing rows", existing.num_rows());
+                    if !existing.is_empty() {
+                        tracing::error!("UNIQUE constraint violation: duplicate value for id={:?}", key_value);
+                        return Err(DrorisError::Internal(format!(
+                            "Duplicate entry in UNIQUE KEY constraint on columns ({})",
+                            uk.columns.join(", ")
+                        )));
+                    }
+                } else {
+                    // Multi-column unique key - need to check all columns
+                    // For simplicity, read all data and check locally
+                    let all_data = storage.read_tablet(tablet_id, None, &[])?;
+                    if !all_data.is_empty() {
+                        // Build set of existing keys
+                        use std::collections::HashSet;
+                        let mut existing_keys: HashSet<String> = HashSet::new();
+                        for ex_row_idx in 0..all_data.num_rows() {
+                            let mut ex_key_parts: Vec<String> = Vec::new();
+                            for &col_idx in &col_indices {
+                                if let Some(col) = all_data.column(col_idx) {
+                                    ex_key_parts.push(format!("{:?}", col.scalar_at(ex_row_idx)));
+                                }
+                            }
+                            existing_keys.insert(ex_key_parts.join("|"));
+                        }
+
+                        let key_str = key_parts.join("|");
+                        if existing_keys.contains(&key_str) {
+                            return Err(DrorisError::Internal(format!(
+                                "Duplicate entry in UNIQUE KEY constraint on columns ({})",
+                                uk.columns.join(", ")
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Handle ON DUPLICATE KEY UPDATE by checking for existing rows and applying update expressions.
@@ -765,6 +911,8 @@ impl ExecNode for InsertExecNode {
 
                 // Write directly to storage
                 for block in &blocks_to_write {
+                    // Check unique constraints within the block itself
+                    self.check_unique_constraints(block)?;
                     storage.write_batch(tablet_id, &block)?;
                     total_rows_written += block.num_rows();
                 }
@@ -850,7 +998,14 @@ impl ExecNode for InsertExecNode {
 
         // Not in transaction mode - write directly to storage
         if self.on_duplicate_key_update.is_empty() {
+            tracing::info!("INSERT: unique_keys count={}, tablet_id={:?}, storage present={}, table={}.{}",
+                self.unique_keys.len(), tablet_id, self.storage.is_some(), self.database, self.table_name);
             for block in &blocks_to_write {
+                tracing::info!("INSERT: checking constraints for block with {} rows", block.num_rows());
+                // Check unique constraints against existing data in storage
+                self.check_existing_for_unique_constraints(storage, tablet_id, block)?;
+                // Check unique constraints within the block itself
+                self.check_unique_constraints(block)?;
                 storage.write_batch(tablet_id, &block)?;
                 total_rows_written += block.num_rows();
             }

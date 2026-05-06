@@ -1,6 +1,6 @@
 use std::fmt;
 
-use fe_sql_parser::ast::UniqueKeyDef;
+use fe_catalog::UniqueKeyDef;
 
 /// Unique identifier for a plan node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -138,6 +138,7 @@ pub struct CreateTableNode {
     pub if_not_exists: bool,
     pub columns: Vec<ColumnDefPlan>,
     pub keys_type: String,
+    pub unique_keys: Vec<UniqueKeyDef>,
     pub partition_info: Option<String>,
     pub distribution_info: Option<String>,
 }

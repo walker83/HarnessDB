@@ -227,6 +227,14 @@ impl Planner {
             })
             .collect();
 
+        // Convert parser's UniqueKeyDef to catalog's UniqueKeyDef
+        let unique_keys: Vec<fe_catalog::UniqueKeyDef> = stmt.unique_keys.iter()
+            .map(|uk| fe_catalog::UniqueKeyDef {
+                name: uk.name.clone(),
+                columns: uk.columns.clone(),
+            })
+            .collect();
+
         let partition_info = stmt.partition.map(|p| {
             format!(
                 "{}({})",
@@ -251,6 +259,7 @@ impl Planner {
                 if_not_exists: stmt.if_not_exists,
                 columns,
                 keys_type: format!("{:?}", stmt.keys_type),
+                unique_keys,
                 partition_info,
                 distribution_info,
             }),
@@ -291,8 +300,12 @@ impl Planner {
             (Some(self.current_database.clone()), stmt.table.clone())
         };
 
-        // Note: unique_keys lookup not yet implemented - using empty vec
-        let unique_keys: Vec<UniqueKeyDef> = vec![];
+        // Look up unique_keys from catalog for constraint checking
+        let db_name = database.as_deref().unwrap_or("default");
+        let unique_keys: Vec<fe_catalog::UniqueKeyDef> = self.catalog
+            .get_table(db_name, &stmt.table)
+            .map(|t| t.unique_keys.clone())
+            .unwrap_or_default();
 
         let children = if let Some(query) = stmt.query {
             vec![self.plan_query(query)?]

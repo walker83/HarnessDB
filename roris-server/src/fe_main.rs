@@ -386,8 +386,16 @@ impl RorisQueryHandler {
             name: stmt.name.clone(),
             database: db.to_string(),
             columns,
-            keys_type: KeysType::Duplicate,
-            unique_keys: vec![],
+            keys_type: match stmt.keys_type {
+                fe_sql_parser::ast::KeysType::Duplicate => KeysType::Duplicate,
+                fe_sql_parser::ast::KeysType::Aggregate => KeysType::Aggregate,
+                fe_sql_parser::ast::KeysType::Unique => KeysType::Unique,
+                fe_sql_parser::ast::KeysType::Primary => KeysType::Primary,
+            },
+            unique_keys: stmt.unique_keys.iter().map(|uk| fe_catalog::UniqueKeyDef {
+                name: uk.name.clone(),
+                columns: uk.columns.clone(),
+            }).collect(),
             partition_info: None,
             distribution_info: None,
             replication_num: 1,
@@ -465,6 +473,14 @@ impl RorisQueryHandler {
                     let nullable = if col.nullable { "" } else { " NOT NULL" };
                     let comma = if i < tbl.columns.len() - 1 { "," } else { "" };
                     create_sql.push_str(&format!("  `{}` {}{}{}\n", col.name, col.data_type, nullable, comma));
+                }
+                // Add UNIQUE KEY definitions
+                for uk in &tbl.unique_keys {
+                    if let Some(ref name) = uk.name {
+                        create_sql.push_str(&format!("  UNIQUE KEY `{}` ({})\n", name, uk.columns.join(", ")));
+                    } else {
+                        create_sql.push_str(&format!("  UNIQUE ({})\n", uk.columns.join(", ")));
+                    }
                 }
                 create_sql.push_str(") ");
                 if let Some(dist) = &tbl.distribution_info {

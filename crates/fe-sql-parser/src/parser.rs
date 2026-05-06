@@ -1223,9 +1223,83 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
     let mut unique_keys: Vec<UniqueKeyDef> = vec![];
 
     // Extract table keys: UNIQUE KEY(col), UNIQUE KEY name(col), DUPLICATE KEY(col), AGGREGATE KEY(col)
+    // Also handle: UNIQUE(col), UNIQUE name(col) without KEY keyword
     // These can appear before DISTRIBUTED BY
-    for key_type in &["UNIQUE KEY", "DUPLICATE KEY", "AGGREGATE KEY"] {
-        if let Some(key_pos) = sql_upper.find(key_type) {
+    // Note: Order matters! "UNIQUE KEY" must come before "UNIQUE" to avoid partial matches
+    let key_types = ["UNIQUE KEY", "DUPLICATE KEY", "AGGREGATE KEY", "UNIQUE"];
+    for key_type in &key_types {
+        if *key_type == "UNIQUE" {
+            // For standalone "UNIQUE", find it only after a comma or opening paren
+            // to avoid matching "UNIQUE" inside table names like "test_unique"
+            let mut search_pos = 0;
+            while let Some(key_pos) = sql_upper[search_pos..].find("UNIQUE") {
+                let abs_pos = search_pos + key_pos;
+                let rest = &sql_upper[abs_pos..];
+                if rest.starts_with("UNIQUE KEY") {
+                    search_pos = abs_pos + 1;
+                    continue;  // This is "UNIQUE KEY" - will be handled separately
+                }
+
+                // Check valid context: "UNIQUE" should be preceded by ',' or '('
+                // But there might be whitespace, so scan backwards past spaces/tabs
+                // This prevents matching "UNIQUE" inside identifiers like `test_unique`
+                let mut valid_context = false;
+                if abs_pos >= 1 {
+                    let mut scan_pos = abs_pos;
+                    while scan_pos > 0 {
+                        if let Some(c) = sql_upper.chars().nth(scan_pos - 1) {
+                            if c == ' ' || c == '\t' {
+                                scan_pos -= 1;
+                                continue;
+                            } else if c == ',' || c == '(' {
+                                valid_context = true;
+                                break;
+                            } else {
+                                break;  // Not a valid context character
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                if !valid_context {
+                    search_pos = abs_pos + 1;
+                    continue;
+                }
+
+                // Process standalone "UNIQUE"
+                let after_unique = &sql[abs_pos..];
+                if let Some(paren_pos) = after_unique.find('(') {
+                    let cols_start = abs_pos + paren_pos + 1;
+                    let remaining = &after_unique[paren_pos + 1..];
+                    if let Some(end_paren) = find_matching_paren(remaining) {
+                        let cols_str = &remaining[..end_paren];
+                        let columns: Vec<String> = cols_str.split(',')
+                            .map(|s| s.trim().to_string())
+                            .collect();
+
+                        keys_type = KeysType::Unique;
+                        let before_cols = &after_unique[..paren_pos];
+                        let name = if before_cols.trim().is_empty() {
+                            None
+                        } else {
+                            Some(before_cols.trim().to_string())
+                        };
+                        unique_keys.push(UniqueKeyDef { name, columns });
+
+                        // Remove this key clause from clean_sql
+                        let key_end = cols_start + end_paren + 1;
+                        let mut clean_start = abs_pos;
+                        if clean_start > 0 && clean_sql[..clean_start].trim().ends_with(',') {
+                            clean_start = clean_sql[..clean_start].trim().trim_end_matches(',').len();
+                        }
+                        clean_sql = format!("{}{}", clean_sql[..clean_start].trim(), clean_sql[key_end..].trim());
+                    }
+                }
+                break;  // Only process one standalone "UNIQUE" per iteration
+            }
+        } else if let Some(key_pos) = sql_upper.find(key_type) {
             // Find the opening parenthesis after the key type
             let after_key = &sql[key_pos..];
             if let Some(paren_pos) = after_key.find('(') {
@@ -1243,6 +1317,7 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
                         "UNIQUE KEY" => {
                             keys_type = KeysType::Unique;
                             // Extract optional constraint name before column list
+                            // For "UNIQUE KEY name(col)" or "UNIQUE name(col)"
                             let before_cols = &after_key[..paren_pos];
                             let name = if before_cols.trim().ends_with("KEY") || before_cols.trim().is_empty() {
                                 None
