@@ -1106,21 +1106,40 @@ impl RorisQueryHandler {
     }
 
     fn delete(&self, stmt: &DeleteStmt) -> Result<QueryResult, String> {
-        // Resolve table: db.table or just table (use current_db)
-        let parts: Vec<&str> = stmt.table.split('.').collect();
+        // Multi-table DELETE: target tables are in stmt.tables
+        // For backward compatibility, also check stmt.from
+        let target_tables = if stmt.tables.is_empty() {
+            if let Some(ref from) = stmt.from {
+                // Extract base table name from TableRef
+                fn get_base_table_name(t: &fe_sql_parser::ast::TableRef) -> String {
+                    match t {
+                        fe_sql_parser::ast::TableRef::Table { name, .. } => name.clone(),
+                        fe_sql_parser::ast::TableRef::Join { left, .. } => get_base_table_name(left),
+                        fe_sql_parser::ast::TableRef::Subquery { alias, .. } => alias.clone(),
+                    }
+                }
+                vec![get_base_table_name(from)]
+            } else {
+                return Err("No table specified for DELETE".to_string());
+            }
+        } else {
+            stmt.tables.clone()
+        };
+
+        let primary_table = &target_tables[0];
+        let parts: Vec<&str> = primary_table.split('.').collect();
         let (database, table_name) = match parts.len() {
             1 => {
                 let current_db = self.current_database.read().unwrap();
-                (current_db.clone(), stmt.table.clone())
+                (current_db.clone(), primary_table.clone())
             }
             2 => (parts[0].to_string(), parts[1].to_string()),
             _ => {
                 let current_db = self.current_database.read().unwrap();
-                (current_db.clone(), stmt.table.clone())
+                (current_db.clone(), primary_table.clone())
             }
         };
 
-        // Create planner and plan the delete statement
         let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
         catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
         let planner = Planner::new(Arc::new(catalog_for_planner));
@@ -1128,7 +1147,6 @@ impl RorisQueryHandler {
         let delete_stmt = Statement::Delete(stmt.clone());
         let plan = planner.plan(delete_stmt).map_err(|e| format!("Planning error: {}", e))?;
 
-        // Create execution context with transaction context
         let storage = self.storage.clone();
         let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
         catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
@@ -1137,7 +1155,6 @@ impl RorisQueryHandler {
                 .with_transaction_ctx(self.transaction.clone())
         );
 
-        // Execute in a separate thread to avoid Tokio runtime conflict
         let results = std::thread::spawn({
             let plan = plan.clone();
             let exec_context = exec_context.clone();
@@ -1150,10 +1167,9 @@ impl RorisQueryHandler {
         .map_err(|e| format!("Execution error: {:?}", e))?
         .map_err(|e| format!("Execution error: {}", e))?;
 
-        // Extract affected rows from results
         let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
 
-        tracing::info!("DELETE from {}.{}: {} rows affected", database, table_name, affected_rows);
+        tracing::info!("DELETE from {}.{} ({} tables): {} rows affected", database, table_name, target_tables.len(), affected_rows);
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
             vec![vec![Some(affected_rows.to_string())]],
@@ -1194,6 +1210,7 @@ impl RorisQueryHandler {
             return Err("No transaction to rollback".to_string());
         }
         tx.rollback();
+        tx.in_transaction = false;
         Ok(QueryResult::ok())
     }
 

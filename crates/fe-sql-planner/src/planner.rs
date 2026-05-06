@@ -358,12 +358,14 @@ impl Planner {
     }
 
     fn plan_delete(&self, stmt: DeleteStmt) -> Result<PlanNode, DrorisError> {
-        let (database, table_name) = if stmt.table.contains('.') {
-            let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
+        // Handle multi-table DELETE: take first table
+        let table_name = stmt.tables.first().cloned().unwrap_or_default();
+        let (database, table_name) = if table_name.contains('.') {
+            let parts: Vec<&str> = table_name.splitn(2, '.').collect();
             (Some(parts[0].to_string()), parts[1].to_string())
         } else {
             // Use current database when no database prefix
-            (Some(self.current_database.clone()), stmt.table.clone())
+            (Some(self.current_database.clone()), table_name)
         };
 
         let selection_predicate = stmt

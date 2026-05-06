@@ -122,7 +122,12 @@ pub struct SetClause {
 
 #[derive(Debug, Clone)]
 pub struct DeleteStmt {
-    pub table: String,
+    /// Tables to delete from (multi-table DELETE)
+    pub tables: Vec<String>,
+    /// FROM clause with table refs and joins
+    pub from: Option<TableRef>,
+    /// USING clause (for MySQL DELETE ... USING syntax)
+    pub using: Option<TableRef>,
     pub selection: Option<Expr>,
 }
 

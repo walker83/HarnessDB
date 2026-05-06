@@ -1490,10 +1490,35 @@ fn convert_statement(
             }))
         }
         sqlparser::ast::Statement::Delete(delete) => {
-            let table_name = delete.tables.first().map(|t: &sqlparser::ast::ObjectName| t.to_string()).unwrap_or_default();
+            // Multi-table DELETE support:
+            // Form 1: DELETE t1, t2 FROM table1 t1 INNER JOIN table2 t2 ON ...
+            //   - delete.tables = [t1, t2], delete.from = tables with joins
+            // Form 2: DELETE FROM t1 USING table1 t1 INNER JOIN table2 t2 ON ...
+            //   - delete.tables = [t1], delete.using = tables with joins
+            let tables: Vec<String> = delete.tables.iter().map(|t| t.to_string()).collect();
+
+            let from = match &delete.from {
+                sqlparser::ast::FromTable::WithFromKeyword(from) if !from.is_empty() => {
+                    Some(convert_table_ref(from[0].clone()))
+                }
+                sqlparser::ast::FromTable::WithoutKeyword(from) if !from.is_empty() => {
+                    Some(convert_table_ref(from[0].clone()))
+                }
+                _ => None,
+            };
+
+            let using = match &delete.using {
+                Some(using_vec) if !using_vec.is_empty() => {
+                    Some(convert_table_ref(using_vec[0].clone()))
+                }
+                _ => None,
+            };
+
             let selection = delete.selection.map(convert_expr);
             Ok(Statement::Delete(DeleteStmt {
-                table: table_name,
+                tables,
+                from,
+                using,
                 selection,
             }))
         }

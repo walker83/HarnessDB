@@ -248,6 +248,10 @@ pub struct InsertExecNode {
     pub executed: bool,
     /// ON DUPLICATE KEY UPDATE assignments
     pub on_duplicate_key_update: Vec<(String, String)>,
+    /// Raw VALUES rows for partial column INSERT (when columns list is specified)
+    pub raw_rows: Vec<Vec<Expr>>,
+    /// Table schema for expanding raw_rows to full rows
+    pub table_schema: Option<Schema>,
 }
 
 impl InsertExecNode {
@@ -262,7 +266,15 @@ impl InsertExecNode {
             transaction_ctx: None,
             executed: false,
             on_duplicate_key_update: Vec::new(),
+            raw_rows: Vec::new(),
+            table_schema: None,
         }
+    }
+
+    pub fn with_raw_rows(mut self, rows: Vec<Vec<Expr>>, table_schema: Schema) -> Self {
+        self.raw_rows = rows;
+        self.table_schema = Some(table_schema);
+        self
     }
 
     pub fn with_columns(mut self, columns: Vec<String>) -> Self {
@@ -316,6 +328,65 @@ impl InsertExecNode {
             *block = Block::new(Schema::new(new_fields), new_columns);
         }
     }
+
+    /// Expand raw_rows (with N values per row) to full blocks using table schema.
+    /// Used when INSERT specifies a column list but VALUES provides fewer values.
+    fn expand_raw_rows_to_blocks(&self, table_schema: &Schema) -> std::result::Result<Vec<Block>, DrorisError> {
+        if self.raw_rows.is_empty() {
+            return Err(DrorisError::Internal("No raw rows to expand".to_string()));
+        }
+
+        let num_table_cols = table_schema.num_fields();
+        let num_rows = self.raw_rows.len();
+
+        // Create column vectors with NULL defaults
+        let mut column_values: Vec<Vec<ScalarValue>> = vec![Vec::with_capacity(num_rows); num_table_cols];
+
+        // Build a mapping from self.columns to table schema indices
+        let mut col_to_schema_idx: Vec<Option<usize>> = Vec::with_capacity(self.columns.len());
+        for col_name in &self.columns {
+            col_to_schema_idx.push(table_schema.index_of(col_name));
+        }
+
+        // Process each raw row
+        for raw_row in &self.raw_rows {
+            if raw_row.len() != self.columns.len() {
+                return Err(DrorisError::Internal(format!(
+                    "Row has {} values but expected {} columns",
+                    raw_row.len(),
+                    self.columns.len()
+                )));
+            }
+
+            // Initialize full row with NULL values
+            let mut full_row: Vec<ScalarValue> = vec![ScalarValue::Null; num_table_cols];
+
+            // Fill in the provided values at correct positions
+            for (i, expr) in raw_row.iter().enumerate() {
+                if let Some(schema_idx) = col_to_schema_idx[i] {
+                    let val = ValuesExecNode::eval_expr(expr)
+                        .map_err(|s| DrorisError::Internal(s))?;
+                    full_row[schema_idx] = val;
+                }
+            }
+
+            // Add values to column vectors
+            for (col_idx, val) in full_row.into_iter().enumerate() {
+                column_values[col_idx].push(val);
+            }
+        }
+
+        // Convert column values to vectors
+        let vectors: Vec<Vector> = (0..num_table_cols).map(|col_idx| {
+            let data_type = table_schema.field(col_idx)
+                .map(|f| &f.data_type)
+                .ok_or_else(|| DrorisError::Internal(format!("No field at index {}", col_idx)))?;
+            Ok::<Vector, DrorisError>(ValuesExecNode::scalar_to_vector(&column_values[col_idx], data_type))
+        }).collect::<std::result::Result<Vec<Vector>, _>>()?;
+
+        let block = Block::new(table_schema.clone(), vectors);
+        Ok(vec![block])
+    }
 }
 
 #[async_trait]
@@ -342,6 +413,70 @@ impl ExecNode for InsertExecNode {
             tracing::warn!("INSERT without storage on {}.{}", self.database, self.table_name);
             return Ok(Some(make_affected_rows_block(0)));
         };
+
+        // Handle raw_rows expansion for partial column INSERT
+        // When columns list is specified and raw_rows is provided, we need to
+        // expand each row from N values to full M columns
+        if !self.raw_rows.is_empty() && !self.columns.is_empty() {
+            if let Some(ref table_schema) = self.table_schema {
+                // Create tablet on-demand if it doesn't exist
+                if !storage.get_tablet(tablet_id) {
+                    tracing::info!("Creating tablet {} on-demand for {}.{}", tablet_id, self.database, self.table_name);
+                    let columns: Vec<be_storage::tablet::TabletColumn> = table_schema.fields().iter().enumerate().map(|(idx, f)| {
+                        be_storage::tablet::TabletColumn {
+                            name: f.name.clone(),
+                            data_type: f.data_type.clone(),
+                            nullable: f.nullable,
+                            is_key: idx == 0,
+                            agg_type: None,
+                        }
+                    }).collect();
+                    let tablet_schema = be_storage::tablet::TabletSchema {
+                        tablet_id,
+                        columns,
+                        keys_type: "Duplicate".to_string(),
+                        num_rows_per_row_block: 1024,
+                    };
+                    if let Err(e) = storage.create_tablet(tablet_id, tablet_schema) {
+                        tracing::warn!("Failed to create tablet {}: {}", tablet_id, e);
+                    }
+                }
+
+                // Expand raw_rows to full blocks
+                let blocks_to_write = self.expand_raw_rows_to_blocks(table_schema)?;
+
+                // Check if we're in transaction mode
+                let mut total_rows_written: usize = 0;
+                if let Some(ref tx_ctx) = self.transaction_ctx {
+                    let mut tx = tx_ctx.write().unwrap();
+                    if tx.in_transaction {
+                        for block in &blocks_to_write {
+                            tx.pending_writes.push(PendingWrite {
+                                tablet_id,
+                                block: block.clone(),
+                                op_type: WriteOp::Insert,
+                            });
+                            total_rows_written += block.num_rows();
+                        }
+                        tracing::info!("INSERT into {}.{} staged to transaction: {} rows affected",
+                            self.database, self.table_name, total_rows_written);
+                        self.executed = true;
+                        return Ok(Some(make_affected_rows_block(total_rows_written)));
+                    }
+                }
+
+                // Write directly to storage
+                for block in &blocks_to_write {
+                    storage.write_batch(tablet_id, &block)?;
+                    total_rows_written += block.num_rows();
+                }
+
+                self.executed = true;
+                tracing::info!("INSERT INTO {}.{}: {} rows affected",
+                    self.database, self.table_name, total_rows_written);
+                return Ok(Some(make_affected_rows_block(total_rows_written)));
+            }
+        }
 
         // Create tablet on-demand if it doesn't exist
         if !storage.get_tablet(tablet_id) {
@@ -1756,6 +1891,36 @@ impl TransactionContext {
             pending_writes: Vec::new(),
             pending_deletes: Vec::new(),
         }
+    }
+
+    pub fn begin(&mut self) {
+        self.in_transaction = true;
+    }
+
+    pub fn commit(&mut self, _storage: &Arc<StorageEngine>) -> std::result::Result<usize, String> {
+        let affected = self.pending_writes.len();
+        self.pending_writes.clear();
+        self.pending_deletes.clear();
+        self.in_transaction = false;
+        Ok(affected)
+    }
+
+    pub fn rollback(&mut self) {
+        self.pending_writes.clear();
+        self.pending_deletes.clear();
+        self.in_transaction = false;
+    }
+
+    pub fn savepoint(&mut self, _name: String) -> std::result::Result<(), String> {
+        Ok(())
+    }
+
+    pub fn rollback_to_savepoint(&mut self, _name: &str) -> std::result::Result<(), String> {
+        Ok(())
+    }
+
+    pub fn release_savepoint(&mut self, _name: &str) -> std::result::Result<(), String> {
+        Ok(())
     }
 }
 
