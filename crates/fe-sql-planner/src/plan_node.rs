@@ -53,6 +53,7 @@ pub enum PlanNodeType {
     AlterMaterializedView(AlterMaterializedViewNode),
     RefreshMaterializedView(RefreshMaterializedViewNode),
     DdlCommand(DdlCommandNode),
+    AnalyzeStats(AnalyzeStatsNode),
 }
 
 // ---- Leaf / scan nodes ----

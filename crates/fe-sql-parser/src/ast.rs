@@ -101,6 +101,10 @@ pub enum Statement {
     StartTransaction,
     Commit,
     Rollback,
+    Savepoint(String),
+    RollbackTo(String),
+    ReleaseSavepoint(String),
+    SetTransactionIsolation(String),
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +206,7 @@ pub struct CreateTableStmt {
     pub if_not_exists: bool,
     pub columns: Vec<ColumnDef>,
     pub keys_type: KeysType,
+    pub unique_keys: Vec<UniqueKeyDef>,
     pub partition: Option<PartitionDef>,
     pub distribution: Option<DistributionDef>,
     pub properties: Vec<(String, String)>,
@@ -223,6 +228,12 @@ pub enum KeysType {
     Aggregate,
     Unique,
     Primary,
+}
+
+#[derive(Debug, Clone)]
+pub struct UniqueKeyDef {
+    pub name: Option<String>,
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

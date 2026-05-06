@@ -361,5 +361,6 @@ fn format_node_type(nt: &fe_sql_planner::PlanNodeType) -> String {
         T::AlterMaterializedView(_) => "AlterMaterializedView".into(),
         T::RefreshMaterializedView(_) => "RefreshMaterializedView".into(),
         T::DdlCommand(_) => "DdlCommand".into(),
+        T::AnalyzeStats(_) => "AnalyzeStats".into(),
     }
 }

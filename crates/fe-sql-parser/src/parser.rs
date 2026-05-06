@@ -266,6 +266,51 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         return parse_show_row_policy(sql);
     }
 
+    // Transaction statements - before sqlparser since sqlparser may not handle all variants
+    let upper = trimmed.as_str();
+    if upper == "START TRANSACTION" || upper == "BEGIN" || upper == "BEGIN WORK" {
+        return Ok(vec![Statement::StartTransaction]);
+    }
+    if upper == "COMMIT" || upper == "COMMIT WORK" {
+        return Ok(vec![Statement::Commit]);
+    }
+    if upper == "ROLLBACK" || upper == "ROLLBACK WORK" {
+        return Ok(vec![Statement::Rollback]);
+    }
+    // SAVEPOINT sp_name
+    if let Some(rest) = upper.strip_prefix("SAVEPOINT") {
+        let sp_name = rest.trim().to_string();
+        if !sp_name.is_empty() {
+            return Ok(vec![Statement::Savepoint(sp_name)]);
+        }
+    }
+    // ROLLBACK TO sp_name
+    if let Some(rest) = upper.strip_prefix("ROLLBACK TO") {
+        let sp_name = rest.trim().to_string();
+        if !sp_name.is_empty() {
+            return Ok(vec![Statement::RollbackTo(sp_name)]);
+        }
+    }
+    // RELEASE SAVEPOINT sp_name
+    if let Some(rest) = upper.strip_prefix("RELEASE SAVEPOINT") {
+        let sp_name = rest.trim().to_string();
+        if !sp_name.is_empty() {
+            return Ok(vec![Statement::ReleaseSavepoint(sp_name)]);
+        }
+    }
+    // SET TRANSACTION ISOLATION LEVEL ...
+    if upper.starts_with("SET TRANSACTION ISOLATION LEVEL") {
+        let level = upper.strip_prefix("SET TRANSACTION ISOLATION LEVEL").unwrap().trim().to_uppercase();
+        let isolation_level = match level.as_str() {
+            "READ UNCOMMITTED" => "READ UNCOMMITTED",
+            "READ COMMITTED" => "READ COMMITTED",
+            "REPEATABLE READ" => "REPEATABLE READ",
+            "SERIALIZABLE" => "SERIALIZABLE",
+            _ => "REPEATABLE READ",
+        };
+        return Ok(vec![Statement::SetTransactionIsolation(isolation_level.to_string())]);
+    }
+
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, &sql_to_parse)
         .map_err(|e| ParseError::SyntaxError {
@@ -1121,12 +1166,32 @@ fn convert_statement(
                 agg_type: None,
                 comment: None,
             }).collect();
+            // Extract unique keys from constraints
+            let mut unique_keys: Vec<UniqueKeyDef> = vec![];
+            let mut keys_type = KeysType::Duplicate;
+            for constraint in &stmt.constraints {
+                match constraint {
+                    sqlparser::ast::TableConstraint::Unique { name, columns, .. } => {
+                        let col_names: Vec<String> = columns.iter().map(|c| c.value.clone()).collect();
+                        unique_keys.push(UniqueKeyDef {
+                            name: name.as_ref().map(|n| n.value.clone()),
+                            columns: col_names,
+                        });
+                        keys_type = KeysType::Unique;
+                    }
+                    sqlparser::ast::TableConstraint::PrimaryKey { .. } => {
+                        keys_type = KeysType::Primary;
+                    }
+                    _ => {}
+                }
+            }
             Ok(Statement::CreateTable(CreateTableStmt {
                 database,
                 name: table_name,
                 if_not_exists: stmt.if_not_exists,
                 columns: col_defs,
-                keys_type: KeysType::Duplicate,
+                keys_type,
+                unique_keys,
                 partition: None,
                 distribution: None,
                 properties: vec![],
