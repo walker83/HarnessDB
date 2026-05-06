@@ -1,4 +1,27 @@
-use fe_sql_parser::parse_sql;
+use fe_sql_parser::{parse_sql, Statement};
+
+#[test]
+fn test_dml_compatibility() {
+    // INSERT ... SET syntax (MySQL compatibility)
+    let result = parse_sql("INSERT INTO test_table SET id = 1, name = 'test'");
+    assert!(result.is_ok(), "INSERT ... SET failed: {:?}", result);
+    let stmt = result.unwrap().into_iter().next().unwrap();
+    if let Statement::Insert(insert) = stmt {
+        assert_eq!(insert.table, "test_table");
+        assert_eq!(insert.columns, vec!["id", "name"]);
+        assert!(!insert.values.is_empty());
+    } else {
+        panic!("Expected Insert statement");
+    }
+
+    // INSERT ... SET with multiple columns
+    let result2 = parse_sql("INSERT INTO t SET a = 1, b = 2, c = 3");
+    assert!(result2.is_ok(), "INSERT ... SET multiple cols failed: {:?}", result2);
+
+    // INSERT ... SET with expressions (tests comma handling inside function calls)
+    let result3 = parse_sql("INSERT INTO t SET id = 1 + 1, name = CONCAT('a', 'b')");
+    assert!(result3.is_ok(), "INSERT ... SET with expressions failed: {:?}", result3);
+}
 
 #[test]
 fn test_batch_3_export_statements() {

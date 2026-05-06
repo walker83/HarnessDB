@@ -315,6 +315,26 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         return Ok(vec![Statement::SetTransactionIsolation(isolation_level.to_string())]);
     }
 
+    // INSERT ... SET syntax (MySQL compatibility) - convert to INSERT ... VALUES
+    // INSERT INTO t SET col1 = val1, col2 = val2 -> INSERT INTO t (col1, col2) VALUES (val1, val2)
+    if trimmed.starts_with("INSERT") && trimmed.contains(" SET ") && !trimmed.contains(" ON DUPLICATE KEY") {
+        match convert_insert_set_to_values(sql) {
+            Ok(converted_sql) => {
+                let dialect = sqlparser::dialect::MySqlDialect {};
+                let statements = sqlparser::parser::Parser::parse_sql(&dialect, &converted_sql)
+                    .map_err(|e| ParseError::SyntaxError {
+                        position: 0,
+                        message: e.to_string(),
+                    })?;
+                return statements
+                    .into_iter()
+                    .map(|s| convert_statement(s))
+                    .collect();
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, &sql_to_parse)
         .map_err(|e| ParseError::SyntaxError {
@@ -344,6 +364,124 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
             Ok(converted)
         })
         .collect()
+}
+
+/// Split a string on commas, but only when not inside parentheses or quotes
+fn split_on_comma(s: &str) -> Vec<String> {
+    let mut result = vec![];
+    let mut current = String::new();
+    let mut paren_depth = 0;
+    let mut in_string = false;
+    let mut string_char = ' ';
+    let mut prev_char = ' ';
+
+    for c in s.chars() {
+        if in_string {
+            current.push(c);
+            if c == string_char && prev_char != '\\' {
+                in_string = false;
+            }
+        } else if c == '\'' || c == '"' {
+            current.push(c);
+            in_string = true;
+            string_char = c;
+        } else if c == '(' {
+            current.push(c);
+            paren_depth += 1;
+        } else if c == ')' {
+            current.push(c);
+            if paren_depth > 0 {
+                paren_depth -= 1;
+            }
+        } else if c == ',' && paren_depth == 0 {
+            result.push(current.trim().to_string());
+            current = String::new();
+        } else {
+            current.push(c);
+        }
+        prev_char = c;
+    }
+
+    if !current.trim().is_empty() {
+        result.push(current.trim().to_string());
+    }
+
+    result
+}
+
+/// Convert MySQL INSERT ... SET syntax to INSERT ... VALUES syntax
+/// INSERT INTO t SET col1 = val1, col2 = val2 -> INSERT INTO t (col1, col2) VALUES (val1, val2)
+fn convert_insert_set_to_values(sql: &str) -> Result<String, ParseError> {
+    let sql = sql.trim();
+
+    // Extract table name after INSERT INTO
+    let after_insert = sql.strip_prefix("INSERT").unwrap_or("").trim();
+    let after_into = after_insert.strip_prefix("INTO").unwrap_or(after_insert).trim();
+
+    // Find the table name (before SET)
+    let parts: Vec<&str> = after_into.splitn(2, " SET ").collect();
+    if parts.len() != 2 {
+        return Err(ParseError::SyntaxError {
+            position: 0,
+            message: "INSERT ... SET syntax requires SET clause".to_string(),
+        });
+    }
+
+    let table_and_cols = parts[0].trim();
+    let set_clause = parts[1].trim();
+
+    // Extract table name (could have columns in parentheses)
+    let table_name: &str;
+    let columns_part: Option<&str>;
+
+    if table_and_cols.ends_with(')') {
+        // Has column list: INSERT INTO t (col1, col2)
+        if let Some(paren_start) = table_and_cols.find('(') {
+            table_name = table_and_cols[..paren_start].trim();
+            columns_part = Some(&table_and_cols[paren_start..]);
+        } else {
+            return Err(ParseError::SyntaxError {
+                position: 0,
+                message: "Invalid INSERT syntax".to_string(),
+            });
+        }
+    } else {
+        // No column list: INSERT INTO t
+        table_name = table_and_cols;
+        columns_part = None;
+    }
+
+    // Parse the SET clause: col1 = val1, col2 = val2
+    // Use split_on_comma to handle commas inside function calls
+    let assignments = split_on_comma(set_clause);
+    let mut col_names: Vec<&str> = vec![];
+    let mut values: Vec<String> = vec![];
+
+    for assignment in &assignments {
+        let parts: Vec<&str> = assignment.splitn(2, '=').collect();
+        if parts.len() != 2 {
+            continue; // Skip malformed assignments
+        }
+        col_names.push(parts[0].trim());
+        values.push(parts[1].trim().to_string());
+    }
+
+    // Build the converted SQL
+    let cols_str = if let Some(cols) = columns_part {
+        cols.to_string()
+    } else if col_names.is_empty() {
+        "()".to_string()
+    } else {
+        format!("({})", col_names.join(", "))
+    };
+
+    let vals_str = if values.is_empty() {
+        "()".to_string()
+    } else {
+        format!("({})", values.join(", "))
+    };
+
+    Ok(format!("INSERT INTO {} {} VALUES {}", table_name, cols_str, vals_str))
 }
 
 fn parse_create_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
