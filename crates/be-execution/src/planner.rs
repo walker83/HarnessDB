@@ -256,11 +256,17 @@ impl ExecutionContext {
             let child = &children[0];
             match &child.node_type {
                 PlanNodeType::Values(vals) => {
-                    // Create ValuesExecNode directly with schema
-                    Some(ExecutionPlan::Values(ValuesExecNode::new(
-                        vals.rows.clone(),
-                        values_schema,
-                    )))
+                    // If INSERT specifies column list, pass raw rows to InsertExecNode for expansion
+                    // instead of creating ValuesExecNode with mismatched schema
+                    if !insert.columns.is_empty() {
+                        None  // Will use with_raw_rows() below
+                    } else {
+                        // Create ValuesExecNode directly with schema (full column INSERT)
+                        Some(ExecutionPlan::Values(ValuesExecNode::new(
+                            vals.rows.clone(),
+                            values_schema.clone(),
+                        )))
+                    }
                 }
                 _ => {
                     // For SELECT or other, use the normal conversion
@@ -282,6 +288,14 @@ impl ExecutionContext {
                 .collect()
         );
 
+        // If partial column INSERT with VALUES, pass raw rows for expansion
+        if !insert.columns.is_empty() && !children.is_empty() {
+            if let PlanNodeType::Values(vals) = &children[0].node_type {
+                node = node.with_raw_rows(vals.rows.clone(), values_schema.clone());
+            }
+        }
+
+        // Always set child plan if we have one
         if let Some(child) = child_plan {
             node = node.with_child(Box::new(child));
         }
