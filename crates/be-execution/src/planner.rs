@@ -228,6 +228,12 @@ impl ExecutionContext {
             delete.selection_predicate.clone(),
         );
 
+        // Pass ORDER BY and LIMIT
+        node.order_by = delete.order_by.iter()
+            .map(|item| (item.expr.clone(), item.ascending))
+            .collect();
+        node.limit = delete.limit;
+
         if let (Some(tid), Some(storage)) = (tablet_id, Some(self.storage.clone())) {
             node = node.with_storage(tid, storage);
         }

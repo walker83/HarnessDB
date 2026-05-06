@@ -291,6 +291,9 @@ impl Planner {
             (Some(self.current_database.clone()), stmt.table.clone())
         };
 
+        // Note: unique_keys lookup not yet implemented - using empty vec
+        let unique_keys: Vec<UniqueKeyDef> = vec![];
+
         let children = if let Some(query) = stmt.query {
             vec![self.plan_query(query)?]
         } else if !stmt.values.is_empty() {
@@ -318,6 +321,7 @@ impl Planner {
                         value: expression::expr_to_string(&update.value),
                     }
                 }).collect(),
+                unique_keys,
             }),
             children,
         ))
@@ -373,11 +377,19 @@ impl Planner {
             .as_ref()
             .map(expression::expr_to_string);
 
+        // Convert ORDER BY items
+        let order_by: Vec<SortItem> = stmt.order_by.into_iter().map(|o| SortItem {
+            expr: expression::expr_to_string(&o.expr),
+            ascending: o.ascending,
+        }).collect();
+
         Ok(self.make_node(
             PlanNodeType::Delete(DeleteNode {
                 table_name,
                 database,
                 selection_predicate,
+                order_by,
+                limit: stmt.limit,
             }),
             vec![],
         ))

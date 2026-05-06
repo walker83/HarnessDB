@@ -2165,8 +2165,17 @@ impl WindowExecNode {
 #[derive(Clone)]
 pub struct TransactionContext {
     pub in_transaction: bool,
-    pub pending_writes: Vec<PendingWrite>,
-    pub pending_deletes: Vec<PendingDelete>,
+    pub isolation_level: String,
+    pending_writes: Vec<PendingWrite>,
+    pending_deletes: Vec<PendingDelete>,
+    savepoints: Vec<Savepoint>,
+}
+
+#[derive(Clone)]
+struct Savepoint {
+    name: String,
+    pending_writes: Vec<PendingWrite>,
+    pending_deletes: Vec<PendingDelete>,
 }
 
 #[derive(Clone)]
@@ -2193,8 +2202,10 @@ impl TransactionContext {
     pub fn new() -> Self {
         Self {
             in_transaction: false,
+            isolation_level: "REPEATABLE READ".to_string(),
             pending_writes: Vec::new(),
             pending_deletes: Vec::new(),
+            savepoints: Vec::new(),
         }
     }
 
@@ -2202,10 +2213,28 @@ impl TransactionContext {
         self.in_transaction = true;
     }
 
-    pub fn commit(&mut self, _storage: &Arc<StorageEngine>) -> std::result::Result<usize, String> {
+    pub fn set_isolation_level(&mut self, level: String) {
+        self.isolation_level = level;
+    }
+
+    pub fn commit(&mut self, storage: &Arc<StorageEngine>) -> std::result::Result<usize, String> {
         let affected = self.pending_writes.len();
+
+        // Apply all pending writes to storage
+        for pending in &self.pending_writes {
+            storage.write_batch(pending.tablet_id, &pending.block)
+                .map_err(|e| format!("Failed to write batch: {}", e))?;
+        }
+
+        // Apply all pending deletes to storage
+        for pending in &self.pending_deletes {
+            storage.delete(pending.tablet_id, &pending.predicates)
+                .map_err(|e| format!("Failed to delete: {}", e))?;
+        }
+
         self.pending_writes.clear();
         self.pending_deletes.clear();
+        self.savepoints.clear();
         self.in_transaction = false;
         Ok(affected)
     }
@@ -2213,19 +2242,45 @@ impl TransactionContext {
     pub fn rollback(&mut self) {
         self.pending_writes.clear();
         self.pending_deletes.clear();
+        self.savepoints.clear();
         self.in_transaction = false;
     }
 
-    pub fn savepoint(&mut self, _name: String) -> std::result::Result<(), String> {
+    pub fn savepoint(&mut self, name: String) -> std::result::Result<(), String> {
+        // Save current state as a savepoint
+        self.savepoints.push(Savepoint {
+            name,
+            pending_writes: self.pending_writes.clone(),
+            pending_deletes: self.pending_deletes.clone(),
+        });
         Ok(())
     }
 
-    pub fn rollback_to_savepoint(&mut self, _name: &str) -> std::result::Result<(), String> {
-        Ok(())
+    pub fn rollback_to_savepoint(&mut self, name: &str) -> std::result::Result<(), String> {
+        // Find the savepoint
+        let idx = self.savepoints.iter().position(|s| s.name == name);
+        match idx {
+            Some(idx) => {
+                let sp = &self.savepoints[idx];
+                self.pending_writes = sp.pending_writes.clone();
+                self.pending_deletes = sp.pending_deletes.clone();
+                // Remove savepoints after this one (nested savepoints)
+                self.savepoints.truncate(idx + 1);
+                Ok(())
+            }
+            None => Err(format!("Savepoint '{}' not found", name)),
+        }
     }
 
-    pub fn release_savepoint(&mut self, _name: &str) -> std::result::Result<(), String> {
-        Ok(())
+    pub fn release_savepoint(&mut self, name: &str) -> std::result::Result<(), String> {
+        let idx = self.savepoints.iter().position(|s| s.name == name);
+        match idx {
+            Some(idx) => {
+                self.savepoints.remove(idx);
+                Ok(())
+            }
+            None => Err(format!("Savepoint '{}' not found", name)),
+        }
     }
 }
 
@@ -2387,6 +2442,10 @@ pub struct DeleteExecNode {
     pub storage: Option<Arc<StorageEngine>>,
     pub transaction_ctx: Option<Arc<StdRwLock<TransactionContext>>>,
     pub executed: bool,
+    /// ORDER BY clause - specifies the order of rows to delete
+    pub order_by: Vec<(String, bool)>,  // (expression, ascending)
+    /// LIMIT clause - max number of rows to delete
+    pub limit: Option<usize>,
 }
 
 impl DeleteExecNode {
@@ -2403,6 +2462,8 @@ impl DeleteExecNode {
             storage: None,
             transaction_ctx: None,
             executed: false,
+            order_by: vec![],
+            limit: None,
         }
     }
 
@@ -2461,10 +2522,103 @@ impl ExecNode for DeleteExecNode {
             }
         }
 
-        let affected = storage.delete(tablet_id, &predicates)?;
+        // If no ORDER BY and no LIMIT, use simple predicate-based delete
+        if self.order_by.is_empty() && self.limit.is_none() {
+            let affected = storage.delete(tablet_id, &predicates)?;
+            tracing::info!("DELETE from {}.{}: {} rows affected", self.database, self.table_name, affected);
+            return Ok(Some(make_affected_rows_block(affected)));
+        }
 
-        tracing::info!("DELETE from {}.{}: {} rows affected", self.database, self.table_name, affected);
-        Ok(Some(make_affected_rows_block(affected)))
+        // For DELETE with ORDER BY and/or LIMIT, we need to:
+        // 1. Read all data from tablet
+        // 2. Find matching rows using predicates
+        // 3. Sort matching rows according to ORDER BY
+        // 4. Apply LIMIT to determine rows to delete
+        // 5. Delete all matching rows (predicate-based)
+        // 6. Write back: non-matching rows + matching rows beyond LIMIT
+
+        let full_block = storage.read_tablet(tablet_id, None, &[])?;
+        if full_block.is_empty() {
+            return Ok(Some(make_affected_rows_block(0)));
+        }
+
+        // Find matching rows
+        let selection = apply_predicates_to_block(&full_block, &predicates);
+        let total_matching = selection.set_count();
+
+        if total_matching == 0 {
+            // No matching rows, nothing to delete
+            return Ok(Some(make_affected_rows_block(0)));
+        }
+
+        // Build inverted bitmap for non-matching rows (these are always preserved)
+        let mut inverted_bits = Vec::with_capacity(full_block.num_rows());
+        for i in 0..full_block.num_rows() {
+            inverted_bits.push(!selection.get(i));
+        }
+        let inverted_selection = Bitmap::from_bools(&inverted_bits);
+        let non_matching_block = full_block.filter(&inverted_selection);
+
+        // Get matching rows and apply ORDER BY + LIMIT
+        let matching_block = full_block.filter(&selection);
+        let limit = self.limit.unwrap_or(total_matching);
+
+        let (rows_to_delete, rows_to_preserve): (Block, Block) = if self.order_by.is_empty() {
+            // No ORDER BY, just take first N matching rows
+            if matching_block.num_rows() <= limit {
+                (matching_block.clone(), Block::empty(matching_block.schema().clone()))
+            } else {
+                (matching_block.slice(0, limit), matching_block.slice(limit, matching_block.num_rows() - limit))
+            }
+        } else {
+            // Need to sort and then apply limit
+            let sorted_indices = self.sort_matching_rows(&matching_block)?;
+            let limit = limit.min(sorted_indices.len());
+
+            // Split sorted indices into rows to delete and rows to preserve
+            let delete_indices = &sorted_indices[..limit];
+            let preserve_indices = &sorted_indices[limit..];
+
+            let mut rows_to_delete = Block::empty(matching_block.schema().clone());
+            for &idx in delete_indices {
+                let row_block = matching_block.slice(idx, 1);
+                if rows_to_delete.is_empty() {
+                    rows_to_delete = row_block;
+                } else {
+                    rows_to_delete.append_block(&row_block);
+                }
+            }
+
+            let mut rows_to_preserve = Block::empty(matching_block.schema().clone());
+            for &idx in preserve_indices {
+                let row_block = matching_block.slice(idx, 1);
+                if rows_to_preserve.is_empty() {
+                    rows_to_preserve = row_block;
+                } else {
+                    rows_to_preserve.append_block(&row_block);
+                }
+            }
+
+            (rows_to_delete, rows_to_preserve)
+        };
+
+        let affected_count = rows_to_delete.num_rows();
+
+        // Delete all matching rows using predicates
+        storage.delete(tablet_id, &predicates)?;
+
+        // Write back: non-matching rows + matching rows beyond LIMIT
+        let mut final_block = non_matching_block;
+        if !rows_to_preserve.is_empty() {
+            final_block.append_block(&rows_to_preserve);
+        }
+
+        if !final_block.is_empty() {
+            storage.write_batch(tablet_id, &final_block)?;
+        }
+
+        tracing::info!("DELETE from {}.{}: {} rows affected (ORDER BY + LIMIT)", self.database, self.table_name, affected_count);
+        Ok(Some(make_affected_rows_block(affected_count)))
     }
 
     async fn close(&mut self) -> Result<()> {
@@ -2474,6 +2628,46 @@ impl ExecNode for DeleteExecNode {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+impl DeleteExecNode {
+    /// Sort matching rows according to ORDER BY expressions and return sorted indices.
+    fn sort_matching_rows(&self, block: &Block) -> Result<Vec<usize>> {
+        if self.order_by.is_empty() {
+            let num_rows = block.num_rows();
+            return Ok((0..num_rows).collect());
+        }
+
+        let num_rows = block.num_rows();
+        let mut indices: Vec<usize> = (0..num_rows).collect();
+
+        let order_by = self.order_by.clone();
+        let cmp_block = block;
+
+        indices.sort_unstable_by(|&a, &b| {
+            for &(ref expr, ascending) in &order_by {
+                // Parse expression to get column name (trim ASC/DESC)
+                let col_name = expr.trim();
+                let col_name = col_name.trim_end_matches(" DESC").trim_end_matches(" ASC").trim();
+                let col_name = col_name.trim();
+
+                // Find column index
+                let schema = cmp_block.schema();
+                if let Some(col_idx) = schema.index_of(col_name) {
+                    if let Some(col) = cmp_block.column(col_idx) {
+                        let ord = col.compare_at(a, b);
+                        let ord = if ascending { ord } else { ord.reverse() };
+                        if ord != std::cmp::Ordering::Equal {
+                            return ord;
+                        }
+                    }
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+
+        Ok(indices)
     }
 }
 

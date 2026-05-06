@@ -58,6 +58,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
             },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate,
+        unique_keys: vec![],
         partition_info: None,
         distribution_info: None,
         replication_num: 1,
@@ -101,6 +102,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
             },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate,
+        unique_keys: vec![],
         partition_info: None,
         distribution_info: None,
         replication_num: 1,
@@ -222,7 +224,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "d_date".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "d_year".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
+        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
         replication_num: 1, properties: HashMap::new(), row_count: 100, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
@@ -234,7 +236,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "s_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "s_nation".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
+        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
         replication_num: 1, properties: HashMap::new(), row_count: 20, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
@@ -246,7 +248,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "c_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "c_nation".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
+        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
         replication_num: 1, properties: HashMap::new(), row_count: 50, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
@@ -258,7 +260,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "p_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "p_category".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
+        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
         replication_num: 1, properties: HashMap::new(), row_count: 30, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 
@@ -271,7 +273,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
             TableColumn { name: "lo_suppkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "lo_revenue".into(), data_type: DataType::Float64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
         ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, partition_info: None, distribution_info: None,
+        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
         replication_num: 1, properties: HashMap::new(), row_count: 500, data_size: 0, stats: None, view_definition: None,
     }).unwrap();
 

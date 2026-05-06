@@ -129,6 +129,10 @@ pub struct DeleteStmt {
     /// USING clause (for MySQL DELETE ... USING syntax)
     pub using: Option<TableRef>,
     pub selection: Option<Expr>,
+    /// ORDER BY clause (MySQL extension)
+    pub order_by: Vec<OrderByItem>,
+    /// LIMIT clause (MySQL extension)
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone)]

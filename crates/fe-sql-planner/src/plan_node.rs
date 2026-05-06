@@ -1,5 +1,7 @@
 use std::fmt;
 
+use fe_sql_parser::ast::UniqueKeyDef;
+
 /// Unique identifier for a plan node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlanNodeId(pub usize);
@@ -76,6 +78,8 @@ pub struct InsertNode {
     pub is_overwrite: bool,
     /// ON DUPLICATE KEY UPDATE assignments
     pub on_duplicate_key_update: Vec<SetClausePlan>,
+    /// UNIQUE key definitions for constraint checking
+    pub unique_keys: Vec<UniqueKeyDef>,
 }
 
 /// A node that produces rows from VALUES clause.
@@ -103,6 +107,10 @@ pub struct DeleteNode {
     pub table_name: String,
     pub database: Option<String>,
     pub selection_predicate: Option<String>,
+    /// ORDER BY clause for deletion order
+    pub order_by: Vec<SortItem>,
+    /// LIMIT clause to restrict number of rows deleted
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone)]

@@ -9,6 +9,7 @@ pub struct Table {
     pub database: String,
     pub columns: Vec<TableColumn>,
     pub keys_type: KeysType,
+    pub unique_keys: Vec<UniqueKeyDef>,
     pub partition_info: Option<PartitionInfo>,
     pub distribution_info: Option<DistributionInfo>,
     pub replication_num: u32,
@@ -37,6 +38,13 @@ pub enum KeysType {
     Aggregate,
     Unique,
     Primary,
+}
+
+/// Unique key definition for constraint checking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UniqueKeyDef {
+    pub name: Option<String>,
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

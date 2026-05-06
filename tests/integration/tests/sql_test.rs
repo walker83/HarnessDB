@@ -163,6 +163,7 @@ fn test_create_table_multiple_types() {
             },
         ],
         keys_type: fe_catalog::table::KeysType::Duplicate,
+        unique_keys: vec![],
         partition_info: None,
         distribution_info: None,
         replication_num: 1,

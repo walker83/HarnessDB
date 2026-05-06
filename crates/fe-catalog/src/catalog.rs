@@ -284,6 +284,7 @@ mod tests {
                 },
             ],
             keys_type: KeysType::Duplicate,
+            unique_keys: vec![],
             partition_info: None,
             distribution_info: None,
             replication_num: 1,

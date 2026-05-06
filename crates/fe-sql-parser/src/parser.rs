@@ -1775,11 +1775,27 @@ fn convert_statement(
             };
 
             let selection = delete.selection.map(convert_expr);
+
+            // Convert order_by from sqlparser OrderByExpr to our OrderByItem
+            let order_by: Vec<OrderByItem> = delete.order_by.into_iter().map(|o| OrderByItem {
+                expr: convert_expr(o.expr),
+                ascending: o.asc.unwrap_or(true),
+                nulls_first: o.nulls_first.unwrap_or(true),
+            }).collect();
+
+            // Convert limit - sqlparser uses Expr, we need Option<usize>
+            let limit = delete.limit.and_then(|l| match l {
+                sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse().ok(),
+                _ => None,
+            });
+
             Ok(Statement::Delete(DeleteStmt {
                 tables,
                 from,
                 using,
                 selection,
+                order_by,
+                limit,
             }))
         }
         sqlparser::ast::Statement::AlterTable {

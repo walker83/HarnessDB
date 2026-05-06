@@ -387,6 +387,7 @@ impl RorisQueryHandler {
             database: db.to_string(),
             columns,
             keys_type: KeysType::Duplicate,
+            unique_keys: vec![],
             partition_info: None,
             distribution_info: None,
             replication_num: 1,
@@ -1237,8 +1238,8 @@ impl RorisQueryHandler {
     }
 
     fn set_transaction_isolation(&self, level: String) -> Result<QueryResult, String> {
-        // For now, just acknowledge the setting - actual isolation level enforcement
-        // would require more complex changes to the storage engine
+        let mut tx = self.transaction.write().unwrap();
+        tx.set_isolation_level(level.clone());
         tracing::info!("Setting transaction isolation level to: {}", level);
         Ok(QueryResult::ok())
     }
@@ -1433,7 +1434,7 @@ impl RorisQueryHandler {
         }).collect();
         let table = Table {
             id: 0, name: stmt.name.clone(), database: db.to_string(), columns,
-            keys_type: KeysType::Duplicate, partition_info: None, distribution_info: None,
+            keys_type: KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
             replication_num: 1, properties: std::collections::HashMap::new(), row_count: 0, data_size: 0, stats: None,
             view_definition: None,
         };
