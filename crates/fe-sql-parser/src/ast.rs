@@ -190,6 +190,15 @@ pub struct InsertStmt {
     pub values: Vec<Vec<Expr>>,
     pub query: Option<QueryStmt>,
     pub is_overwrite: bool,
+    /// ON DUPLICATE KEY UPDATE assignments
+    pub on_duplicate_key_update: Vec<OnDuplicateKeyUpdate>,
+}
+
+/// ON DUPLICATE KEY UPDATE clause
+#[derive(Debug, Clone)]
+pub struct OnDuplicateKeyUpdate {
+    pub column: String,
+    pub value: Expr,
 }
 
 #[derive(Debug, Clone)]

@@ -1148,6 +1148,19 @@ fn convert_statement(
                 values: values_list,
                 query: query_opt,
                 is_overwrite: stmt.overwrite,
+                on_duplicate_key_update: stmt.on.as_ref().map_or_else(Vec::new, |on_insert| {
+                    match on_insert {
+                        sqlparser::ast::OnInsert::DuplicateKeyUpdate(assignments) => {
+                            assignments.iter().map(|assign| {
+                                OnDuplicateKeyUpdate {
+                                    column: assign.target.to_string(),
+                                    value: convert_expr(assign.value.clone()),
+                                }
+                            }).collect()
+                        }
+                        _ => Vec::new(),  // Other ON INSERT variants not yet supported
+                    }
+                }),
             }))
         }
         sqlparser::ast::Statement::CreateTable(stmt) => {

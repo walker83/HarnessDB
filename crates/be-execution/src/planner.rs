@@ -275,7 +275,12 @@ impl ExecutionContext {
             insert.table_name.clone(),
             database.to_string(),
         )
-        .with_columns(insert.columns.clone());
+        .with_columns(insert.columns.clone())
+        .with_on_duplicate_key_update(
+            insert.on_duplicate_key_update.iter()
+                .map(|s| (s.column.clone(), s.value.clone()))
+                .collect()
+        );
 
         if let Some(child) = child_plan {
             node = node.with_child(Box::new(child));

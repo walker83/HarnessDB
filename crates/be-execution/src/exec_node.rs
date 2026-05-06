@@ -246,6 +246,8 @@ pub struct InsertExecNode {
     pub storage: Option<Arc<StorageEngine>>,
     pub transaction_ctx: Option<Arc<StdRwLock<TransactionContext>>>,
     pub executed: bool,
+    /// ON DUPLICATE KEY UPDATE assignments
+    pub on_duplicate_key_update: Vec<(String, String)>,
 }
 
 impl InsertExecNode {
@@ -259,6 +261,7 @@ impl InsertExecNode {
             storage: None,
             transaction_ctx: None,
             executed: false,
+            on_duplicate_key_update: Vec::new(),
         }
     }
 
@@ -280,6 +283,11 @@ impl InsertExecNode {
 
     pub fn with_transaction_ctx(mut self, tx_ctx: Arc<StdRwLock<TransactionContext>>) -> Self {
         self.transaction_ctx = Some(tx_ctx);
+        self
+    }
+
+    pub fn with_on_duplicate_key_update(mut self, updates: Vec<(String, String)>) -> Self {
+        self.on_duplicate_key_update = updates;
         self
     }
 
@@ -346,6 +354,9 @@ impl ExecNode for InsertExecNode {
                     let schema = block.schema().clone();
                     Self::reorder_columns_to_schema(&mut block, &self.columns, &schema);
                 }
+
+                // Handle ON DUPLICATE KEY UPDATE (not yet implemented)
+                // TODO: Implement ON DUPLICATE KEY UPDATE logic
 
                 // Write block to storage
                 storage.write_batch(tablet_id, &block)?;

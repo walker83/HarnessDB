@@ -74,6 +74,8 @@ pub struct InsertNode {
     pub database: Option<String>,
     pub columns: Vec<String>,
     pub is_overwrite: bool,
+    /// ON DUPLICATE KEY UPDATE assignments
+    pub on_duplicate_key_update: Vec<SetClausePlan>,
 }
 
 /// A node that produces rows from VALUES clause.

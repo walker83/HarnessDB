@@ -1087,35 +1087,54 @@ impl RorisQueryHandler {
         let (database, table_name) = match parts.len() {
             1 => {
                 let current_db = self.current_database.read().unwrap();
-                (current_db.clone(), stmt.table.clone())
+                (Some(current_db.clone()), stmt.table.clone())
             }
-            2 => (parts[0].to_string(), parts[1].to_string()),
+            2 => (Some(parts[0].to_string()), parts[1].to_string()),
             _ => {
                 let current_db = self.current_database.read().unwrap();
-                (current_db.clone(), stmt.table.clone())
+                (Some(current_db.clone()), stmt.table.clone())
             }
         };
 
         // Create planner and plan the INSERT statement
-        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
         let planner = Planner::new(Arc::new(catalog_for_planner));
 
-        let plan = planner.plan(Statement::Insert(stmt.clone()))
+        // Create a modified InsertStmt with database prefix if needed
+        let full_table_name = match &database {
+            Some(db) if db != "information_schema" => format!("{}.{}", db, table_name),
+            _ => table_name.clone(),
+        };
+        let mut modified_stmt = stmt.clone();
+        modified_stmt.table = full_table_name;
+
+        let plan = planner.plan(Statement::Insert(modified_stmt))
             .map_err(|e| format!("Planning error: {}", e))?;
 
         // Create execution context
         let storage = self.storage.clone();
-        let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
+        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
+        let exec_context = Arc::new(ExecutionContext::new(storage, Arc::new(catalog_for_exec)));
 
-        // Execute using current tokio runtime
-        let handle = tokio::runtime::Handle::current();
-        let results = handle.block_on(async { execute_plan(&plan, &exec_context).await })
-            .map_err(|e| format!("Execution error: {}", e))?;
+        // Execute in a separate thread to avoid Tokio runtime conflict
+        let results = std::thread::spawn({
+            let plan = plan.clone();
+            let exec_context = exec_context.clone();
+            move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async { execute_plan(&plan, &exec_context).await })
+            }
+        })
+        .join()
+        .map_err(|e| format!("Execution error: {:?}", e))?
+        .map_err(|e| format!("Execution error: {}", e))?;
 
         // Extract affected rows from results
         let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
 
-        tracing::info!("INSERT into {}.{}: {} rows affected", database, table_name, affected_rows);
+        tracing::info!("INSERT into {}.{}: {} rows affected", database.as_ref().unwrap_or(&"default".to_string()), table_name, affected_rows);
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
             vec![vec![Some(affected_rows.to_string())]],
@@ -1123,8 +1142,6 @@ impl RorisQueryHandler {
     }
 
     fn update(&self, stmt: &fe_sql_parser::ast::UpdateStmt) -> Result<QueryResult, String> {
-        use tokio::runtime::Runtime;
-
         // Resolve table: db.table or just table (use current_db)
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
@@ -1140,7 +1157,8 @@ impl RorisQueryHandler {
         };
 
         // Create planner and plan the UPDATE statement
-        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
         let planner = Planner::new(Arc::new(catalog_for_planner));
 
         let plan = planner.plan(Statement::Update(stmt.clone()))
@@ -1148,12 +1166,22 @@ impl RorisQueryHandler {
 
         // Create execution context
         let storage = self.storage.clone();
-        let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
+        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
+        let exec_context = Arc::new(ExecutionContext::new(storage, Arc::new(catalog_for_exec)));
 
-        // Execute using current tokio runtime
-        let handle = tokio::runtime::Handle::current();
-        let results = handle.block_on(async { execute_plan(&plan, &exec_context).await })
-            .map_err(|e| format!("Execution error: {}", e))?;
+        // Execute in a separate thread to avoid Tokio runtime conflict
+        let results = std::thread::spawn({
+            let plan = plan.clone();
+            let exec_context = exec_context.clone();
+            move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async { execute_plan(&plan, &exec_context).await })
+            }
+        })
+        .join()
+        .map_err(|e| format!("Execution error: {:?}", e))?
+        .map_err(|e| format!("Execution error: {}", e))?;
 
         // Extract affected rows from results
         let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
@@ -1166,8 +1194,6 @@ impl RorisQueryHandler {
     }
 
     fn delete(&self, stmt: &DeleteStmt) -> Result<QueryResult, String> {
-        use tokio::runtime::Runtime;
-
         // Resolve table: db.table or just table (use current_db)
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
@@ -1183,7 +1209,8 @@ impl RorisQueryHandler {
         };
 
         // Create planner and plan the delete statement
-        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
         let planner = Planner::new(Arc::new(catalog_for_planner));
 
         let delete_stmt = Statement::Delete(stmt.clone());
@@ -1191,12 +1218,22 @@ impl RorisQueryHandler {
 
         // Create execution context
         let storage = self.storage.clone();
-        let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
+        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
+        let exec_context = Arc::new(ExecutionContext::new(storage, Arc::new(catalog_for_exec)));
 
-        // Execute using current tokio runtime
-        let handle = tokio::runtime::Handle::current();
-        let results = handle.block_on(async { execute_plan(&plan, &exec_context).await })
-            .map_err(|e| format!("Execution error: {}", e))?;
+        // Execute in a separate thread to avoid Tokio runtime conflict
+        let results = std::thread::spawn({
+            let plan = plan.clone();
+            let exec_context = exec_context.clone();
+            move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async { execute_plan(&plan, &exec_context).await })
+            }
+        })
+        .join()
+        .map_err(|e| format!("Execution error: {:?}", e))?
+        .map_err(|e| format!("Execution error: {}", e))?;
 
         // Extract affected rows from results
         let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
@@ -1276,7 +1313,8 @@ impl RorisQueryHandler {
         let current_db = self.current_database.read().unwrap().clone();
 
         // Create planner and plan the statement
-        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
         let planner = Planner::new(Arc::new(catalog_for_planner));
         let optimizer = Optimizer::new();
 

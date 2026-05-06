@@ -287,7 +287,8 @@ impl Planner {
             let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
             (Some(parts[0].to_string()), parts[1].to_string())
         } else {
-            (None, stmt.table.clone())
+            // Use current database when no database prefix
+            (Some(self.current_database.clone()), stmt.table.clone())
         };
 
         let children = if let Some(query) = stmt.query {
@@ -311,6 +312,12 @@ impl Planner {
                 database,
                 columns: stmt.columns,
                 is_overwrite: stmt.is_overwrite,
+                on_duplicate_key_update: stmt.on_duplicate_key_update.iter().map(|update| {
+                    SetClausePlan {
+                        column: update.column.clone(),
+                        value: expression::expr_to_string(&update.value),
+                    }
+                }).collect(),
             }),
             children,
         ))
@@ -321,7 +328,8 @@ impl Planner {
             let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
             (Some(parts[0].to_string()), parts[1].to_string())
         } else {
-            (None, stmt.table.clone())
+            // Use current database when no database prefix
+            (Some(self.current_database.clone()), stmt.table.clone())
         };
 
         let set_clauses: Vec<SetClausePlan> = stmt
@@ -354,7 +362,8 @@ impl Planner {
             let parts: Vec<&str> = stmt.table.splitn(2, '.').collect();
             (Some(parts[0].to_string()), parts[1].to_string())
         } else {
-            (None, stmt.table.clone())
+            // Use current database when no database prefix
+            (Some(self.current_database.clone()), stmt.table.clone())
         };
 
         let selection_predicate = stmt
