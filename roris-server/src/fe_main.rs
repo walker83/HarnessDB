@@ -1179,7 +1179,8 @@ impl RorisQueryHandler {
     fn start_transaction(&self) -> Result<QueryResult, String> {
         let mut tx = self.transaction.write().unwrap();
         if tx.in_transaction {
-            return Err("Already in transaction".to_string());
+            // Nested BEGIN is a no-op in non-savepoint mode (matches MySQL behavior)
+            return Ok(QueryResult::ok());
         }
         tx.begin();
         Ok(QueryResult::ok())

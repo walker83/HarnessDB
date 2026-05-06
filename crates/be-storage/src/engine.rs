@@ -206,6 +206,26 @@ impl StorageEngine {
         self.tablets.len()
     }
 
+    /// Get the key column index for a tablet (first column marked as key).
+    /// Returns None if tablet doesn't exist.
+    pub fn get_key_column_index(&self, tablet_id: u64) -> Option<usize> {
+        self.tablets.get(&tablet_id).map(|t| {
+            t.schema.columns.iter().position(|c| c.is_key).unwrap_or(0)
+        })
+    }
+
+    /// Get the key column name for a tablet.
+    /// Returns None if tablet doesn't exist.
+    pub fn get_key_column_name(&self, tablet_id: u64) -> Option<String> {
+        self.tablets.get(&tablet_id).map(|t| {
+            t.schema.columns.iter()
+                .position(|c| c.is_key)
+                .and_then(|idx| t.schema.columns.get(idx))
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "id".to_string())
+        })
+    }
+
     /// Get the data directory path.
     pub fn data_dir(&self) -> &Path {
         &self.data_dir

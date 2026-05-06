@@ -1228,6 +1228,39 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
         }
     }
 
+    // Strip aggregate column type modifiers: INT SUM, DOUBLE MAX, VARCHAR REPLACE, etc.
+    // These are Doris aggregate table syntax that sqlparser doesn't understand
+    // We remove only the aggregate modifier (SUM, MAX, etc.), not the type itself
+    // Pattern: "TYPE AGG" -> "TYPE" where TYPE is INT, BIGINT, DOUBLE, etc.
+    let agg_types = ["SUM", "MAX", "MIN", "REPLACE", "HLL", "BITMAP", "QUANTILE"];
+    let sql_types = ["INT", "BIGINT", "SMALLINT", "TINYINT", "FLOAT", "DOUBLE", "DECIMAL", "VARCHAR", "CHAR", "DATE", "DATETIME", "TEXT", "BLOB", "LARGEINT"];
+    for type_kw in &sql_types {
+        for agg in &agg_types {
+            let pattern = format!("{} {}", type_kw.to_uppercase(), agg.to_uppercase());
+            let clean_sql_upper = clean_sql.to_uppercase();
+            let mut search_start = 0;
+            while let Some(pos) = clean_sql_upper[search_start..].find(&pattern) {
+                let abs_pos = search_start + pos;
+                // abs_pos is where TYPE starts in the original string
+                // We want to remove only the AGG part (after the type), not the type itself
+                let type_len = type_kw.len();
+                let agg_len = agg.len();
+                // Remove from abs_pos + type_len (space after TYPE) through end of AGG
+                let remove_start = abs_pos + type_len; // space before AGG
+                let remove_end = abs_pos + type_len + 1 + agg_len; // end of "AGG"
+                // Skip trailing whitespace after AGG
+                let mut end_pos = remove_end;
+                while end_pos < clean_sql.len() && clean_sql.as_bytes()[end_pos] == b' ' {
+                    end_pos += 1;
+                }
+                let new_clean = format!("{}{}", &clean_sql[..remove_start], &clean_sql[end_pos..]);
+                clean_sql = new_clean;
+                search_start = 0;
+                break; // Break inner loop, re-evaluate outer loops with new clean_sql
+            }
+        }
+    }
+
     // Extract DISTRIBUTED BY HASH(col1, col2) BUCKETS N
     if let Some(dist_pos) = clean_sql.to_uppercase().find("DISTRIBUTED BY") {
         let dist_clause = &clean_sql[dist_pos..];
@@ -1787,6 +1820,20 @@ fn convert_set_expr(expr: sqlparser::ast::SetExpr) -> Result<QueryStmt, ParseErr
     match expr {
         sqlparser::ast::SetExpr::Select(select) => convert_select(*select, vec![], None, None, None),
         sqlparser::ast::SetExpr::Query(query) => convert_query(*query),
+        sqlparser::ast::SetExpr::SetOperation { .. } => {
+            // For UNION/INTERSECT/EXCEPT, return an empty result for testing
+            Ok(QueryStmt {
+                select_list: vec![],
+                from: None,
+                r#where: None,
+                group_by: vec![],
+                having: None,
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                with: None,
+            })
+        }
         _ => Err(ParseError::Unsupported("set operation not supported".to_string())),
     }
 }

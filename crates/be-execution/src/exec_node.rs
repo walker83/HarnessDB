@@ -125,7 +125,7 @@ impl ExecNode for ExecutionPlan {
 
 // ---- VALUES Execution Node ----
 
-use fe_sql_parser::ast::{Expr, LiteralValue};
+use fe_sql_parser::ast::{Expr, LiteralValue, BinaryOp, UnaryOp};
 
 pub struct ValuesExecNode {
     pub rows: Vec<Vec<Expr>>,
@@ -141,7 +141,209 @@ impl ValuesExecNode {
     fn eval_expr(expr: &Expr) -> std::result::Result<ScalarValue, String> {
         match expr {
             Expr::Literal(lv) => Self::literal_to_scalar(lv),
+            Expr::BinaryOp { left, op, right } => {
+                let left_val = Self::eval_expr(left)?;
+                let right_val = Self::eval_expr(right)?;
+                Self::eval_binary_op(*op, &left_val, &right_val)
+            }
+            Expr::UnaryOp { op, expr } => {
+                let val = Self::eval_expr(expr)?;
+                Self::eval_unary_op(*op, &val)
+            }
+            Expr::FunctionCall { name, args, .. } => Self::eval_function(name, args),
+            Expr::Cast { expr, target_type } => {
+                let val = Self::eval_expr(expr)?;
+                Self::eval_cast(&val, target_type)
+            }
+            Expr::Wildcard => Err("Wildcard not allowed in VALUES".to_string()),
             other => Err(format!("Unsupported expression in VALUES: {:?}", other)),
+        }
+    }
+
+    fn eval_binary_op(op: BinaryOp, left: &ScalarValue, right: &ScalarValue) -> std::result::Result<ScalarValue, String> {
+        match op {
+            BinaryOp::Plus => match (left, right) {
+                (ScalarValue::Int64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Int64(l + r)),
+                (ScalarValue::Float64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(l + r)),
+                (ScalarValue::Int64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(*l as f64 + r)),
+                (ScalarValue::Float64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Float64(l + *r as f64)),
+                _ => Err(format!("Unsupported binary op {:?} with operands {:?} and {:?}", op, left, right)),
+            },
+            BinaryOp::Minus => match (left, right) {
+                (ScalarValue::Int64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Int64(l - r)),
+                (ScalarValue::Float64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(l - r)),
+                (ScalarValue::Int64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(*l as f64 - r)),
+                (ScalarValue::Float64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Float64(l - *r as f64)),
+                _ => Err(format!("Unsupported binary op {:?} with operands {:?} and {:?}", op, left, right)),
+            },
+            BinaryOp::Multiply => match (left, right) {
+                (ScalarValue::Int64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Int64(l * r)),
+                (ScalarValue::Float64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(l * r)),
+                (ScalarValue::Int64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(*l as f64 * r)),
+                (ScalarValue::Float64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Float64(l * *r as f64)),
+                _ => Err(format!("Unsupported binary op {:?} with operands {:?} and {:?}", op, left, right)),
+            },
+            BinaryOp::Divide => match (left, right) {
+                (ScalarValue::Int64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Int64(l / r)),
+                (ScalarValue::Float64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(l / r)),
+                (ScalarValue::Int64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(*l as f64 / r)),
+                (ScalarValue::Float64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Float64(l / *r as f64)),
+                _ => Err(format!("Unsupported binary op {:?} with operands {:?} and {:?}", op, left, right)),
+            },
+            BinaryOp::Modulo => match (left, right) {
+                (ScalarValue::Int64(l), ScalarValue::Int64(r)) => Ok(ScalarValue::Int64(l % r)),
+                (ScalarValue::Float64(l), ScalarValue::Float64(r)) => Ok(ScalarValue::Float64(l % r)),
+                _ => Err(format!("Unsupported binary op {:?} with operands {:?} and {:?}", op, left, right)),
+            },
+            _ => Err(format!("Unsupported binary op {:?} in VALUES", op)),
+        }
+    }
+
+    fn eval_unary_op(op: UnaryOp, val: &ScalarValue) -> std::result::Result<ScalarValue, String> {
+        match op {
+            UnaryOp::Negate => match val {
+                ScalarValue::Int64(n) => Ok(ScalarValue::Int64(-n)),
+                ScalarValue::Float64(n) => Ok(ScalarValue::Float64(-n)),
+                _ => Err(format!("Unsupported unary op {:?} with operand {:?}", op, val)),
+            },
+            UnaryOp::Not => match val {
+                ScalarValue::Boolean(b) => Ok(ScalarValue::Boolean(!b)),
+                _ => Err(format!("Unsupported unary op {:?} with operand {:?}", op, val)),
+            },
+        }
+    }
+
+    fn eval_function(name: &str, args: &[Expr]) -> std::result::Result<ScalarValue, String> {
+        let name_upper = name.to_uppercase();
+        match name_upper.as_str() {
+            "NOW" | "CURRENT_TIMESTAMP" => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?;
+                Ok(ScalarValue::String(format!("{}", now.as_secs())))
+            }
+            "UPPER" | "LOWER" | "LENGTH" | "CONCAT" | "ROUND" | "ABS" | "FLOOR" | "CEIL" => {
+                if args.is_empty() {
+                    return Ok(ScalarValue::Null);
+                }
+                let all_literals = args.iter().all(|a| matches!(a, Expr::Literal(_)));
+                if !all_literals {
+                    return Ok(ScalarValue::Null);
+                }
+                match name_upper.as_str() {
+                    "UPPER" | "LOWER" => {
+                        if let Expr::Literal(LiteralValue::String(s)) = &args[0] {
+                            let result = if name_upper == "UPPER" { s.to_uppercase() } else { s.to_lowercase() };
+                            Ok(ScalarValue::String(result))
+                        } else {
+                            Ok(ScalarValue::Null)
+                        }
+                    }
+                    "LENGTH" => {
+                        if let Expr::Literal(LiteralValue::String(s)) = &args[0] {
+                            Ok(ScalarValue::Int64(s.len() as i64))
+                        } else {
+                            Ok(ScalarValue::Null)
+                        }
+                    }
+                    "CONCAT" => {
+                        let mut result = String::new();
+                        for arg in args {
+                            if let Expr::Literal(LiteralValue::String(s)) = arg {
+                                result.push_str(s);
+                            } else {
+                                return Ok(ScalarValue::Null);
+                            }
+                        }
+                        Ok(ScalarValue::String(result))
+                    }
+                    "ROUND" => {
+                        if let Expr::Literal(lv) = &args[0] {
+                            let val = match lv {
+                                LiteralValue::Int64(n) => *n as f64,
+                                LiteralValue::Float64(f) => *f,
+                                LiteralValue::String(s) => s.parse().unwrap_or(0.0),
+                                _ => return Ok(ScalarValue::Null),
+                            };
+                            Ok(ScalarValue::Float64(val.round()))
+                        } else {
+                            Ok(ScalarValue::Null)
+                        }
+                    }
+                    "ABS" => {
+                        if let Expr::Literal(lv) = &args[0] {
+                            match lv {
+                                LiteralValue::Int64(n) => Ok(ScalarValue::Int64(n.abs())),
+                                LiteralValue::Float64(f) => Ok(ScalarValue::Float64(f.abs())),
+                                _ => Ok(ScalarValue::Null),
+                            }
+                        } else {
+                            Ok(ScalarValue::Null)
+                        }
+                    }
+                    "FLOOR" => {
+                        if let Expr::Literal(lv) = &args[0] {
+                            match lv {
+                                LiteralValue::Int64(n) => Ok(ScalarValue::Int64(*n)),
+                                LiteralValue::Float64(f) => Ok(ScalarValue::Int64(f.floor() as i64)),
+                                _ => Ok(ScalarValue::Null),
+                            }
+                        } else {
+                            Ok(ScalarValue::Null)
+                        }
+                    }
+                    "CEIL" => {
+                        if let Expr::Literal(lv) = &args[0] {
+                            match lv {
+                                LiteralValue::Int64(n) => Ok(ScalarValue::Int64(*n)),
+                                LiteralValue::Float64(f) => Ok(ScalarValue::Int64(f.ceil() as i64)),
+                                _ => Ok(ScalarValue::Null),
+                            }
+                        } else {
+                            Ok(ScalarValue::Null)
+                        }
+                    }
+                    _ => Ok(ScalarValue::Null),
+                }
+            }
+            _ => Ok(ScalarValue::Null),
+        }
+    }
+
+    fn eval_cast(val: &ScalarValue, target_type: &str) -> std::result::Result<ScalarValue, String> {
+        let target_upper = target_type.to_uppercase();
+        match val {
+            ScalarValue::String(s) => match target_upper.as_str() {
+                "INT" | "INT64" | "INTEGER" => {
+                    if let Ok(n) = s.parse::<i64>() {
+                        Ok(ScalarValue::Int64(n))
+                    } else {
+                        Ok(ScalarValue::Null)
+                    }
+                }
+                "FLOAT" | "FLOAT64" | "DOUBLE" => {
+                    if let Ok(f) = s.parse::<f64>() {
+                        Ok(ScalarValue::Float64(f))
+                    } else {
+                        Ok(ScalarValue::Null)
+                    }
+                }
+                "VARCHAR" | "CHAR" | "STRING" | "TEXT" => Ok(ScalarValue::String(s.clone())),
+                _ => Err(format!("Unsupported cast to type {:?}", target_type)),
+            },
+            ScalarValue::Int64(n) => match target_upper.as_str() {
+                "INT" | "INT64" | "INTEGER" => Ok(ScalarValue::Int64(*n)),
+                "FLOAT" | "FLOAT64" | "DOUBLE" => Ok(ScalarValue::Float64(*n as f64)),
+                "VARCHAR" | "CHAR" | "STRING" | "TEXT" => Ok(ScalarValue::String(n.to_string())),
+                _ => Err(format!("Unsupported cast to type {:?}", target_type)),
+            },
+            ScalarValue::Float64(f) => match target_upper.as_str() {
+                "INT" | "INT64" | "INTEGER" => Ok(ScalarValue::Int64(*f as i64)),
+                "FLOAT" | "FLOAT64" | "DOUBLE" => Ok(ScalarValue::Float64(*f)),
+                "VARCHAR" | "CHAR" | "STRING" | "TEXT" => Ok(ScalarValue::String(f.to_string())),
+                _ => Err(format!("Unsupported cast to type {:?}", target_type)),
+            },
+            _ => Err(format!("Unsupported cast from {:?} to {:?}", val, target_type)),
         }
     }
 
@@ -387,6 +589,98 @@ impl InsertExecNode {
         let block = Block::new(table_schema.clone(), vectors);
         Ok(vec![block])
     }
+
+    /// Handle ON DUPLICATE KEY UPDATE by checking for existing rows and applying update expressions.
+    fn handle_on_duplicate_key_update(
+        &self,
+        storage: &Arc<StorageEngine>,
+        tablet_id: u64,
+        blocks: Vec<Block>,
+    ) -> Result<usize> {
+        use be_storage::index::{ColumnPredicate, PredicateOp};
+        use crate::predicate_parser::eval_on_duplicate_key_expr;
+
+        let mut total_rows_written: usize = 0;
+
+        let key_col_idx = storage.get_key_column_index(tablet_id)
+            .ok_or_else(|| DrorisError::Internal(format!("Tablet {} not found", tablet_id)))?;
+
+        let key_col_name = storage.get_key_column_name(tablet_id)
+            .unwrap_or_else(|| "id".to_string());
+
+        for block in blocks {
+            let schema = block.schema().clone();
+
+            for row_idx in 0..block.num_rows() {
+                let key_value = if let Some(col) = block.column(key_col_idx) {
+                    col.scalar_at(row_idx)
+                } else {
+                    continue;
+                };
+
+                let predicate = ColumnPredicate {
+                    column_name: key_col_name.clone(),
+                    op: PredicateOp::Eq,
+                    value: key_value.clone(),
+                    values: vec![],
+                };
+
+                let existing_block = storage.read_tablet(tablet_id, None, &[predicate])?;
+
+                if !existing_block.is_empty() && existing_block.num_rows() > 0 {
+                    let mut new_row_values: Vec<ScalarValue> = (0..block.num_columns())
+                        .map(|col_idx| {
+                            block.column(col_idx)
+                                .map(|c| c.scalar_at(row_idx))
+                                .unwrap_or(ScalarValue::Null)
+                        })
+                        .collect();
+
+                    for (target_col, expr_str) in &self.on_duplicate_key_update {
+                        if let Some(col_idx) = schema.index_of(target_col) {
+                            let new_value = eval_on_duplicate_key_expr(
+                                expr_str,
+                                &schema,
+                                &new_row_values,
+                            );
+                            new_row_values[col_idx] = new_value;
+                        }
+                    }
+
+                    let delete_predicate = ColumnPredicate {
+                        column_name: key_col_name.clone(),
+                        op: PredicateOp::Eq,
+                        value: key_value,
+                        values: vec![],
+                    };
+                    storage.delete(tablet_id, &[delete_predicate])?;
+
+                    let updated_block = self.create_single_row_block(&schema, &new_row_values)?;
+                    storage.write_batch(tablet_id, &updated_block)?;
+
+                    total_rows_written += 2;
+                } else {
+                    let single_row_block = block.slice(row_idx, 1);
+                    storage.write_batch(tablet_id, &single_row_block)?;
+                    total_rows_written += 1;
+                }
+            }
+        }
+
+        Ok(total_rows_written)
+    }
+
+    fn create_single_row_block(&self, schema: &Schema, row_values: &[ScalarValue]) -> Result<Block> {
+        let mut columns: Vec<Vector> = Vec::with_capacity(schema.num_fields());
+
+        for (col_idx, _field) in schema.fields().iter().enumerate() {
+            let value = row_values.get(col_idx).cloned().unwrap_or(ScalarValue::Null);
+            let vector = Vector::from_scalar(&value, 1);
+            columns.push(vector);
+        }
+
+        Ok(Block::new(schema.clone(), columns))
+    }
 }
 
 #[async_trait]
@@ -549,12 +843,17 @@ impl ExecNode for InsertExecNode {
         }
 
         // Not in transaction mode - write directly to storage
-        for block in &blocks_to_write {
-            // Handle ON DUPLICATE KEY UPDATE (not yet implemented)
-            // TODO: Implement ON DUPLICATE KEY UPDATE logic
-
-            storage.write_batch(tablet_id, &block)?;
-            total_rows_written += block.num_rows();
+        if self.on_duplicate_key_update.is_empty() {
+            for block in &blocks_to_write {
+                storage.write_batch(tablet_id, &block)?;
+                total_rows_written += block.num_rows();
+            }
+        } else {
+            total_rows_written = self.handle_on_duplicate_key_update(
+                storage,
+                tablet_id,
+                blocks_to_write,
+            )?;
         }
 
         self.executed = true;

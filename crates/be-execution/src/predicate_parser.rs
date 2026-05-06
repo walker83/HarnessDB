@@ -465,6 +465,129 @@ fn coerce_to_boolean(raw: &ScalarValue) -> ScalarValue {
     }
 }
 
+/// Evaluate an ON DUPLICATE KEY UPDATE expression against an existing row.
+pub fn eval_on_duplicate_key_expr(
+    expr_str: &str,
+    schema: &Schema,
+    row_values: &[ScalarValue],
+) -> ScalarValue {
+    let expr_str = expr_str.trim();
+
+    // First try to parse as a simple literal
+    let literal_val = parse_value_string(expr_str);
+    if !matches!(literal_val, ScalarValue::String(ref s) if s.is_empty() || s == expr_str) {
+        return literal_val;
+    }
+
+    // Try to parse as "column op value" or "column op column" expression
+    let ops: &[(&str, fn(&ScalarValue, &ScalarValue) -> ScalarValue)] = &[
+        (" + ", binary_op_add),
+        (" - ", binary_op_sub),
+        (" * ", binary_op_mul),
+        (" / ", binary_op_div),
+        (" % ", binary_op_mod),
+    ];
+    for (op_str, op_fn) in ops {
+        if let Some(pos) = expr_str.find(op_str) {
+            let left_str = expr_str[..pos].trim();
+            let right_str = expr_str[pos + op_str.len()..].trim();
+
+            let left_val = if let Some(col_idx) = schema.index_of(left_str) {
+                row_values.get(col_idx).cloned().unwrap_or(ScalarValue::Null)
+            } else {
+                parse_value_string(left_str)
+            };
+
+            let right_val = if let Some(col_idx) = schema.index_of(right_str) {
+                row_values.get(col_idx).cloned().unwrap_or(ScalarValue::Null)
+            } else {
+                parse_value_string(right_str)
+            };
+
+            return op_fn(&left_val, &right_val);
+        }
+    }
+
+    // If it's a bare column reference, return that column's value
+    if let Some(col_idx) = schema.index_of(expr_str) {
+        return row_values.get(col_idx).cloned().unwrap_or(ScalarValue::Null);
+    }
+
+    ScalarValue::String(expr_str.to_string())
+}
+
+fn binary_op_add(left: &ScalarValue, right: &ScalarValue) -> ScalarValue {
+    match (left, right) {
+        (ScalarValue::Int64(l), ScalarValue::Int64(r)) => ScalarValue::Int64(l + r),
+        (ScalarValue::Int32(l), ScalarValue::Int32(r)) => ScalarValue::Int32(l + r),
+        (ScalarValue::Int64(l), ScalarValue::Int32(r)) => ScalarValue::Int64(l + *r as i64),
+        (ScalarValue::Int32(l), ScalarValue::Int64(r)) => ScalarValue::Int64(*l as i64 + r),
+        (ScalarValue::Float64(l), ScalarValue::Float64(r)) => ScalarValue::Float64(l + r),
+        (ScalarValue::Float32(l), ScalarValue::Float32(r)) => ScalarValue::Float32(l + r),
+        (ScalarValue::Int64(l), ScalarValue::Float64(r)) => ScalarValue::Float64(*l as f64 + r),
+        (ScalarValue::Float64(l), ScalarValue::Int64(r)) => ScalarValue::Float64(l + *r as f64),
+        _ => ScalarValue::Null,
+    }
+}
+
+fn binary_op_sub(left: &ScalarValue, right: &ScalarValue) -> ScalarValue {
+    match (left, right) {
+        (ScalarValue::Int64(l), ScalarValue::Int64(r)) => ScalarValue::Int64(l - r),
+        (ScalarValue::Int32(l), ScalarValue::Int32(r)) => ScalarValue::Int32(l - r),
+        (ScalarValue::Int64(l), ScalarValue::Int32(r)) => ScalarValue::Int64(l - *r as i64),
+        (ScalarValue::Int32(l), ScalarValue::Int64(r)) => ScalarValue::Int64(*l as i64 - r),
+        (ScalarValue::Float64(l), ScalarValue::Float64(r)) => ScalarValue::Float64(l - r),
+        (ScalarValue::Float32(l), ScalarValue::Float32(r)) => ScalarValue::Float32(l - r),
+        (ScalarValue::Int64(l), ScalarValue::Float64(r)) => ScalarValue::Float64(*l as f64 - r),
+        (ScalarValue::Float64(l), ScalarValue::Int64(r)) => ScalarValue::Float64(l - *r as f64),
+        _ => ScalarValue::Null,
+    }
+}
+
+fn binary_op_mul(left: &ScalarValue, right: &ScalarValue) -> ScalarValue {
+    match (left, right) {
+        (ScalarValue::Int64(l), ScalarValue::Int64(r)) => ScalarValue::Int64(l * r),
+        (ScalarValue::Int32(l), ScalarValue::Int32(r)) => ScalarValue::Int32(l * r),
+        (ScalarValue::Int64(l), ScalarValue::Int32(r)) => ScalarValue::Int64(l * *r as i64),
+        (ScalarValue::Int32(l), ScalarValue::Int64(r)) => ScalarValue::Int64(*l as i64 * r),
+        (ScalarValue::Float64(l), ScalarValue::Float64(r)) => ScalarValue::Float64(l * r),
+        (ScalarValue::Float32(l), ScalarValue::Float32(r)) => ScalarValue::Float32(l * r),
+        (ScalarValue::Int64(l), ScalarValue::Float64(r)) => ScalarValue::Float64(*l as f64 * r),
+        (ScalarValue::Float64(l), ScalarValue::Int64(r)) => ScalarValue::Float64(l * *r as f64),
+        _ => ScalarValue::Null,
+    }
+}
+
+fn binary_op_div(left: &ScalarValue, right: &ScalarValue) -> ScalarValue {
+    match (left, right) {
+        (ScalarValue::Int64(l), ScalarValue::Int64(r)) => {
+            if *r == 0 { ScalarValue::Null } else { ScalarValue::Int64(l / r) }
+        }
+        (ScalarValue::Int32(l), ScalarValue::Int32(r)) => {
+            if *r == 0 { ScalarValue::Null } else { ScalarValue::Int32(l / r) }
+        }
+        (ScalarValue::Float64(l), ScalarValue::Float64(r)) => {
+            if *r == 0.0 { ScalarValue::Null } else { ScalarValue::Float64(l / r) }
+        }
+        (ScalarValue::Float32(l), ScalarValue::Float32(r)) => {
+            if *r == 0.0 { ScalarValue::Null } else { ScalarValue::Float32(l / r) }
+        }
+        _ => ScalarValue::Null,
+    }
+}
+
+fn binary_op_mod(left: &ScalarValue, right: &ScalarValue) -> ScalarValue {
+    match (left, right) {
+        (ScalarValue::Int64(l), ScalarValue::Int64(r)) => {
+            if *r == 0 { ScalarValue::Null } else { ScalarValue::Int64(l % r) }
+        }
+        (ScalarValue::Int32(l), ScalarValue::Int32(r)) => {
+            if *r == 0 { ScalarValue::Null } else { ScalarValue::Int32(l % r) }
+        }
+        _ => ScalarValue::Null,
+    }
+}
+
 /// Create a result block with the number of affected rows.
 pub fn make_affected_rows_block(count: usize) -> Block {
     let schema = Schema::new(vec![Field::new("rows_affected", DataType::Int64, false)]);
