@@ -227,7 +227,7 @@ fn test_insert_overwrite_with_partition_parsing() {
                     println!("  columns: {:?}", insert.columns);
                     println!("  values: {:?}", insert.values);
                     println!("  is_overwrite: {}", insert.is_overwrite);
-                    println!("  partition: {:?}", insert.partition);
+                    println!("  query: {:?}", insert.query);
                 }
             }
         }
