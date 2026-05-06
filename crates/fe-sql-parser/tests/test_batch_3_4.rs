@@ -102,3 +102,137 @@ fn test_batch_4_data_governance_statements() {
     assert!(parse_sql("SHOW ROW POLICY").is_ok());
     assert!(parse_sql("SHOW ROW POLICY FOR policy1 ON test_db.test_table").is_ok());
 }
+#[test]
+fn test_insert_overwrite_partition_parsing() {
+    // Test INSERT OVERWRITE PARTITION parsing
+    let sql = "INSERT OVERWRITE insert_test_overwrite_part PARTITION(p202401) VALUES (4, '2024-01-20', 'OverwritePart1', 400)";
+    match parse_sql(sql) {
+        Ok(stmts) => {
+            println!("Parsed {} statements", stmts.len());
+            for stmt in &stmts {
+                if let Statement::Insert(insert) = stmt {
+                    println!("  is_overwrite: {}", insert.is_overwrite);
+                    println!("  columns: {:?}", insert.columns);
+                    println!("  values: {:?}", insert.values);
+                }
+            }
+        }
+        Err(e) => {
+            panic!("Parse error: {:?}", e);
+        }
+    }
+}
+
+#[test]
+fn test_insert_overwrite_partition_details() {
+    // Test the exact SQL from the issue
+    let sql = "INSERT OVERWRITE insert_test_overwrite_part PARTITION(p202401) VALUES (4, '2024-01-20', 'OverwritePart1', 400)";
+    match parse_sql(sql) {
+        Ok(stmts) => {
+            println!("\nParsing: {}", sql);
+            for stmt in &stmts {
+                if let Statement::Insert(insert) = stmt {
+                    println!("  table: {}", insert.table);
+                    println!("  columns: {:?}", insert.columns);
+                    println!("  values count: {}", insert.values.len());
+                    for (i, row) in insert.values.iter().enumerate() {
+                        println!("  row {}: {:?}", i, row);
+                    }
+                    println!("  is_overwrite: {}", insert.is_overwrite);
+                    println!("  query: {:?}", insert.query);
+                }
+            }
+        }
+        Err(e) => {
+            panic!("Parse error: {:?}", e);
+        }
+    }
+
+    // Test without PARTITION clause
+    let sql2 = "INSERT OVERWRITE insert_test_overwrite_part VALUES (4, '2024-01-20', 'OverwritePart1', 400)";
+    match parse_sql(sql2) {
+        Ok(stmts) => {
+            println!("\nParsing: {}", sql2);
+            for stmt in &stmts {
+                if let Statement::Insert(insert) = stmt {
+                    println!("  table: {}", insert.table);
+                    println!("  columns: {:?}", insert.columns);
+                    println!("  values count: {}", insert.values.len());
+                    for (i, row) in insert.values.iter().enumerate() {
+                        println!("  row {}: {:?}", i, row);
+                    }
+                    println!("  is_overwrite: {}", insert.is_overwrite);
+                }
+            }
+        }
+        Err(e) => {
+            panic!("Parse error: {:?}", e);
+        }
+    }
+}
+
+#[test]
+fn test_insert_overwrite_partition_debug() {
+    use fe_sql_parser::{parse_sql, Statement};
+    let sql = "INSERT OVERWRITE insert_test_overwrite_part PARTITION(p202401) VALUES (4, '2024-01-20', 'OverwritePart1', 400)";
+    match parse_sql(sql) {
+        Ok(stmts) => {
+            println!("Parsed statements: {:#?}", stmts);
+            for stmt in stmts {
+                if let Statement::Insert(insert) = stmt {
+                    println!("is_overwrite: {}, columns: {:?}, values: {:?}", insert.is_overwrite, insert.columns, insert.values);
+                }
+            }
+        }
+        Err(e) => {
+            panic!("Error: {:?}", e);
+        }
+    }
+}
+
+#[test]
+fn test_values_function_in_upsert() {
+    // Test the exact pattern from ON DUPLICATE KEY UPDATE
+    let sql = "INSERT INTO upsert_test_seq (seq_id, seq_name, seq_version, seq_data) VALUES (1, 'SeqItem1', 2, 'version1_data_v2') ON DUPLICATE KEY UPDATE seq_name = VALUES(seq_name), seq_version = VALUES(seq_version), seq_data = VALUES(seq_data)";
+    match parse_sql(sql) {
+        Ok(stmts) => {
+            println!("\nParsing: INSERT ... ON DUPLICATE KEY UPDATE");
+            for stmt in &stmts {
+                if let Statement::Insert(insert) = stmt {
+                    println!("  table: {}", insert.table);
+                    println!("  columns: {:?}", insert.columns);
+                    println!("  on_duplicate_key_update count: {}", insert.on_duplicate_key_update.len());
+                    for (i, update) in insert.on_duplicate_key_update.iter().enumerate() {
+                        println!("  update[{}]: column={}, value={:?}", i, update.column, update.value);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            panic!("Parse error: {:?}", e);
+        }
+    }
+}
+
+#[test]
+fn test_insert_overwrite_with_partition_parsing() {
+    // Test the exact SQL from 01_insert_operations.sql line 325
+    let sql = "INSERT OVERWRITE insert_test_overwrite_part PARTITION(p202401) VALUES (4, '2024-01-20', 'OverwritePart1', 400)";
+    match parse_sql(sql) {
+        Ok(stmts) => {
+            println!("\nParsing: {}", sql);
+            for stmt in &stmts {
+                if let Statement::Insert(insert) = stmt {
+                    println!("  table: {}", insert.table);
+                    println!("  columns: {:?}", insert.columns);
+                    println!("  values: {:?}", insert.values);
+                    println!("  is_overwrite: {}", insert.is_overwrite);
+                    println!("  partition: {:?}", insert.partition);
+                }
+            }
+        }
+        Err(e) => {
+            panic!("Parse error: {:?}", e);
+        }
+    }
+}

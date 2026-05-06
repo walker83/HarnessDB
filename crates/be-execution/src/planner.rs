@@ -175,6 +175,15 @@ impl ExecutionContext {
             PlanNodeType::Insert(insert) => {
                 self.create_insert_node(insert, &plan.children)
             }
+            // CTE nodes don't produce output themselves - pass through the child plan.
+            // The CTE definition was already inlined by the planner when resolving table references.
+            PlanNodeType::Cte(_) => {
+                if let Some(child) = plan.children.first() {
+                    self.create_exec_plan_impl(child)
+                } else {
+                    Err(PlanExecutionError::UnsupportedNode("Cte without child".into()))
+                }
+            }
             // DDL and other node types - return a no-op scan that returns empty
             _ => {
                 tracing::debug!("Unsupported node type for execution: {:?}", plan.node_type);

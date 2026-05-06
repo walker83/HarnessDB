@@ -1,6 +1,56 @@
 use crate::ast::*;
 use crate::error::ParseError;
 
+/// Workaround for sqlparser: it doesn't support `INSERT ... SELECT ... ON DUPLICATE KEY`.
+/// MySQL requires `FROM DUAL` in this case. This function auto-injects DUAL.
+/// E.g.: `INSERT INTO t SELECT ... ON DUPLICATE KEY UPDATE ...`
+/// Becomes: `INSERT INTO t SELECT ... FROM DUAL ON DUPLICATE KEY UPDATE ...`
+fn fixup_insert_select_on_duplicate(sql: &str) -> String {
+    let upper = sql.trim().to_uppercase();
+
+    // Check if this is an INSERT statement
+    if !upper.starts_with("INSERT") {
+        return sql.to_string();
+    }
+
+    // Check if it has ON DUPLICATE KEY
+    if !upper.contains("ON DUPLICATE KEY") {
+        return sql.to_string();
+    }
+
+    // Already has FROM DUAL
+    if upper.contains("FROM DUAL") {
+        return sql.to_string();
+    }
+
+    // Check if it has SELECT (not just VALUES)
+    // INSERT ... VALUES: has VALUES but no SELECT before ON DUPLICATE KEY
+    // INSERT ... SELECT: has SELECT before ON DUPLICATE KEY
+    let on_dup_pos = upper.find("ON DUPLICATE KEY").unwrap();
+    let before_on_dup = &upper[..on_dup_pos];
+
+    if !before_on_dup.contains("SELECT") {
+        // This is INSERT ... VALUES ... ON DUPLICATE KEY (which works without FROM DUAL)
+        return sql.to_string();
+    }
+
+    // Find the pattern: INSERT ... SELECT ... ON DUPLICATE KEY
+    // and inject " FROM DUAL" after the SELECT
+    let sql_lower = sql.to_lowercase();
+    let on_dup_pos_lower = on_dup_pos; // same byte position
+
+    // Find SELECT keyword before ON DUPLICATE KEY
+    if let Some(_select_pos) = sql_lower[..on_dup_pos_lower].rfind("select") {
+        // Insert " FROM DUAL" right before ON DUPLICATE KEY
+        let mut result = sql[..on_dup_pos_lower].to_string();
+        result.push_str(" FROM DUAL ");
+        result.push_str(&sql[on_dup_pos_lower..]);
+        return result;
+    }
+
+    sql.to_string()
+}
+
 pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let trimmed = sql.trim().to_uppercase();
 
@@ -334,6 +384,10 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
             Err(e) => return Err(e),
         }
     }
+
+    // Workaround: sqlparser doesn't support INSERT ... SELECT ... ON DUPLICATE KEY.
+    // MySQL requires FROM DUAL in this case. We auto-inject DUAL to make it work.
+    let sql_to_parse = fixup_insert_select_on_duplicate(&sql_to_parse);
 
     let dialect = sqlparser::dialect::MySqlDialect {};
     let statements = sqlparser::parser::Parser::parse_sql(&dialect, &sql_to_parse)
@@ -1400,8 +1454,43 @@ fn convert_statement(
 ) -> Result<Statement, ParseError> {
     match stmt {
         sqlparser::ast::Statement::Query(query) => {
-            let query_stmt = convert_query(*query)?;
-            Ok(Statement::Query(query_stmt))
+            // Handle UPDATE/INSERT with top-level CTE (e.g., WITH cte AS (...) UPDATE/INSERT)
+            // sqlparser parses this as Statement::Query with body SetExpr::Update or SetExpr::Insert
+            match *query.body {
+                sqlparser::ast::SetExpr::Update(sqlparser::ast::Statement::Update {
+                    table,
+                    assignments,
+                    from: _,
+                    selection,
+                    returning: _,
+                    or: _,
+                }) => {
+                    let table_name = table.to_string();
+                    let set_clauses: Vec<SetClause> = assignments.iter().map(|s| {
+                        let column = match &s.target {
+                            sqlparser::ast::AssignmentTarget::ColumnName(name) => name.to_string(),
+                            sqlparser::ast::AssignmentTarget::Tuple(_) => String::new(),
+                        };
+                        let value = convert_expr(s.value.clone());
+                        SetClause { column, value }
+                    }).collect();
+                    let selection = selection.map(convert_expr);
+                    Ok(Statement::Update(UpdateStmt {
+                        table: table_name,
+                        set_clauses,
+                        selection,
+                    }))
+                }
+                sqlparser::ast::SetExpr::Insert(inner_stmt) => {
+                    // For INSERT with CTE, recursively convert the inner statement
+                    // The CTE is in the source query's WITH clause
+                    convert_statement(inner_stmt)
+                }
+                _ => {
+                    let query_stmt = convert_query(*query)?;
+                    Ok(Statement::Query(query_stmt))
+                }
+            }
         }
         sqlparser::ast::Statement::Insert(stmt) => {
             let table_name = stmt.table_name.to_string();

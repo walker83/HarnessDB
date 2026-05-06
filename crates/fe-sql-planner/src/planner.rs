@@ -503,8 +503,8 @@ impl Planner {
                 vec![cte_plan],
             );
 
-            // Plan the main query
-            let main_plan = self.plan_query_body(&query, Some(&cte_name))?;
+            // Plan the main query, passing CTE context for table reference resolution
+            let main_plan = self.plan_query_body(&query, Some((&cte_name, &cte_columns)))?;
 
             // Combine CTE wrapper with main query
             Ok(self.make_node(
@@ -518,10 +518,10 @@ impl Planner {
         }
     }
 
-    fn plan_query_body(&self, query: &QueryStmt, _cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
+    fn plan_query_body(&self, query: &QueryStmt, cte_ctx: Option<(&str, &Vec<String>)>) -> Result<PlanNode, DrorisError> {
         // 1. FROM clause (table references, joins, subqueries).
         let mut plan = if let Some(table_ref) = &query.from {
-            self.plan_table_ref(table_ref)?
+            self.plan_table_ref_with_cte(table_ref, cte_ctx)?
         } else {
             self.make_node(
                 PlanNodeType::Scan(ScanNode {
@@ -720,9 +720,27 @@ impl Planner {
         self.plan_table_ref_with_cte(table_ref, None)
     }
 
-    fn plan_table_ref_with_cte(&self, table_ref: &TableRef, _cte_name: Option<&str>) -> Result<PlanNode, DrorisError> {
+    fn plan_table_ref_with_cte(&self, table_ref: &TableRef, cte_ctx: Option<(&str, &Vec<String>)>) -> Result<PlanNode, DrorisError> {
         match table_ref {
             TableRef::Table { name, alias: _ } => {
+                // Check if this table reference matches a CTE
+                if let Some((cte_name, cte_columns)) = cte_ctx {
+                    if name == cte_name {
+                        // Return a ValuesExecNode that produces the CTE column values
+                        // The actual CTE data will be provided at execution time via the CteNode
+                        return Ok(self.make_node(
+                            PlanNodeType::Values(VirtualValuesNode {
+                                rows: vec![cte_columns.iter().map(|c| {
+                                    fe_sql_parser::ast::Expr::Literal(
+                                        fe_sql_parser::ast::LiteralValue::String(c.clone())
+                                    )
+                                }).collect()],
+                            }),
+                            vec![],
+                        ));
+                    }
+                }
+
                 let (catalog, database, table_name) = self.resolve_table_name(name);
 
                 let columns = if let Some(ref cat) = catalog {
@@ -749,8 +767,8 @@ impl Planner {
                 r#type,
                 condition,
             } => {
-                let left_plan = self.plan_table_ref(left)?;
-                let right_plan = self.plan_table_ref(right)?;
+                let left_plan = self.plan_table_ref_with_cte(left, cte_ctx)?;
+                let right_plan = self.plan_table_ref_with_cte(right, cte_ctx)?;
 
                 let join_type = match r#type {
                     JoinType::Inner => JoinTypePlan::Inner,

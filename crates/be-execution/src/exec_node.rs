@@ -155,7 +155,6 @@ impl ValuesExecNode {
                 let val = Self::eval_expr(expr)?;
                 Self::eval_cast(&val, target_type)
             }
-            Expr::Wildcard => Err("Wildcard not allowed in VALUES".to_string()),
             other => Err(format!("Unsupported expression in VALUES: {:?}", other)),
         }
     }
