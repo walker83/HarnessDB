@@ -184,6 +184,7 @@ fn test_create_table_with_range_partition() {
         row_count: 0,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
 
     catalog.create_table("test_db", table).unwrap();
@@ -226,6 +227,7 @@ fn test_create_table_with_hash_distribution() {
         row_count: 0,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
 
     catalog.create_table("test_db", table).unwrap();
@@ -269,6 +271,7 @@ fn test_create_table_aggregate_key() {
         row_count: 0,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
 
     catalog.create_table("test_db", table).unwrap();
@@ -299,6 +302,7 @@ fn test_create_table_unique_key() {
         row_count: 0,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
 
     catalog.create_table("test_db", table).unwrap();
@@ -327,6 +331,7 @@ fn test_create_table_primary_key() {
         row_count: 0,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
 
     catalog.create_table("test_db", table).unwrap();
@@ -423,6 +428,7 @@ fn test_ddl_full_lifecycle() {
         row_count: 0,
         data_size: 0,
         stats: None,
+        view_definition: None,
     };
     catalog.create_table("lifecycle_test", table).unwrap();
 

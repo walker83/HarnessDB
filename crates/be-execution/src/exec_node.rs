@@ -1,9 +1,10 @@
 use async_trait::async_trait;
-use common::Result;
+use common::{Result, DrorisError};
 use types::{Block, Bitmap, Vector, Schema, ScalarValue};
 use types::vector::{
     BooleanVector, Int8Vector, Int16Vector, Int32Vector, Int64Vector, Int128Vector,
     Float32Vector, Float64Vector, StringVector, DateVector, DateTimeVector, NullVector,
+    JsonVector,
 };
 use types::runtime_filter::{MinMaxFilter, InFilter};
 use be_storage::index::BloomFilter;
@@ -36,6 +37,7 @@ pub enum ExecutionPlan {
     Delete(DeleteExecNode),
     AlterTable(AlterTableExecNode),
     Insert(InsertExecNode),
+    Values(ValuesExecNode),
 }
 
 #[async_trait]
@@ -56,6 +58,7 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Delete(node) => node.open().await,
             ExecutionPlan::AlterTable(node) => node.open().await,
             ExecutionPlan::Insert(node) => node.open().await,
+            ExecutionPlan::Values(node) => node.open().await,
         }
     }
 
@@ -75,6 +78,7 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Delete(node) => node.get_next().await,
             ExecutionPlan::AlterTable(node) => node.get_next().await,
             ExecutionPlan::Insert(node) => node.get_next().await,
+            ExecutionPlan::Values(node) => node.get_next().await,
         }
     }
 
@@ -94,6 +98,7 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Delete(node) => node.close().await,
             ExecutionPlan::AlterTable(node) => node.close().await,
             ExecutionPlan::Insert(node) => node.close().await,
+            ExecutionPlan::Values(node) => node.close().await,
         }
     }
 
@@ -113,8 +118,121 @@ impl ExecNode for ExecutionPlan {
             ExecutionPlan::Delete(node) => node.as_any(),
             ExecutionPlan::AlterTable(node) => node.as_any(),
             ExecutionPlan::Insert(node) => node.as_any(),
+            ExecutionPlan::Values(node) => node.as_any(),
         }
     }
+}
+
+// ---- VALUES Execution Node ----
+
+use fe_sql_parser::ast::{Expr, LiteralValue};
+
+pub struct ValuesExecNode {
+    pub rows: Vec<Vec<Expr>>,
+    pub schema: Schema,
+    pub returned: bool,
+}
+
+impl ValuesExecNode {
+    pub fn new(rows: Vec<Vec<Expr>>, schema: Schema) -> Self {
+        Self { rows, schema, returned: false }
+    }
+
+    fn eval_expr(expr: &Expr) -> std::result::Result<ScalarValue, String> {
+        match expr {
+            Expr::Literal(lv) => Self::literal_to_scalar(lv),
+            other => Err(format!("Unsupported expression in VALUES: {:?}", other)),
+        }
+    }
+
+    fn literal_to_scalar(lv: &LiteralValue) -> std::result::Result<ScalarValue, String> {
+        match lv {
+            LiteralValue::Null => Ok(ScalarValue::Null),
+            LiteralValue::Boolean(b) => Ok(ScalarValue::Boolean(*b)),
+            LiteralValue::Int64(n) => Ok(ScalarValue::Int64(*n)),
+            LiteralValue::Float64(f) => Ok(ScalarValue::Float64(*f)),
+            LiteralValue::String(s) => Ok(ScalarValue::String(s.clone())),
+            LiteralValue::Date(s) => {
+                let days = s.replace('-', "").parse::<i32>()
+                    .map_err(|_| "Invalid date format")?;
+                Ok(ScalarValue::Date(days))
+            }
+        }
+    }
+
+    fn scalar_to_vector(values: &[ScalarValue], data_type: &types::DataType) -> Vector {
+        match data_type {
+            types::DataType::Boolean => Vector::Boolean(BooleanVector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Boolean(b) = v { Some(*b) } else { None }).collect())),
+            types::DataType::Int8 => Vector::Int8(Int8Vector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Int8(n) = v { Some(*n) } else { None }).collect())),
+            types::DataType::Int16 => Vector::Int16(Int16Vector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Int16(n) = v { Some(*n) } else { None }).collect())),
+            types::DataType::Int32 => Vector::Int32(Int32Vector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Int32(n) = v { Some(*n) } else { None }).collect())),
+            types::DataType::Int64 => Vector::Int64(Int64Vector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Int64(n) = v { Some(*n) } else { None }).collect())),
+            types::DataType::Int128 => Vector::Int128(Int128Vector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Int128(n) = v { Some(*n) } else { None }).collect())),
+            types::DataType::Float32 => Vector::Float32(Float32Vector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Float32(n) = v { Some(*n) } else { None }).collect())),
+            types::DataType::Float64 => Vector::Float64(Float64Vector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Float64(n) = v { Some(*n) } else { None }).collect())),
+            types::DataType::String => Vector::String(StringVector::from_option_vec(
+                values.iter().map(|v| if let ScalarValue::String(s) = v { Some(s.clone()) } else { None }).collect())),
+            types::DataType::Date => Vector::Date(DateVector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::Date(d) = v { Some(*d) } else { None }).collect())),
+            types::DataType::DateTime => Vector::DateTime(DateTimeVector::from_nullable_vec(
+                values.iter().map(|v| if let ScalarValue::DateTime(d) = v { Some(*d) } else { None }).collect())),
+            types::DataType::Json => Vector::Json(JsonVector::from_option_vec(
+                values.iter().map(|v| if let ScalarValue::Json(j) = v { Some(ScalarValue::Json(j.clone())) } else { None }).collect())),
+            _ => Vector::Null(NullVector::new(values.len())),
+        }
+    }
+
+    fn generate_block(&self) -> std::result::Result<Block, DrorisError> {
+        if self.rows.is_empty() {
+            return Err(DrorisError::Internal("No rows to generate".to_string()));
+        }
+        let num_cols = self.schema.num_fields();
+        let num_rows = self.rows.len();
+        let mut column_values: Vec<Vec<ScalarValue>> = vec![Vec::with_capacity(num_rows); num_cols];
+        for row in &self.rows {
+            if row.len() != num_cols {
+                return Err(DrorisError::Internal(format!("Row has {} columns but expected {}", row.len(), num_cols)));
+            }
+            for (col_idx, expr) in row.iter().enumerate() {
+                column_values[col_idx].push(Self::eval_expr(expr).map_err(|s| DrorisError::Internal(s))?);
+            }
+        }
+        let vectors: Vec<Vector> = (0..num_cols).map(|col_idx| {
+            let data_type = self.schema.field(col_idx).map(|f| &f.data_type)
+                .ok_or_else(|| DrorisError::Internal(format!("No field at index {}", col_idx)))?;
+            Ok::<Vector, DrorisError>(Self::scalar_to_vector(&column_values[col_idx], data_type))
+        }).collect::<std::result::Result<Vec<Vector>, _>>()?;
+        Ok(Block::new(self.schema.clone(), vectors))
+    }
+}
+
+#[async_trait]
+impl ExecNode for ValuesExecNode {
+    async fn open(&mut self) -> Result<()> {
+        self.returned = false;
+        Ok(())
+    }
+    async fn get_next(&mut self) -> Result<Option<Block>> {
+        if self.returned {
+            return Ok(None);
+        }
+        let block = self.generate_block()?;
+        self.returned = true;
+        Ok(Some(block))
+    }
+    async fn close(&mut self) -> Result<()> {
+        self.returned = false;
+        Ok(())
+    }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 
 // ---- INSERT Execution Node ----
@@ -126,6 +244,7 @@ pub struct InsertExecNode {
     pub child: Option<Box<ExecutionPlan>>,  // child plan (either Values or Select)
     pub tablet_id: Option<u64>,
     pub storage: Option<Arc<StorageEngine>>,
+    pub transaction_ctx: Option<Arc<StdRwLock<TransactionContext>>>,
     pub executed: bool,
 }
 
@@ -138,6 +257,7 @@ impl InsertExecNode {
             child: None,
             tablet_id: None,
             storage: None,
+            transaction_ctx: None,
             executed: false,
         }
     }
@@ -155,6 +275,11 @@ impl InsertExecNode {
     pub fn with_storage(mut self, tablet_id: u64, storage: Arc<StorageEngine>) -> Self {
         self.tablet_id = Some(tablet_id);
         self.storage = Some(storage);
+        self
+    }
+
+    pub fn with_transaction_ctx(mut self, tx_ctx: Arc<StdRwLock<TransactionContext>>) -> Self {
+        self.transaction_ctx = Some(tx_ctx);
         self
     }
 
@@ -1648,6 +1773,14 @@ impl ExecNode for UpdateExecNode {
             return Ok(Some(make_affected_rows_block(0)));
         }
 
+        // Build inverted bitmap to get non-matching rows (preserved as-is)
+        let mut inverted_bits = Vec::with_capacity(full_block.num_rows());
+        for i in 0..full_block.num_rows() {
+            inverted_bits.push(!selection.get(i));
+        }
+        let inverted_selection = Bitmap::from_bools(&inverted_bits);
+        let non_matching_block = full_block.filter(&inverted_selection);
+
         // Extract matching rows and apply SET clauses
         let mut modified_block = full_block.filter(&selection);
         let schema = modified_block.schema().clone();
@@ -1663,6 +1796,12 @@ impl ExecNode for UpdateExecNode {
             }
         }
 
+        // Combine modified rows with non-matching rows to form the complete result
+        let mut final_block = modified_block;
+        if !non_matching_block.is_empty() {
+            final_block.append_block(&non_matching_block);
+        }
+
         // Check if we're in transaction mode
         if let Some(ref tx_ctx) = self.transaction_ctx {
             let mut tx = tx_ctx.write().unwrap();
@@ -1672,10 +1811,10 @@ impl ExecNode for UpdateExecNode {
                     tablet_id,
                     predicates: predicates.clone(),
                 });
-                // Stage pending write with the modified block
+                // Stage pending write with the final block (modified + non-matching)
                 tx.pending_writes.push(PendingWrite {
                     tablet_id,
-                    block: modified_block,
+                    block: final_block,
                     op_type: WriteOp::Update,
                 });
                 tracing::info!("UPDATE on {}.{} staged to transaction: {} rows affected", self.database, self.table_name, affected_count);
@@ -1683,9 +1822,9 @@ impl ExecNode for UpdateExecNode {
             }
         }
 
-        // Delete old matching rows, then write back modified rows
+        // Delete old matching rows, then write back all rows (modified + non-matching)
         storage.delete(tablet_id, &predicates)?;
-        storage.write_batch(tablet_id, &modified_block)?;
+        storage.write_batch(tablet_id, &final_block)?;
 
         tracing::info!("UPDATE on {}.{}: {} rows affected", self.database, self.table_name, affected_count);
         Ok(Some(make_affected_rows_block(affected_count)))

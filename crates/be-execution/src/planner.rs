@@ -9,7 +9,7 @@
 
 use std::sync::{Arc, RwLock as StdRwLock};
 use be_storage::StorageEngine;
-use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, UpdateNode, DeleteNode, AlterTableNode, InsertNode};
+use fe_sql_planner::plan_node::{PlanNode, PlanNodeType, ScanNode, UpdateNode, DeleteNode, AlterTableNode, InsertNode, VirtualValuesNode};
 use fe_catalog::CatalogManager;
 use types::Schema;
 
@@ -17,7 +17,7 @@ use crate::exec_node::{
     ExecutionPlan, ExecNode, ScanExecNode, FilterExecNode, ProjectExecNode,
     AggregateExecNode, SortExecNode, LimitExecNode, HashJoinExecNode,
     UpdateExecNode, DeleteExecNode, AlterTableExecNode, InsertExecNode,
-    TransactionContext, PendingWrite, WriteOp, PendingDelete,
+    ValuesExecNode, TransactionContext, PendingWrite, WriteOp, PendingDelete,
 };
 
 /// Error type for plan execution conversion.
@@ -248,9 +248,25 @@ impl ExecutionContext {
         let database = insert.database.as_deref().unwrap_or("default");
         let tablet_id = self.resolve_tablet_id(database, &insert.table_name).ok();
 
+        // Get table schema for Values node
+        let values_schema = self.get_table_schema(database, &insert.table_name)?;
+
         // Create child execution plan from first child (either Values or Select)
         let child_plan = if !children.is_empty() {
-            Some(self.create_exec_plan_impl(&children[0])?)
+            let child = &children[0];
+            match &child.node_type {
+                PlanNodeType::Values(vals) => {
+                    // Create ValuesExecNode directly with schema
+                    Some(ExecutionPlan::Values(ValuesExecNode::new(
+                        vals.rows.clone(),
+                        values_schema,
+                    )))
+                }
+                _ => {
+                    // For SELECT or other, use the normal conversion
+                    Some(self.create_exec_plan_impl(child)?)
+                }
+            }
         } else {
             None
         };
@@ -269,7 +285,26 @@ impl ExecutionContext {
             node = node.with_storage(tid, storage);
         }
 
+        // Pass transaction context if set
+        if let Some(ref tx_ctx) = self.transaction_ctx {
+            node = node.with_transaction_ctx(tx_ctx.clone());
+        }
+
         Ok(ExecutionPlan::Insert(node))
+    }
+
+    /// Get the schema for a table.
+    fn get_table_schema(&self, database: &str, table_name: &str) -> Result<Schema, PlanExecutionError> {
+        let table = self.catalog
+            .get_table(database, table_name)
+            .ok_or_else(|| PlanExecutionError::TableNotFound(format!("{}.{}", database, table_name)))?;
+
+        // Convert table columns to schema fields
+        let fields: Vec<types::Field> = table.columns.iter().map(|col| {
+            types::Field::new(&col.name, col.data_type.clone(), col.nullable)
+        }).collect();
+
+        Ok(Schema::new(fields))
     }
 
     fn create_scan_node(&self, scan: &ScanNode) -> Result<ExecutionPlan, PlanExecutionError> {
