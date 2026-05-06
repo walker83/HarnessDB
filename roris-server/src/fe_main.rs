@@ -79,6 +79,16 @@ struct TransactionContext {
     pending_writes: Vec<PendingWrite>,
     // For UPDATE/DELETE, we track the predicates to apply at commit time
     pending_deletes: Vec<PendingDelete>,
+    // Savepoints for nested transaction control
+    savepoints: Vec<Savepoint>,
+}
+
+/// A named savepoint that stores the state of pending writes/deletes at the time of creation.
+#[derive(Clone)]
+struct Savepoint {
+    name: String,
+    pending_writes_len: usize,
+    pending_deletes_len: usize,
 }
 
 #[derive(Clone)]
@@ -93,6 +103,7 @@ impl TransactionContext {
             in_transaction: false,
             pending_writes: Vec::new(),
             pending_deletes: Vec::new(),
+            savepoints: Vec::new(),
         }
     }
 
@@ -100,6 +111,19 @@ impl TransactionContext {
         self.in_transaction = true;
         self.pending_writes.clear();
         self.pending_deletes.clear();
+        self.savepoints.clear();
+    }
+
+    fn savepoint(&mut self, name: String) -> Result<(), String> {
+        if !self.in_transaction {
+            return Err("No active transaction".to_string());
+        }
+        self.savepoints.push(Savepoint {
+            name,
+            pending_writes_len: self.pending_writes.len(),
+            pending_deletes_len: self.pending_deletes.len(),
+        });
+        Ok(())
     }
 
     fn commit(&mut self, storage: &StorageEngine) -> Result<usize, String> {
@@ -128,6 +152,33 @@ impl TransactionContext {
         self.in_transaction = false;
         self.pending_writes.clear();
         self.pending_deletes.clear();
+        self.savepoints.clear();
+    }
+
+    fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), String> {
+        if !self.in_transaction {
+            return Err("No active transaction".to_string());
+        }
+        // Find the savepoint
+        let pos = self.savepoints.iter().position(|s| s.name == name)
+            .ok_or_else(|| format!("Savepoint '{}' not found", name))?;
+        let sp = &self.savepoints[pos];
+        // Truncate pending writes/deletes to savepoint state
+        self.pending_writes.truncate(sp.pending_writes_len);
+        self.pending_deletes.truncate(sp.pending_deletes_len);
+        // Remove savepoints after this one (nested savepoints)
+        self.savepoints.truncate(pos);
+        Ok(())
+    }
+
+    fn release_savepoint(&mut self, name: &str) -> Result<(), String> {
+        if !self.in_transaction {
+            return Err("No active transaction".to_string());
+        }
+        let pos = self.savepoints.iter().position(|s| s.name == name)
+            .ok_or_else(|| format!("Savepoint '{}' not found", name))?;
+        self.savepoints.remove(pos);
+        Ok(())
     }
 }
 
@@ -1031,8 +1082,6 @@ impl RorisQueryHandler {
     }
 
     fn insert(&self, stmt: &fe_sql_parser::ast::InsertStmt) -> Result<QueryResult, String> {
-        use tokio::runtime::Runtime;
-
         // Resolve table: db.table or just table (use current_db)
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
@@ -1058,9 +1107,9 @@ impl RorisQueryHandler {
         let storage = self.storage.clone();
         let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
 
-        // Execute synchronously using tokio runtime
-        let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
-        let results = runtime.block_on(async { execute_plan(&plan, &exec_context).await })
+        // Execute using current tokio runtime
+        let handle = tokio::runtime::Handle::current();
+        let results = handle.block_on(async { execute_plan(&plan, &exec_context).await })
             .map_err(|e| format!("Execution error: {}", e))?;
 
         // Extract affected rows from results
@@ -1101,9 +1150,9 @@ impl RorisQueryHandler {
         let storage = self.storage.clone();
         let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
 
-        // Execute synchronously using tokio runtime
-        let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
-        let results = runtime.block_on(async { execute_plan(&plan, &exec_context).await })
+        // Execute using current tokio runtime
+        let handle = tokio::runtime::Handle::current();
+        let results = handle.block_on(async { execute_plan(&plan, &exec_context).await })
             .map_err(|e| format!("Execution error: {}", e))?;
 
         // Extract affected rows from results
@@ -1144,9 +1193,9 @@ impl RorisQueryHandler {
         let storage = self.storage.clone();
         let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
 
-        // Execute synchronously using tokio runtime
-        let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
-        let results = runtime.block_on(async { execute_plan(&plan, &exec_context).await })
+        // Execute using current tokio runtime
+        let handle = tokio::runtime::Handle::current();
+        let results = handle.block_on(async { execute_plan(&plan, &exec_context).await })
             .map_err(|e| format!("Execution error: {}", e))?;
 
         // Extract affected rows from results
@@ -1193,6 +1242,31 @@ impl RorisQueryHandler {
             return Err("No transaction to rollback".to_string());
         }
         tx.rollback();
+        Ok(QueryResult::ok())
+    }
+
+    fn savepoint(&self, name: String) -> Result<QueryResult, String> {
+        let mut tx = self.transaction.write().unwrap();
+        tx.savepoint(name).map_err(|e| e)?;
+        Ok(QueryResult::ok())
+    }
+
+    fn rollback_to_savepoint(&self, name: String) -> Result<QueryResult, String> {
+        let mut tx = self.transaction.write().unwrap();
+        tx.rollback_to_savepoint(&name).map_err(|e| e)?;
+        Ok(QueryResult::ok())
+    }
+
+    fn release_savepoint(&self, name: String) -> Result<QueryResult, String> {
+        let mut tx = self.transaction.write().unwrap();
+        tx.release_savepoint(&name).map_err(|e| e)?;
+        Ok(QueryResult::ok())
+    }
+
+    fn set_transaction_isolation(&self, level: String) -> Result<QueryResult, String> {
+        // For now, just acknowledge the setting - actual isolation level enforcement
+        // would require more complex changes to the storage engine
+        tracing::info!("Setting transaction isolation level to: {}", level);
         Ok(QueryResult::ok())
     }
 
