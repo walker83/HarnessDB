@@ -1027,9 +1027,11 @@ impl RorisQueryHandler {
     }
 
     fn insert(&self, stmt: &fe_sql_parser::ast::InsertStmt) -> Result<QueryResult, String> {
+        use tokio::runtime::Runtime;
+
         // Resolve table: db.table or just table (use current_db)
         let parts: Vec<&str> = stmt.table.split('.').collect();
-        let (db, table_name) = match parts.len() {
+        let (database, table_name) = match parts.len() {
             1 => {
                 let current_db = self.current_database.read().unwrap();
                 (current_db.clone(), stmt.table.clone())
@@ -1040,7 +1042,31 @@ impl RorisQueryHandler {
                 (current_db.clone(), stmt.table.clone())
             }
         };
-        Err(format!("INSERT execution not yet implemented - table: {}.{}", db, table_name))
+
+        // Create planner and plan the INSERT statement
+        let catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        let planner = Planner::new(Arc::new(catalog_for_planner));
+
+        let plan = planner.plan(Statement::Insert(stmt.clone()))
+            .map_err(|e| format!("Planning error: {}", e))?;
+
+        // Create execution context
+        let storage = self.storage.clone();
+        let exec_context = ExecutionContext::new(storage, Arc::new(CatalogManager::with_path("data/fe/doris-meta")));
+
+        // Execute synchronously using tokio runtime
+        let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+        let results = runtime.block_on(async { execute_plan(&plan, &exec_context).await })
+            .map_err(|e| format!("Execution error: {}", e))?;
+
+        // Extract affected rows from results
+        let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
+
+        tracing::info!("INSERT into {}.{}: {} rows affected", database, table_name, affected_rows);
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![vec![Some(affected_rows.to_string())]],
+        ))
     }
 
     fn update(&self, stmt: &fe_sql_parser::ast::UpdateStmt) -> Result<QueryResult, String> {
