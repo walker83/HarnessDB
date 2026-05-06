@@ -1068,7 +1068,10 @@ impl RorisQueryHandler {
         // Create planner and plan the UPDATE statement
         let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
         catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let planner = Planner::new(Arc::new(catalog_for_planner));
+        let mut planner = Planner::new(Arc::new(catalog_for_planner));
+
+        // Set current database for the planner so table resolution works correctly
+        planner.set_database(&database);
 
         let plan = planner.plan(Statement::Update(stmt.clone()))
             .map_err(|e| format!("Planning error: {}", e))?;
