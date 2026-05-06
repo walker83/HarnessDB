@@ -343,25 +343,83 @@ impl ExecNode for InsertExecNode {
             return Ok(Some(make_affected_rows_block(0)));
         };
 
+        // Create tablet on-demand if it doesn't exist
+        if !storage.get_tablet(tablet_id) {
+            tracing::info!("Creating tablet {} on-demand for {}.{}", tablet_id, self.database, self.table_name);
+            // Get schema from ValuesExecNode child only
+            let block_schema = if let Some(ref child) = self.child {
+                if let ExecutionPlan::Values(values_node) = child.as_ref() {
+                    Some(values_node.schema.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(schema) = block_schema {
+                let columns: Vec<be_storage::tablet::TabletColumn> = schema.fields().iter().enumerate().map(|(idx, f)| {
+                    be_storage::tablet::TabletColumn {
+                        name: f.name.clone(),
+                        data_type: f.data_type.clone(),
+                        nullable: f.nullable,
+                        is_key: idx == 0,
+                        agg_type: None,
+                    }
+                }).collect();
+                let tablet_schema = be_storage::tablet::TabletSchema {
+                    tablet_id,
+                    columns,
+                    keys_type: "Duplicate".to_string(),
+                    num_rows_per_row_block: 1024,
+                };
+                if let Err(e) = storage.create_tablet(tablet_id, tablet_schema) {
+                    tracing::warn!("Failed to create tablet {}: {}", tablet_id, e);
+                }
+            }
+        }
+
         let mut total_rows_written: usize = 0;
 
-        // Process child plan if present
+        // Collect all blocks from child plan first
+        let mut blocks_to_write: Vec<Block> = Vec::new();
         if let Some(ref mut child) = self.child {
-            // Get all blocks from child
             while let Some(mut block) = child.get_next().await? {
                 // Handle column projection if columns are specified
                 if !self.columns.is_empty() {
                     let schema = block.schema().clone();
                     Self::reorder_columns_to_schema(&mut block, &self.columns, &schema);
                 }
-
-                // Handle ON DUPLICATE KEY UPDATE (not yet implemented)
-                // TODO: Implement ON DUPLICATE KEY UPDATE logic
-
-                // Write block to storage
-                storage.write_batch(tablet_id, &block)?;
-                total_rows_written += block.num_rows();
+                blocks_to_write.push(block);
             }
+        }
+
+        // Check if we're in transaction mode and stage writes if so
+        if let Some(ref tx_ctx) = self.transaction_ctx {
+            let mut tx = tx_ctx.write().unwrap();
+            if tx.in_transaction {
+                // Stage all pending writes for transaction commit
+                for block in &blocks_to_write {
+                    tx.pending_writes.push(PendingWrite {
+                        tablet_id,
+                        block: block.clone(),
+                        op_type: WriteOp::Insert,
+                    });
+                    total_rows_written += block.num_rows();
+                }
+                tracing::info!("INSERT into {}.{} staged to transaction: {} rows affected",
+                    self.database, self.table_name, total_rows_written);
+                self.executed = true;
+                return Ok(Some(make_affected_rows_block(total_rows_written)));
+            }
+        }
+
+        // Not in transaction mode - write directly to storage
+        for block in &blocks_to_write {
+            // Handle ON DUPLICATE KEY UPDATE (not yet implemented)
+            // TODO: Implement ON DUPLICATE KEY UPDATE logic
+
+            storage.write_batch(tablet_id, &block)?;
+            total_rows_written += block.num_rows();
         }
 
         self.executed = true;

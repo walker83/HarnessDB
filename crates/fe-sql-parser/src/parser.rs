@@ -9,13 +9,17 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let mut doris_distribution: Option<DistributionDef> = None;
     let mut doris_partition: Option<PartitionDef> = None;
     let mut doris_properties: Vec<(String, String)> = vec![];
+    let mut doris_keys_type = KeysType::Duplicate;
+    let mut doris_unique_keys: Vec<UniqueKeyDef> = vec![];
 
     if trimmed.starts_with("CREATE TABLE") {
-        let (clean, dist, part, props) = preprocess_create_table(sql);
-        sql_to_parse = clean;
-        doris_distribution = dist;
-        doris_partition = part;
-        doris_properties = props;
+        let preprocessed = preprocess_create_table(sql);
+        sql_to_parse = preprocessed.clean_sql;
+        doris_distribution = preprocessed.distribution;
+        doris_partition = preprocessed.partition;
+        doris_properties = preprocessed.properties;
+        doris_keys_type = preprocessed.keys_type;
+        doris_unique_keys = preprocessed.unique_keys;
     } else {
         sql_to_parse = sql.to_string();
     }
@@ -333,6 +337,9 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
                 if !doris_properties.is_empty() {
                     ct.properties = doris_properties.clone();
                 }
+                // Attach table keys from Doris syntax
+                ct.keys_type = doris_keys_type;
+                ct.unique_keys = doris_unique_keys.clone();
             }
             Ok(converted)
         })
@@ -998,16 +1005,88 @@ fn parse_refresh_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErr
     })])
 }
 
-fn preprocess_create_table(sql: &str) -> (String, Option<DistributionDef>, Option<PartitionDef>, Vec<(String, String)>) {
+/// Result of preprocessing a CREATE TABLE statement
+struct PreprocessedCreateTable {
+    /// SQL with Doris-specific extensions removed
+    clean_sql: String,
+    /// DISTRIBUTED BY clause info
+    distribution: Option<DistributionDef>,
+    /// PARTITION BY clause info
+    partition: Option<PartitionDef>,
+    /// PROPERTIES clause info
+    properties: Vec<(String, String)>,
+    /// Table keys type (UNIQUE, DUPLICATE, AGGREGATE, PRIMARY)
+    keys_type: KeysType,
+    /// Unique key definitions
+    unique_keys: Vec<UniqueKeyDef>,
+}
+
+fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
     let sql_upper = sql.to_uppercase();
     let mut clean_sql = sql.to_string();
     let mut distribution: Option<DistributionDef> = None;
     let mut partition: Option<PartitionDef> = None;
     let mut properties: Vec<(String, String)> = vec![];
+    let mut keys_type = KeysType::Duplicate;
+    let mut unique_keys: Vec<UniqueKeyDef> = vec![];
+
+    // Extract table keys: UNIQUE KEY(col), UNIQUE KEY name(col), DUPLICATE KEY(col), AGGREGATE KEY(col)
+    // These can appear before DISTRIBUTED BY
+    for key_type in &["UNIQUE KEY", "DUPLICATE KEY", "AGGREGATE KEY"] {
+        if let Some(key_pos) = sql_upper.find(key_type) {
+            // Find the opening parenthesis after the key type
+            let after_key = &sql[key_pos..];
+            if let Some(paren_pos) = after_key.find('(') {
+                let cols_start = key_pos + paren_pos + 1;
+                // Find matching closing parenthesis
+                let remaining = &after_key[paren_pos + 1..];
+                if let Some(end_paren) = find_matching_paren(remaining) {
+                    let cols_str = &remaining[..end_paren];
+                    let columns: Vec<String> = cols_str.split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect();
+
+                    // Determine keys_type
+                    match *key_type {
+                        "UNIQUE KEY" => {
+                            keys_type = KeysType::Unique;
+                            // Extract optional constraint name before column list
+                            let before_cols = &after_key[..paren_pos];
+                            let name = if before_cols.trim().ends_with("KEY") || before_cols.trim().is_empty() {
+                                None
+                            } else {
+                                Some(before_cols.trim().to_string())
+                            };
+                            unique_keys.push(UniqueKeyDef { name, columns });
+                        }
+                        "DUPLICATE KEY" => {
+                            keys_type = KeysType::Duplicate;
+                            unique_keys.push(UniqueKeyDef {
+                                name: None,
+                                columns,
+                            });
+                        }
+                        "AGGREGATE KEY" => {
+                            keys_type = KeysType::Aggregate;
+                            unique_keys.push(UniqueKeyDef {
+                                name: None,
+                                columns,
+                            });
+                        }
+                        _ => {}
+                    }
+
+                    // Remove this key clause from clean_sql
+                    let key_end = cols_start + end_paren + 1;
+                    clean_sql = format!("{}{}", clean_sql[..key_pos].trim(), clean_sql[key_end..].trim());
+                }
+            }
+        }
+    }
 
     // Extract DISTRIBUTED BY HASH(col1, col2) BUCKETS N
-    if let Some(dist_pos) = sql_upper.find("DISTRIBUTED BY") {
-        let dist_clause = &sql[dist_pos..];
+    if let Some(dist_pos) = clean_sql.to_uppercase().find("DISTRIBUTED BY") {
+        let dist_clause = &clean_sql[dist_pos..];
         let dist_upper = dist_clause.to_uppercase();
 
         if let Some(hash_pos) = dist_upper.find("HASH") {
@@ -1035,7 +1114,7 @@ fn preprocess_create_table(sql: &str) -> (String, Option<DistributionDef>, Optio
             }
         }
 
-        clean_sql = sql[..dist_pos].trim().to_string();
+        clean_sql = clean_sql[..dist_pos].trim().to_string();
     }
 
     // Extract PROPERTIES (...) from clean_sql
@@ -1052,7 +1131,32 @@ fn preprocess_create_table(sql: &str) -> (String, Option<DistributionDef>, Optio
         partition = None;
     }
 
-    (clean_sql, distribution, partition, properties)
+    PreprocessedCreateTable {
+        clean_sql,
+        distribution,
+        partition,
+        properties,
+        keys_type,
+        unique_keys,
+    }
+}
+
+/// Find the index of the matching closing parenthesis
+fn find_matching_paren(s: &str) -> Option<usize> {
+    let mut depth = 1;
+    for (i, c) in s.chars().enumerate() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn extract_identifier(s: &str) -> Option<(&str, &str)> {

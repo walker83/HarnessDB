@@ -373,8 +373,8 @@ pub async fn execute_plan(plan: &PlanNode, context: &ExecutionContext) -> Result
             }
             Ok(None) => break,
             Err(e) => {
-                tracing::warn!("Error during execution: {}", e);
-                break;
+                tracing::error!("Error during execution: {}", e);
+                return Err(PlanExecutionError::StorageError(e.to_string()));
             }
         }
     }
