@@ -54,8 +54,11 @@ docs/
 ## Version Information
 
 - **Current Version**: v0.2.0
-- **Project Status**: Proof-of-Concept (PoC stage)
+- **Project Status**: Proof-of-Concept
 - **License**: MIT / Apache-2.0
+
+### 📘 User Guide (New)
+- [SQL User Guide](user-guide.md) - Complete user guide for SQL users, compatible with Apache Doris
 
 ## Quick Links
 

@@ -4,11 +4,11 @@
 
 ## 版本说明
 
-- **当前版本**：v0.1.3
+- **当前版本**：v0.2.0
 - **项目状态**：Proof-of-Concept（概念验证阶段）
 - **License**：MIT / Apache-2.0
 
-## 已完成功能（v0.1.3）
+## 已完成功能（v0.2.0）
 
 ### SQL 解析和规划
 
@@ -175,12 +175,29 @@
 | **ALTER TABLE** | ✅ | 修改表（重命名列、注释、设置属性） |
 | **DROP TABLE** | ✅ | 删除表 |
 | **TRUNCATE TABLE** | ✅ | 快速清空表 |
-| **INSERT** | ✅ | 插入数据（单条和多条） |
+| **INSERT** | ✅ | 插入数据（VALUES、SELECT、SET语法） |
+| **INSERT ... ON DUPLICATE KEY** | ✅ | Upsert语法，支持唯一键处理 |
+| **UPDATE** | ✅ | 更新数据（执行层完整实现） |
+| **DELETE** | ✅ | 删除数据（支持ORDER BY和LIMIT） |
 | **SELECT** | ✅ | 查询数据（支持复杂查询） |
+| **Transactions** | ✅ | BEGIN/COMMIT/ROLLBACK/SAVEPOINT支持 |
+| **UNIQUE Constraint** | ✅ | UNIQUE键解析和存储 |
 | **CREATE VIEW** | ✅ | 创建视图 |
 | **DROP VIEW** | ✅ | 删除视图 |
 | **ALTER VIEW** | ✅ | 修改视图定义 |
 | **SHOW CREATE VIEW** | ✅ | 查看建视图语句 |
+
+### Account/Security SQL 语句
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| **CREATE USER** | ✅ | 创建用户和密码 |
+| **ALTER USER** | ✅ | 修改用户属性和密码 |
+| **DROP USER** | ✅ | 删除用户 |
+| **SET PASSWORD** | ✅ | 设置用户密码 |
+| **GRANT** | ✅ | 授权权限 |
+| **REVOKE** | ✅ | 撤销权限 |
+| **SHOW GRANTS** | ✅ | 查看用户权限 |
 
 ### 分区支持
 
@@ -269,7 +286,6 @@
 | **工作负载管理** | 查询资源隔离和优先级 |
 | **TPC-H 端到端** | 完整的 TPC-H 基准测试 |
 | **Kubernetes Operator** | K8s 部署和管理工具 |
-| **UPDATE / DELETE** | 数据更新和删除操作 |
 | **外键约束** | 表间外键约束 |
 | **存储过程** | 存储过程支持 |
 | **触发器** | 触发器支持 |

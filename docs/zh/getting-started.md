@@ -23,7 +23,7 @@ mysql -h 127.0.0.1 -P 9030 -uroot
 ```
 Welcome to the MySQL monitor.  Commands end with ; or \g.
 Your MySQL connection id is 1
-Server version: RorisDB 0.1.3
+Server version: RorisDB 0.2.0
 
 Copyright (c) 2000, 2024, Oracle and/or its affiliates.
 
@@ -103,7 +103,67 @@ SELECT * FROM user LIMIT 3;
 
 ### 5. 更新和删除
 
-当前版本主要支持追加写入，更新和删除功能正在完善中。
+RorisDB 现已完整支持 UPDATE 和 DELETE 操作：
+
+```sql
+-- 更新数据
+UPDATE user SET age = 31 WHERE name = 'Alice';
+
+-- 删除数据
+DELETE FROM user WHERE age < 25;
+
+-- DELETE with ORDER BY and LIMIT
+DELETE FROM user ORDER BY age DESC LIMIT 2;
+```
+
+### 6. 事务支持
+
+RorisDB 支持基本的事务操作：
+
+```sql
+-- 开始事务
+BEGIN;
+
+-- 或使用 START TRANSACTION
+START TRANSACTION;
+
+-- 执行多个操作
+INSERT INTO user VALUES (6, 'Frank', 40, 'Guangzhou');
+UPDATE user SET city = 'Hangzhou' WHERE id = 2;
+
+-- 提交事务
+COMMIT;
+
+-- 回滚事务
+ROLLBACK;
+
+-- 使用保存点
+BEGIN;
+INSERT INTO user VALUES (7, 'Grace', 45, 'Nanjing');
+SAVEPOINT sp1;
+UPDATE user SET age = 46 WHERE id = 7;
+ROLLBACK TO sp1;  -- 回滚到保存点
+COMMIT;
+```
+
+### 7. INSERT ON DUPLICATE KEY
+
+支持 MySQL 兼容的 Upsert 语法：
+
+```sql
+CREATE TABLE unique_user (
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(64),
+    age INT
+) UNIQUE KEY;
+
+-- 如果 id 存在则更新，不存在则插入
+INSERT INTO unique_user VALUES (1, 'Alice', 30)
+ON DUPLICATE KEY UPDATE name = 'Alice', age = 31;
+
+-- INSERT SET 语法
+INSERT INTO unique_user SET id = 2, name = 'Bob', age = 25;
+```
 
 ## 数据类型
 

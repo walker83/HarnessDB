@@ -1302,14 +1302,31 @@ impl ExecNode for ProjectExecNode {
 }
 
 pub struct AggregateExecNode {
-    pub group_by: Vec<usize>,
-    pub aggregates: Vec<(String, usize)>,
+    pub group_by: Vec<String>,
+    pub aggregates: Vec<(String, String)>, // (func_name, column_name)
     pub child: Box<ExecutionPlan>,
     pub opened: bool,
     pub returned: bool,
+    // Runtime resolved indices
+    pub resolved_group_by: Vec<usize>,
+    pub resolved_aggregates: Vec<(String, usize)>,
 }
 
 impl AggregateExecNode {
+    fn resolve_indices(&mut self, block: &Block) {
+        // Resolve group_by column names to indices
+        self.resolved_group_by = self.group_by.iter()
+            .filter_map(|name| block.column_by_name(name).map(|(idx, _)| idx))
+            .collect();
+
+        // Resolve aggregate column names to indices, handling COUNT(*) specially
+        self.resolved_aggregates = self.aggregates.iter()
+            .map(|(func, col_name)| (func.clone(), if col_name == "*" { usize::MAX } else {
+                block.column_by_name(col_name).map(|(idx, _)| idx).unwrap_or(usize::MAX)
+            }))
+            .collect();
+    }
+
     fn compute_aggregate_batch(col: &Vector, func: &str) -> ScalarValue {
         match func {
             "count" => ScalarValue::Int64(col.count_batch() as i64),
@@ -1401,17 +1418,29 @@ impl ExecNode for AggregateExecNode {
         }
         let block = combined.unwrap();
 
-        if self.group_by.is_empty() && self.aggregates.is_empty() {
+        // Resolve column names to indices at runtime
+        self.resolve_indices(&block);
+
+        if self.resolved_group_by.is_empty() && self.resolved_aggregates.is_empty() {
             self.returned = true;
             return Ok(Some(block));
         }
 
-        if self.group_by.is_empty() {
+        if self.resolved_group_by.is_empty() {
             let mut result_columns: Vec<Vector> = Vec::new();
             let mut result_schema_fields: Vec<types::Field> = Vec::new();
 
-            for (func, col_idx) in &self.aggregates {
-                if *col_idx < block.num_columns() {
+            for (func, col_idx) in &self.resolved_aggregates {
+                if *col_idx == usize::MAX {
+                    // COUNT(*) - use total row count
+                    let agg_value = ScalarValue::Int64(block.num_rows() as i64);
+                    let vector = Vector::Int64(types::vector::Int64Vector::from_vec(vec![match agg_value {
+                        ScalarValue::Int64(v) => v,
+                        _ => 0,
+                    }]));
+                    result_columns.push(vector);
+                    result_schema_fields.push(types::Field::new("", types::DataType::Int64, false));
+                } else if *col_idx < block.num_columns() {
                     if let Some(col) = block.column(*col_idx) {
                         let agg_value = Self::compute_aggregate_batch(col, func);
                         let vector = match agg_value {
@@ -1434,7 +1463,7 @@ impl ExecNode for AggregateExecNode {
 
         for row_idx in 0..block.num_rows() {
             let mut key_parts = Vec::new();
-            for &col_idx in &self.group_by {
+            for &col_idx in &self.resolved_group_by {
                 if col_idx < block.num_columns() {
                     if let Some(col) = block.column(col_idx) {
                         key_parts.push(format!("{:?}", col.scalar_at(row_idx)));
@@ -1461,16 +1490,21 @@ impl ExecNode for AggregateExecNode {
             let mut result_row = Vec::new();
 
             if !group_rows.is_empty() {
-                for &col_idx in &self.group_by {
+                for &col_idx in &self.resolved_group_by {
                     result_row.push(group_rows[0].get(col_idx).cloned().unwrap_or(ScalarValue::Null));
                 }
             }
 
-            for (func, col_idx) in &self.aggregates {
-                let values: Vec<ScalarValue> = group_rows.iter()
-                    .filter_map(|row| row.get(*col_idx).cloned())
-                    .collect();
-                result_row.push(Self::compute_aggregate(&values, func));
+            for (func, col_idx) in &self.resolved_aggregates {
+                if *col_idx == usize::MAX {
+                    // COUNT(*) - count rows in group
+                    result_row.push(ScalarValue::Int64(group_rows.len() as i64));
+                } else {
+                    let values: Vec<ScalarValue> = group_rows.iter()
+                        .filter_map(|row| row.get(*col_idx).cloned())
+                        .collect();
+                    result_row.push(Self::compute_aggregate(&values, func));
+                }
             }
 
             result_rows.push(result_row);
@@ -1481,7 +1515,7 @@ impl ExecNode for AggregateExecNode {
             return Ok(None);
         }
 
-        let num_result_cols = self.group_by.len() + self.aggregates.len();
+        let num_result_cols = self.resolved_group_by.len() + self.resolved_aggregates.len();
         let num_result_rows = result_rows.len();
 
         let mut columns: Vec<Vector> = Vec::new();
@@ -1541,11 +1575,23 @@ impl ExecNode for AggregateExecNode {
 }
 
 pub struct SortExecNode {
-    pub order_by: Vec<(usize, bool)>,
+    pub order_by: Vec<(String, bool)>, // (column_name, ascending)
     pub child: Box<ExecutionPlan>,
     pub opened: bool,
     pub buffered: Vec<Block>,
     pub returned: bool,
+}
+
+impl SortExecNode {
+    /// Resolves column names to indices for order_by
+    fn resolve_order_by(&self, block: &Block) -> Vec<(usize, bool)> {
+        self.order_by
+            .iter()
+            .filter_map(|(col_name, ascending)| {
+                block.column_by_name(col_name).map(|(idx, _)| (idx, *ascending))
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -1577,18 +1623,18 @@ impl ExecNode for SortExecNode {
         }
         let block = combined.unwrap();
 
-        if self.order_by.is_empty() {
+        let num_rows = block.num_rows();
+        let mut indices: Vec<usize> = (0..num_rows).collect();
+
+        let resolved_order_by = self.resolve_order_by(&block);
+        if resolved_order_by.is_empty() {
             self.returned = true;
             return Ok(Some(block));
         }
 
-        let num_rows = block.num_rows();
-        let mut indices: Vec<usize> = (0..num_rows).collect();
-
-        let order_by = self.order_by.clone();
         let cmp_block = &block;
         indices.sort_unstable_by(|&a, &b| {
-            for &(col_idx, ascending) in &order_by {
+            for &(col_idx, ascending) in &resolved_order_by {
                 if col_idx >= cmp_block.num_columns() {
                     continue;
                 }

@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, NaiveDateTime, Datelike, Timelike, Duration, Utc, TimeZone};
+use chrono::{NaiveDate, NaiveDateTime, DateTime, Datelike, Timelike, Duration, Utc, TimeZone};
 use types::{ScalarValue, Vector, JsonValue};
 
 pub struct FunctionRegistry;
@@ -41,6 +41,7 @@ impl FunctionRegistry {
             "date_add" => self.date_add(args),
             "date_sub" => self.date_sub(args),
             "date_format" => self.date_format(args),
+            "from_unixtime" => self.from_unixtime(args),
             "date_trunc" => self.date_trunc(args),
             "week" => self.week(args),
             "quarter" => self.quarter(args),
@@ -469,6 +470,23 @@ impl FunctionRegistry {
             dt.map(|d| format_datetime(&d, fmt))
         }).collect();
         string_vec(result)
+    }
+
+    /// FROM_UNIXTIME(unix_timestamp) - Converts Unix timestamp to datetime string
+    fn from_unixtime(&self, args: &[Vector]) -> Vector {
+        match args.first() {
+            Some(Vector::Int64(v)) => {
+                let result: Vec<Option<String>> = (0..v.len()).map(|i| {
+                    v.get(i).and_then(|timestamp| {
+                        DateTime::from_timestamp(timestamp, 0).map(|dt| {
+                            dt.format("%Y-%m-%d %H:%M:%S").to_string()
+                        })
+                    })
+                }).collect();
+                string_vec(result)
+            }
+            _ => string_vec(vec![]),
+        }
     }
 
     /// DATE_TRUNC(date, unit) - Truncates date to specified unit

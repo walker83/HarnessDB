@@ -41,6 +41,7 @@ docs/
 ├── architecture.md              # 架构设计文档
 ├── installation.md              # 安装部署指南
 ├── getting-started.md           # 快速开始
+├── user-guide.md                # SQL用户使用指南（新增）
 ├── sql-reference.md             # SQL 参考手册
 ├── configuration.md             # 配置说明
 ├── developer-guide.md           # 开发者指南
@@ -57,6 +58,9 @@ docs/
 - **项目状态**：Proof-of-Concept（概念验证阶段）
 - **License**：MIT / Apache-2.0
 
+### 📘 用户指南（新增）
+- [SQL用户使用指南](user-guide.md) - 面向SQL用户的完整使用指南，兼容Apache Doris
+
 ## 快速链接
 
 - **GitHub 仓库**：[RorisDB on GitHub](https://github.com/your-repo/RorisDB)
@@ -67,7 +71,8 @@ docs/
 
 | 读者类型 | 推荐文档 |
 |---------|---------|
-| **新用户** | [产品概述](product-overview.md) → [安装部署](installation.md) → [快速开始](getting-started.md) |
+| **新用户** | [产品概述](product-overview.md) → [安装部署](installation.md) → [快速开始](getting-started.md) → [用户指南](user-guide.md) |
+| **SQL用户** | [快速开始](getting-started.md) → [用户指南](user-guide.md) → [SQL 参考](sql-reference.md) |
 | **数据库管理员** | [安装部署](installation.md) → [配置说明](configuration.md) → [SQL 参考](sql-reference.md) |
 | **开发者** | [架构设计](architecture.md) → [开发者指南](developer-guide.md) → [功能特性](features.md) |
 | **架构师** | [产品概述](product-overview.md) → [架构设计](architecture.md) → [兼容性矩阵](compatibility-matrix.md) |
@@ -86,6 +91,7 @@ docs/
 
 ## 更新日志
 
+- **2026-05-07**：v0.2.0重大更新 - 完整DML执行层（INSERT/UPDATE/DELETE）、事务支持（BEGIN/COMMIT/ROLLBACK/SAVEPOINT）、INSERT ON DUPLICATE KEY、UNIQUE约束、Account/Security SQL语句，新增SQL用户使用指南
 - **2026-05-05**：更新至 v0.2.0 - 新增外部 Catalog、认证框架、CBO 优化器、分区支持、物化视图、Runtime Filter、ALTER TABLE、备份恢复等功能
 - **2026-05-04**：创建完整文档体系，包括产品概述、架构设计、安装指南、SQL 参考等
 - **2026-05-04**：添加兼容性矩阵和性能报告

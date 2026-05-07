@@ -29,10 +29,12 @@ async fn test_aggregate_sum_batch() {
     let block = create_block_with_columns(schema, columns);
     let mut scan_node = create_scan_node("test_table", &["id", "value", "score"]);
     scan_node.data = Some(block);
-    
+
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
-        aggregates: vec![("sum".to_string(), 1)],
+        aggregates: vec![("sum".to_string(), "value".to_string())],
+        resolved_group_by: vec![],
+        resolved_aggregates: vec![],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
@@ -68,7 +70,9 @@ async fn test_aggregate_count_batch() {
     
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
-        aggregates: vec![("count".to_string(), 1)],
+        aggregates: vec![("count".to_string(), "value".to_string())],
+        resolved_group_by: vec![],
+        resolved_aggregates: vec![],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
@@ -103,7 +107,9 @@ async fn test_aggregate_min_max_batch() {
     
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
-        aggregates: vec![("min".to_string(), 1), ("max".to_string(), 1)],
+        aggregates: vec![("min".to_string(), "value".to_string()), ("max".to_string(), "value".to_string())],
+        resolved_group_by: vec![],
+        resolved_aggregates: vec![],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
@@ -141,7 +147,9 @@ async fn test_aggregate_avg_batch() {
     
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
-        aggregates: vec![("avg".to_string(), 1)],
+        aggregates: vec![("avg".to_string(), "value".to_string())],
+        resolved_group_by: vec![],
+        resolved_aggregates: vec![],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
@@ -172,10 +180,12 @@ async fn test_aggregate_float_values() {
     let block = create_block_with_columns(schema, columns);
     let mut scan_node = create_scan_node("test_table", &["id", "score"]);
     scan_node.data = Some(block);
-    
+
     let mut agg_node = AggregateExecNode {
         group_by: vec![],
-        aggregates: vec![("sum".to_string(), 1)],
+        aggregates: vec![("sum".to_string(), "score".to_string())],
+        resolved_group_by: vec![],
+        resolved_aggregates: vec![],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         returned: false,
@@ -208,9 +218,9 @@ async fn test_sort_single_column_asc() {
     let block = create_block_with_columns(schema, columns);
     let mut scan_node = create_scan_node("test_table", &["id", "name", "score"]);
     scan_node.data = Some(block);
-    
+
     let mut sort_node = SortExecNode {
-        order_by: vec![(0, true)],
+        order_by: vec![("id".to_string(), true)],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
@@ -247,7 +257,7 @@ async fn test_sort_single_column_desc() {
     scan_node.data = Some(block);
     
     let mut sort_node = SortExecNode {
-        order_by: vec![(0, false)],
+        order_by: vec![("id".to_string(), false)],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
@@ -283,7 +293,7 @@ async fn test_sort_float_column() {
     scan_node.data = Some(block);
     
     let mut sort_node = SortExecNode {
-        order_by: vec![(0, true)],
+        order_by: vec![("score".to_string(), true)],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
@@ -321,7 +331,7 @@ async fn test_sort_multi_column() {
     scan_node.data = Some(block);
     
     let mut sort_node = SortExecNode {
-        order_by: vec![(0, true), (1, true)],
+        order_by: vec![("group".to_string(), true), ("value".to_string(), true)],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],
@@ -361,7 +371,7 @@ async fn test_sort_empty_block() {
     scan_node.data = Some(block);
     
     let mut sort_node = SortExecNode {
-        order_by: vec![(0, true)],
+        order_by: vec![("id".to_string(), true)],
         child: Box::new(ExecutionPlan::Scan(scan_node)),
         opened: false,
         buffered: vec![],

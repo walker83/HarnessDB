@@ -103,30 +103,32 @@ impl ExecutionContext {
                     opened: false,
                 }))
             }
-            PlanNodeType::Aggregate(_agg) => {
+            PlanNodeType::Aggregate(agg) => {
                 if plan.children.is_empty() {
                     return Err(PlanExecutionError::UnsupportedNode("Aggregate without child".into()));
                 }
                 let child = self.create_exec_plan_impl(&plan.children[0])?;
-                // Note: AggregateExecNode uses column indices, but AggregateNode uses string expressions.
-                // For now, use empty group_by/aggregates which means just pass through all columns.
                 Ok(ExecutionPlan::Aggregate(AggregateExecNode {
-                    group_by: vec![], // TODO: resolve from agg.group_by strings
-                    aggregates: vec![], // TODO: resolve from agg.aggregates
+                    group_by: agg.group_by.clone(),
+                    aggregates: agg.aggregates.iter()
+                        .map(|expr| (expr.func.clone(), expr.arg.clone()))
+                        .collect(),
                     child: Box::new(child),
                     opened: false,
                     returned: false,
+                    resolved_group_by: vec![],
+                    resolved_aggregates: vec![],
                 }))
             }
-            PlanNodeType::Sort(_sort) => {
+            PlanNodeType::Sort(sort) => {
                 if plan.children.is_empty() {
                     return Err(PlanExecutionError::UnsupportedNode("Sort without child".into()));
                 }
                 let child = self.create_exec_plan_impl(&plan.children[0])?;
-                // Note: SortExecNode uses column indices, but SortNode uses SortItem expressions.
-                // For now, use empty order_by which means no sorting.
                 Ok(ExecutionPlan::Sort(SortExecNode {
-                    order_by: vec![], // TODO: resolve from sort.order_by expressions
+                    order_by: sort.order_by.iter()
+                        .map(|item| (item.expr.clone(), item.ascending))
+                        .collect(),
                     child: Box::new(child),
                     opened: false,
                     buffered: Vec::new(),

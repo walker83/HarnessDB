@@ -88,6 +88,13 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **CREATE VIEW** | ✅ | View creation and metadata |
 | **SHOW CREATE TABLE** | ✅ | DDLShowCreate result |
 | **ALTER TABLE** | ✅ | ALTER TABLE parser support |
+| **DML Execution** | ✅ | INSERT/UPDATE/DELETE execution layer with transaction support |
+| **INSERT ... ON DUPLICATE KEY** | ✅ | Upsert syntax with unique key handling |
+| **INSERT ... SET** | ✅ | MySQL-compatible INSERT SET syntax |
+| **DELETE with ORDER BY/LIMIT** | ✅ | Ordered and limited deletions |
+| **UNIQUE Constraint** | ✅ | UNIQUE key parsing and storage |
+| **Transactions** | ✅ | BEGIN/COMMIT/ROLLBACK/SAVEPOINT support |
+| **Account/Security SQL** | ✅ | User management, GRANT/REVOKE, password commands |
 | **Partition Support** | ✅ | Range/List/Hash partition types (P0) |
 | **Materialized Views** | ✅ | Materialized view framework with query rewrite |
 | **CBO Optimizer** | ✅ | Cost-based optimizer with statistics collection and ANALYZE TABLE |
@@ -121,7 +128,6 @@ RorisDB follows the same proven MPP (Massively Parallel Processing) architecture
 | **Catalog Persistence** | 🚧 EditLog + BDBJE-style durability |
 | **Cloud Mode** | 🚧 S3 shared storage, meta service |
 | **UDF / UDAF** | 🚧 User-defined functions |
-| **UPDATE / DELETE** | 🚧 DML data modification |
 | **TPC-H Benchmarks** | 🚧 End-to-end TPC-H validation |
 
 ### Not Yet Implemented
