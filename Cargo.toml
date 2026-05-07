@@ -80,10 +80,17 @@ axum = "0.7"
 # Monitoring & metrics
 prometheus = "0.13"
 
-chrono = "0.4"
+chrono = "0.4.40"
 
 # SQL parsing
 sqlparser = "0.53"
+datafusion = "44"
+datafusion-sql = "44"
+datafusion-common = "44"
+datafusion-expr = "44"
+
+[patch.crates-io]
+chrono = { version = "0.4.40" }
 
 # Storage
 rocksdb = "0.23"
