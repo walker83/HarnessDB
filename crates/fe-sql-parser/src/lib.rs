@@ -1,10 +1,14 @@
 pub mod ast;
 pub mod parser;
 pub mod error;
+pub mod analyzer;
+pub mod datafusion_parser;
 
 pub use ast::Statement;
 pub use parser::parse_sql;
 pub use error::ParseError;
+pub use analyzer::{Analyzer, AnalysisError, SymbolTable, TypedExpr};
+pub use datafusion_parser::RorisParser;
 
 #[cfg(test)]
 mod tests {

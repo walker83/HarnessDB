@@ -80,7 +80,6 @@ axum = "0.7"
 # Monitoring & metrics
 prometheus = "0.13"
 
-# Date/time handling
 chrono = "0.4"
 
 # SQL parsing
@@ -126,6 +125,3 @@ fe-expression = { path = "crates/fe-expression" }
 fe-monitor = { path = "crates/fe-monitor" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 data-io = { path = "crates/data-io" }
-
-# Parquet support
-parquet = "58"

@@ -10,6 +10,7 @@ use crate::materialized_view::MaterializedView;
 use crate::table::Table;
 use common::{DrorisError, Result, CatalogError};
 
+#[derive(Debug)]
 pub struct CatalogManager {
     databases: DashMap<String, Database>,
     materialized_views: DashMap<String, MaterializedView>,

@@ -5,6 +5,7 @@ pub mod external;
 pub mod materialized_view;
 pub mod partition;
 pub mod replica;
+pub mod schema_provider;
 pub mod stats;
 pub mod table;
 
