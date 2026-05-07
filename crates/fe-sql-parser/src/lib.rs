@@ -1,10 +1,15 @@
 pub mod ast;
 pub mod parser;
 pub mod error;
+pub mod doris_extensions;
 
 pub use ast::Statement;
 pub use parser::parse_sql;
 pub use error::ParseError;
+pub use doris_extensions::{
+    DorisExtensions, KeysType, DistributionDef, DistributionKind,
+    PartitionDef, PartitionKind, parse_doris_extensions,
+};
 
 #[cfg(test)]
 mod tests {
