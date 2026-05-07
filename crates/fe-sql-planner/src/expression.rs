@@ -83,6 +83,7 @@ pub fn expr_to_string(expr: &Expr) -> String {
             format!("CAST({} AS {})", expr_to_string(expr), target_type)
         }
         Expr::Wildcard => "*".to_string(),
+        Expr::Default => "DEFAULT".to_string(),
     }
 }
 
@@ -164,6 +165,7 @@ pub fn infer_type(expr: &Expr) -> Option<DataType> {
         Expr::Like { .. } => Some(DataType::Boolean),
         Expr::Cast { target_type, .. } => parse_type_name(target_type),
         Expr::Wildcard => None,
+        Expr::Default => None,
     }
 }
 

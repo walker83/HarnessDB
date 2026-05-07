@@ -156,6 +156,21 @@ impl ValuesExecNode {
                 let val = Self::eval_expr(expr)?;
                 Self::eval_cast(&val, target_type)
             }
+            Expr::Default => {
+                // DEFAULT in VALUES clause means "use the column's default value"
+                // We return ScalarValue::Null as a placeholder; the actual default
+                // value handling happens at the storage layer when writing
+                Ok(ScalarValue::Null)
+            }
+            Expr::ColumnRef { table, column } => {
+                // Column references in VALUES are not typically valid,
+                // but we return Null to be robust
+                Err(format!(
+                    "Column reference {}{} in VALUES is not supported. Use DEFAULT or a literal value.",
+                    if let Some(t) = table { format!("{}.", t) } else { String::new() },
+                    column
+                ))
+            }
             other => Err(format!("Unsupported expression in VALUES: {:?}", other)),
         }
     }

@@ -348,6 +348,8 @@ pub enum Expr {
     Like { expr: Box<Expr>, pattern: Box<Expr>, negated: bool },
     Cast { expr: Box<Expr>, target_type: String },
     Wildcard,
+    /// DEFAULT keyword - represents the default value for a column
+    Default,
 }
 
 #[derive(Debug, Clone)]

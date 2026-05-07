@@ -2171,6 +2171,66 @@ fn convert_function_args(args: sqlparser::ast::FunctionArguments) -> Vec<Expr> {
     }
 }
 
+/// Process MySQL escape sequences in a string literal.
+/// Converts sequences like \n, \t, \\, \', \", etc. to their actual characters.
+fn process_escape_sequences(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                match next {
+                    'n' => { result.push('\n'); chars.next(); }
+                    't' => { result.push('\t'); chars.next(); }
+                    'r' => { result.push('\r'); chars.next(); }
+                    '\\' => { result.push('\\'); chars.next(); }
+                    '\'' => { result.push('\''); chars.next(); }
+                    '"' => { result.push('"'); chars.next(); }
+                    '0' => { result.push('\0'); chars.next(); }
+                    // Handle \x followed by hex digits
+                    'x' | 'X' => {
+                        chars.next(); // consume 'x'
+                        let hex: String = chars.by_ref().take(2).collect();
+                        if hex.len() == 2 {
+                            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                result.push(byte as char);
+                            } else {
+                                // Invalid hex, keep as-is
+                                result.push('\\');
+                                result.push('x');
+                                result.push_str(&hex);
+                            }
+                        } else {
+                            // Not enough hex digits, keep as-is
+                            result.push('\\');
+                            result.push('x');
+                            result.push_str(&hex);
+                        }
+                    }
+                    // Handle \b (backspace)
+                    'b' => { result.push('\x08'); chars.next(); }
+                    // Handle \f (form feed)
+                    'f' => { result.push('\x0C'); chars.next(); }
+                    // Handle \v (vertical tab)
+                    'v' => { result.push('\x0B'); chars.next(); }
+                    // Unknown escape sequence - keep backslash
+                    _ => {
+                        result.push('\\');
+                    }
+                }
+            } else {
+                // Trailing backslash
+                result.push('\\');
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
 fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
     match expr {
         sqlparser::ast::Expr::Value(v) => Expr::Literal(match v {
@@ -2181,8 +2241,8 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
                     LiteralValue::Int64(n.parse().unwrap_or(0))
                 }
             }
-            sqlparser::ast::Value::SingleQuotedString(s) => LiteralValue::String(s),
-            sqlparser::ast::Value::DoubleQuotedString(s) => LiteralValue::String(s),
+            sqlparser::ast::Value::SingleQuotedString(s) => LiteralValue::String(process_escape_sequences(&s)),
+            sqlparser::ast::Value::DoubleQuotedString(s) => LiteralValue::String(process_escape_sequences(&s)),
             sqlparser::ast::Value::Boolean(b) => LiteralValue::Boolean(b),
             sqlparser::ast::Value::Null => LiteralValue::Null,
             _ => LiteralValue::Null,

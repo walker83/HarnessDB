@@ -1273,16 +1273,51 @@ impl RorisQueryHandler {
         let plan = planner.plan(stmt.clone()).map_err(|e| format!("Planning error: {}", e))?;
         let optimized_plan = optimizer.optimize(plan);
 
-        // Return query plan as text (full execution requires distributed BE setup)
+        // Execute the query through BE
+        let storage = self.storage.clone();
+        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
+        let exec_context = Arc::new(
+            ExecutionContext::new(storage, Arc::new(catalog_for_exec))
+                .with_transaction_ctx(self.transaction.clone())
+        );
+
+        // Execute in a separate thread to avoid Tokio runtime conflict
+        let results = std::thread::spawn({
+            let plan = optimized_plan.clone();
+            let exec_context = exec_context.clone();
+            move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async { execute_plan(&plan, &exec_context).await })
+            }
+        })
+        .join()
+        .map_err(|e| format!("Execution error: {:?}", e))?
+        .map_err(|e| format!("Execution error: {}", e))?;
+
+        // Convert results to QueryResult
+        block_to_query_result(results)
+    }
+
+    fn explain(&self, stmt: &Statement) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap().clone();
+
+        // Create planner and plan the statement
+        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
+        let mut planner = Planner::new(Arc::new(catalog_for_planner));
+        planner.set_database(&current_db);
+        let optimizer = Optimizer::new();
+
+        let plan = planner.plan(stmt.clone()).map_err(|e| format!("Planning error: {}", e))?;
+        let optimized_plan = optimizer.optimize(plan);
+
+        // Return query plan as text
         let explain_output = format_plan(&optimized_plan);
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Query Plan".to_string(), col_type: ColumnType::String }],
             explain_output.lines().map(|line| vec![Some(line.to_string())]).collect(),
         ))
-    }
-
-    fn explain(&self, stmt: &Statement) -> Result<QueryResult, String> {
-        self.execute_query(stmt)
     }
 
     // ---- Batch 1/2 DDL handlers restored ----
@@ -1576,11 +1611,44 @@ impl RorisQueryHandler {
         ))
     }
 
-    fn execute_union(&self, _stmt: &fe_sql_parser::ast::UnionStmt) -> Result<QueryResult, String> {
-        Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "Query Plan".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some("UNION query (execution requires distributed BE setup)".to_string())]],
-        ))
+    fn execute_union(&self, stmt: &fe_sql_parser::ast::UnionStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read().unwrap().clone();
+
+        // Create planner and plan the union statement
+        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
+        let mut planner = Planner::new(Arc::new(catalog_for_planner));
+        planner.set_database(&current_db);
+        let optimizer = Optimizer::new();
+
+        let plan = planner.plan(Statement::Union(stmt.clone()))
+            .map_err(|e| format!("Planning error: {}", e))?;
+        let optimized_plan = optimizer.optimize(plan);
+
+        // Execute the union through BE
+        let storage = self.storage.clone();
+        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
+        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
+        let exec_context = Arc::new(
+            ExecutionContext::new(storage, Arc::new(catalog_for_exec))
+                .with_transaction_ctx(self.transaction.clone())
+        );
+
+        // Execute in a separate thread to avoid Tokio runtime conflict
+        let results = std::thread::spawn({
+            let plan = optimized_plan.clone();
+            let exec_context = exec_context.clone();
+            move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async { execute_plan(&plan, &exec_context).await })
+            }
+        })
+        .join()
+        .map_err(|e| format!("Execution error: {:?}", e))?
+        .map_err(|e| format!("Execution error: {}", e))?;
+
+        // Convert results to QueryResult
+        block_to_query_result(results)
     }
 
     // ---- Batch 3/4 statement handlers ----
