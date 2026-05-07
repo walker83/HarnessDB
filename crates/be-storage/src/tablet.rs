@@ -166,53 +166,54 @@ impl MemTable {
                     Vector::Int16(types::vector::Int16Vector::from_vec(data))
                 }
                 DataType::Int32 => {
-                    let data: Vec<i32> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Int32(i) = s { Some(*i) } else { None })
+                    let data: Vec<Option<i32>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Int32(i) = s { Some(*i) } else { None })
                         .collect();
-                    Vector::Int32(types::vector::Int32Vector::from_vec(data))
+                    Vector::Int32(types::vector::Int32Vector::from_nullable_vec(data))
                 }
                 DataType::Int64 => {
-                    let data: Vec<i64> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Int64(i) = s { Some(*i) } else { None })
+                    let data: Vec<Option<i64>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Int64(i) = s { Some(*i) } else { None })
                         .collect();
-                    Vector::Int64(types::vector::Int64Vector::from_vec(data))
+                    Vector::Int64(types::vector::Int64Vector::from_nullable_vec(data))
                 }
                 DataType::Int128 => {
-                    let data: Vec<i128> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Int128(i) = s { Some(*i) } else { None })
+                    let data: Vec<Option<i128>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Int128(i) = s { Some(*i) } else { None })
                         .collect();
-                    Vector::Int128(types::vector::Int128Vector::from_vec(data))
+                    Vector::Int128(types::vector::Int128Vector::from_nullable_vec(data))
                 }
                 DataType::Float32 => {
-                    let data: Vec<f32> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Float32(f) = s { Some(*f) } else { None })
+                    let data: Vec<Option<f32>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Float32(f) = s { Some(*f) } else { None })
                         .collect();
-                    Vector::Float32(types::vector::Float32Vector::from_vec(data))
+                    Vector::Float32(types::vector::Float32Vector::from_nullable_vec(data))
                 }
                 DataType::Float64 => {
-                    let data: Vec<f64> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Float64(f) = s { Some(*f) } else { None })
+                    let data: Vec<Option<f64>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Float64(f) = s { Some(*f) } else { None })
                         .collect();
-                    Vector::Float64(types::vector::Float64Vector::from_vec(data))
+                    Vector::Float64(types::vector::Float64Vector::from_nullable_vec(data))
                 }
                 DataType::String => {
-                    let data: Vec<String> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::String(s) = s { Some(s.clone()) } else { None })
+                    let data: Vec<Option<&str>> = scalars.iter()
+                        .map(|s| if let ScalarValue::String(s) = s { Some(s.as_str()) } else { None })
                         .collect();
-                    let data_refs: Vec<&str> = data.iter().map(|s| s.as_str()).collect();
+                    let data_owned: Vec<String> = data.iter().filter_map(|s| s.map(|s| s.to_string())).collect();
+                    let data_refs: Vec<&str> = data_owned.iter().map(|s| s.as_str()).collect();
                     Vector::String(types::vector::StringVector::from_vec(data_refs))
                 }
                 DataType::Date => {
-                    let data: Vec<i32> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Date(d) = s { Some(*d) } else { None })
+                    let data: Vec<Option<i32>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Date(d) = s { Some(*d) } else { None })
                         .collect();
-                    Vector::Date(types::vector::DateVector::from_vec(data))
+                    Vector::Date(types::vector::DateVector::from_nullable_vec(data))
                 }
                 DataType::DateTime => {
-                    let data: Vec<i64> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::DateTime(d) = s { Some(*d) } else { None })
+                    let data: Vec<Option<i64>> = scalars.iter()
+                        .map(|s| if let ScalarValue::DateTime(d) = s { Some(*d) } else { None })
                         .collect();
-                    Vector::DateTime(types::vector::DateTimeVector::from_vec(data))
+                    Vector::DateTime(types::vector::DateTimeVector::from_nullable_vec(data))
                 }
                 _ => Vector::Null(types::vector::NullVector::new(num_rows)),
             };

@@ -1386,25 +1386,14 @@ impl ExecNode for ProjectExecNode {
     }
 
     async fn get_next(&mut self) -> Result<Option<Block>> {
-        let fe_expr = fe_expression::ExprEvaluator::new();
+        let expr_parser = fe_expression::expr_parser::ExprStringParser::new();
         match self.child.get_next().await? {
             Some(block) => {
                 let mut result_columns: Vec<Vector> = Vec::new();
                 for expr_str in &self.exprs {
-                    // Parse expression string to AST
-                    let parsed = fe_sql_parser::parser::parse_sql(expr_str)?;
-                    let fe_ast = match parsed.first() {
-                        Some(fe_sql_parser::ast::Statement::Query(q)) => {
-                            // Get SELECT expression from query
-                            q.select_list.first().map(|s| fe_sql_planner::expression::expr_to_string(&s.expr))
-                                .map(|s| fe_expression::ExprEvaluator::evaluate_with_string(&s))
-                                .ok()
-                        }
-                        _ => None,
-                    }.unwrap_or_else(|| fe_expression::ExprEvaluator::evaluate_with_string(expr_str));
-
-                    let vector = fe_expr.evaluate(&fe_ast, &block);
-                    result_columns.push(vector);
+                    if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
+                        result_columns.push(vector);
+                    }
                 }
                 Ok(Some(Block::new(Schema::new(vec![]), result_columns)))
             }
