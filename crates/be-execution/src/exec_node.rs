@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc, TimeZone, NaiveDate, NaiveDateTime, Datelike, Timelike};
 use common::{Result, DrorisError};
 use fe_catalog::UniqueKeyDef;
 use types::{Block, Bitmap, Vector, Schema, ScalarValue};
@@ -321,8 +322,106 @@ impl ValuesExecNode {
                     _ => Ok(ScalarValue::Null),
                 }
             }
+            "DATE_FORMAT" => {
+                if args.len() < 2 {
+                    return Ok(ScalarValue::Null);
+                }
+                let all_literals = args.iter().all(|a| matches!(a, Expr::Literal(_)));
+                if !all_literals {
+                    return Ok(ScalarValue::Null);
+                }
+                let date_val = match &args[0] {
+                    Expr::Literal(LiteralValue::String(s)) => ScalarValue::String(s.clone()),
+                    Expr::Literal(LiteralValue::Date(s)) => ScalarValue::Date(s.parse().unwrap_or(0)),
+                    Expr::Literal(LiteralValue::Int64(n)) => ScalarValue::Int64(*n),
+                    Expr::Literal(LiteralValue::Float64(f)) => ScalarValue::Float64(*f),
+                    Expr::Literal(LiteralValue::Boolean(b)) => ScalarValue::Boolean(*b),
+                    Expr::Literal(LiteralValue::Null) => ScalarValue::Null,
+                    _ => return Ok(ScalarValue::Null),
+                };
+                let fmt = match &args[1] {
+                    Expr::Literal(LiteralValue::String(s)) => s.clone(),
+                    _ => return Ok(ScalarValue::Null),
+                };
+                if let Some(dt) = Self::datetime_from_scalar(&date_val) {
+                    Ok(ScalarValue::String(Self::format_datetime(&dt, &fmt)))
+                } else {
+                    Ok(ScalarValue::Null)
+                }
+            }
+            "FROM_UNIXTIME" => {
+                if args.is_empty() {
+                    return Ok(ScalarValue::Null);
+                }
+                if !matches!(&args[0], Expr::Literal(_)) {
+                    return Ok(ScalarValue::Null);
+                }
+                let timestamp = match &args[0] {
+                    Expr::Literal(LiteralValue::Int64(n)) => *n,
+                    Expr::Literal(LiteralValue::String(s)) => s.parse().unwrap_or(0),
+                    Expr::Literal(LiteralValue::Date(s)) => s.parse().unwrap_or(0),
+                    _ => return Ok(ScalarValue::Null),
+                };
+                if let Some(dt) = DateTime::from_timestamp(timestamp, 0) {
+                    Ok(ScalarValue::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()))
+                } else {
+                    Ok(ScalarValue::Null)
+                }
+            }
             _ => Ok(ScalarValue::Null),
         }
+    }
+
+    fn datetime_from_scalar(val: &ScalarValue) -> Option<DateTime<Utc>> {
+        match val {
+            ScalarValue::Date(ordinal) => {
+                let date = NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .unwrap()
+                    .with_ordinal((*ordinal).clamp(1, 366) as u32)
+                    .unwrap();
+                Utc.from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap()).single()
+            }
+            ScalarValue::DateTime(ms) => {
+                DateTime::from_timestamp_millis(*ms)
+            }
+            ScalarValue::String(s) => {
+                Self::parse_datetime_string(s).and_then(|dt| Utc.from_local_datetime(&dt).single())
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_datetime_string(s: &str) -> Option<NaiveDateTime> {
+        let formats = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S%.f",
+            "%Y%m%d %H:%M:%S",
+        ];
+        for fmt in &formats {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(s, fmt) {
+                return Some(dt);
+            }
+        }
+        None
+    }
+
+    fn format_datetime(dt: &DateTime<Utc>, fmt: &str) -> String {
+        let naive = dt.naive_local();
+        fmt.replace("%Y", &naive.format("%Y").to_string())
+            .replace("%m", &format!("{:02}", naive.month()))
+            .replace("%d", &format!("{:02}", naive.day()))
+            .replace("%H", &format!("{:02}", naive.hour()))
+            .replace("%M", &format!("{:02}", naive.minute()))
+            .replace("%S", &format!("{:02}", naive.second()))
+            .replace("%y", &naive.format("%y").to_string())
+            .replace("%a", &naive.format("%a").to_string())
+            .replace("%b", &naive.format("%b").to_string())
+            .replace("%j", &format!("{:03}", naive.ordinal()))
+            .replace("%W", &naive.format("%W").to_string())
+            .replace("%U", &naive.format("%U").to_string())
+            .replace("%p", &naive.format("%p").to_string())
     }
 
     fn eval_cast(val: &ScalarValue, target_type: &str) -> std::result::Result<ScalarValue, String> {
@@ -1287,7 +1386,30 @@ impl ExecNode for ProjectExecNode {
     }
 
     async fn get_next(&mut self) -> Result<Option<Block>> {
-        self.child.get_next().await
+        let fe_expr = fe_expression::ExprEvaluator::new();
+        match self.child.get_next().await? {
+            Some(block) => {
+                let mut result_columns: Vec<Vector> = Vec::new();
+                for expr_str in &self.exprs {
+                    // Parse expression string to AST
+                    let parsed = fe_sql_parser::parser::parse_sql(expr_str)?;
+                    let fe_ast = match parsed.first() {
+                        Some(fe_sql_parser::ast::Statement::Query(q)) => {
+                            // Get SELECT expression from query
+                            q.select_list.first().map(|s| fe_sql_planner::expression::expr_to_string(&s.expr))
+                                .map(|s| fe_expression::ExprEvaluator::evaluate_with_string(&s))
+                                .ok()
+                        }
+                        _ => None,
+                    }.unwrap_or_else(|| fe_expression::ExprEvaluator::evaluate_with_string(expr_str));
+
+                    let vector = fe_expr.evaluate(&fe_ast, &block);
+                    result_columns.push(vector);
+                }
+                Ok(Some(Block::new(Schema::new(vec![]), result_columns)))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn close(&mut self) -> Result<()> {
@@ -1407,7 +1529,44 @@ impl ExecNode for AggregateExecNode {
             all_blocks.push(block);
         }
 
+        // If no blocks received but we have aggregates, still compute result for empty input
         if all_blocks.is_empty() {
+            // For aggregates without group_by on empty input:
+            // COUNT(*) = 0, SUM/AVG/MIN/MAX = NULL
+            if !self.aggregates.is_empty() && self.group_by.is_empty() {
+                let mut result_columns: Vec<Vector> = Vec::new();
+                let mut result_schema_fields: Vec<types::Field> = Vec::new();
+
+                for (func, _col_name) in &self.aggregates {
+                    let (vector, field) = match func.to_lowercase().as_str() {
+                        "count" => {
+                            let v = Vector::Int64(types::vector::Int64Vector::from_vec(vec![0i64]));
+                            let f = types::Field::new("", types::DataType::Int64, false);
+                            (v, f)
+                        }
+                        "sum" | "min" | "max" => {
+                            let v = Vector::Int64(types::vector::Int64Vector::from_vec(vec![0i64]));
+                            let f = types::Field::new("", types::DataType::Int64, false);
+                            (v, f)
+                        }
+                        "avg" => {
+                            let v = Vector::Float64(types::vector::Float64Vector::from_vec(vec![0.0_f64]));
+                            let f = types::Field::new("", types::DataType::Float64, false);
+                            (v, f)
+                        }
+                        _ => {
+                            let v = Vector::Null(types::vector::NullVector::new(1));
+                            let f = types::Field::new("", types::DataType::Null, true);
+                            (v, f)
+                        }
+                    };
+                    result_columns.push(vector);
+                    result_schema_fields.push(field);
+                }
+
+                self.returned = true;
+                return Ok(Some(Block::new(Schema::new(result_schema_fields), result_columns)));
+            }
             return Ok(None);
         }
 
@@ -1443,14 +1602,30 @@ impl ExecNode for AggregateExecNode {
                 } else if *col_idx < block.num_columns() {
                     if let Some(col) = block.column(*col_idx) {
                         let agg_value = Self::compute_aggregate_batch(col, func);
-                        let vector = match agg_value {
-                            ScalarValue::Int64(v) => Vector::Int64(types::vector::Int64Vector::from_vec(vec![v])),
-                            ScalarValue::Float64(v) => Vector::Float64(types::vector::Float64Vector::from_vec(vec![v])),
-                            ScalarValue::Int32(v) => Vector::Int32(types::vector::Int32Vector::from_vec(vec![v])),
-                            _ => Vector::Null(types::vector::NullVector::new(1)),
+                        let (vector, field) = match agg_value {
+                            ScalarValue::Int64(v) => {
+                                let vec = Vector::Int64(types::vector::Int64Vector::from_vec(vec![v]));
+                                let fld = types::Field::new("", types::DataType::Int64, false);
+                                (vec, fld)
+                            }
+                            ScalarValue::Float64(v) => {
+                                let vec = Vector::Float64(types::vector::Float64Vector::from_vec(vec![v]));
+                                let fld = types::Field::new("", types::DataType::Float64, false);
+                                (vec, fld)
+                            }
+                            ScalarValue::Int32(v) => {
+                                let vec = Vector::Int32(types::vector::Int32Vector::from_vec(vec![v]));
+                                let fld = types::Field::new("", types::DataType::Int32, false);
+                                (vec, fld)
+                            }
+                            _ => {
+                                let vec = Vector::Null(types::vector::NullVector::new(1));
+                                let fld = types::Field::new("", types::DataType::Null, true);
+                                (vec, fld)
+                            }
                         };
                         result_columns.push(vector);
-                        result_schema_fields.push(types::Field::new("", types::DataType::Null, true));
+                        result_schema_fields.push(field);
                     }
                 }
             }
@@ -1555,9 +1730,27 @@ impl ExecNode for AggregateExecNode {
             columns.push(vector);
         }
 
-        let schema_fields: Vec<types::Field> = (0..num_result_cols)
-            .map(|_| types::Field::new("", types::DataType::Null, true))
-            .collect();
+        let schema_fields: Vec<types::Field> = (0..num_result_cols).map(|col_idx| {
+            if col_idx < self.resolved_group_by.len() {
+                // GROUP BY columns - use Null type since we don't track original types
+                types::Field::new("", types::DataType::Null, true)
+            } else {
+                // Aggregate columns - determine type from function
+                let agg_idx = col_idx - self.resolved_group_by.len();
+                if agg_idx < self.resolved_aggregates.len() {
+                    let (func, _) = &self.resolved_aggregates[agg_idx];
+                    match func.to_lowercase().as_str() {
+                        "count" | "sum" | "min" | "max" => {
+                            types::Field::new("", types::DataType::Int64, false)
+                        }
+                        "avg" => types::Field::new("", types::DataType::Float64, false),
+                        _ => types::Field::new("", types::DataType::Null, true),
+                    }
+                } else {
+                    types::Field::new("", types::DataType::Null, true)
+                }
+            }
+        }).collect();
 
         self.returned = true;
         Ok(Some(Block::new(Schema::new(schema_fields), columns)))
