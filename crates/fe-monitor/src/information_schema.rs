@@ -347,7 +347,6 @@ mod tests {
     use fe_catalog::table::{TableColumn, KeysType};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
     use types::DataType;
 
     #[tokio::test]
@@ -400,7 +399,7 @@ mod tests {
     async fn test_information_schema_with_actual_data() {
         let catalog = Arc::new(RwLock::new(CatalogManager::new()));
         {
-            let catalog_guard = catalog.write().await;
+            let mut catalog_guard = catalog.write().unwrap();
             catalog_guard.create_database("test_db").unwrap();
 
             let table = Table {
@@ -426,6 +425,7 @@ mod tests {
                     },
                 ],
                 keys_type: KeysType::Duplicate,
+                unique_keys: vec![],
                 partition_info: None,
                 distribution_info: None,
                 replication_num: 1,

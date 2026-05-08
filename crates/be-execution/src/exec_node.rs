@@ -362,7 +362,7 @@ impl ValuesExecNode {
                     Expr::Literal(LiteralValue::Date(s)) => s.parse().unwrap_or(0),
                     _ => return Ok(ScalarValue::Null),
                 };
-                if let Some(dt) = DateTime::from_timestamp(timestamp, 0) {
+                if let Some(dt) = DateTime::<Utc>::from_timestamp(timestamp, 0) {
                     Ok(ScalarValue::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()))
                 } else {
                     Ok(ScalarValue::Null)

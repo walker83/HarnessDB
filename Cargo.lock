@@ -316,8 +316,10 @@ version = "0.1.5"
 dependencies = [
  "async-trait",
  "be-storage",
+ "chrono",
  "common",
  "fe-catalog",
+ "fe-expression",
  "fe-sql-parser",
  "fe-sql-planner",
  "thiserror 2.0.18",
