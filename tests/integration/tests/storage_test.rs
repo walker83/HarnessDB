@@ -63,7 +63,11 @@ fn test_tablet_add_rowset() {
 // ===========================================================================
 
 fn create_test_engine() -> StorageEngine {
-    let temp_dir = std::env::temp_dir().join("rovisdb_test_engine");
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp_dir = std::env::temp_dir().join(format!("rovisdb_test_engine_{}", id));
+    let _ = std::fs::remove_dir_all(&temp_dir);
     StorageEngine::open(temp_dir).unwrap()
 }
 

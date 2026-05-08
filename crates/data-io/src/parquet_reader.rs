@@ -63,12 +63,19 @@ impl ParquetReader {
     }
 
     pub fn next_batch(&mut self) -> Result<Option<Block>> {
-        // Get row iterator for remaining rows
+        let total_rows = self.num_rows();
+        if self.current_row >= total_rows {
+            return Ok(None);
+        }
+
         let row_iter = self.reader.get_row_iter(None).map_err(|e| common::DrorisError::Internal(format!("Parquet error: {:?}", e)))?;
 
         self.rows_buffer.clear();
 
-        for row_result in row_iter {
+        for (i, row_result) in row_iter.enumerate() {
+            if i < self.current_row {
+                continue;
+            }
             match row_result {
                 Ok(row) => {
                     self.rows_buffer.push(row);
