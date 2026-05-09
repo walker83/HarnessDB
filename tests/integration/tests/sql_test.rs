@@ -1248,3 +1248,167 @@ fn test_select_with_database_prefix_executes() {
 
     println!("SELECT with database prefix executed successfully through BE path");
 }
+
+// ===========================================================================
+// SELECT without FROM (constant expressions) tests
+// These test the VALUES node path for queries like SELECT 1+2, SELECT 'hello'
+// This was broken by a MySQL protocol short-circuit that hardcoded "1" as result
+// ===========================================================================
+
+#[test]
+fn test_select_constant_expression_planning() {
+    use fe_sql_planner::Optimizer;
+
+    let catalog = common::create_test_catalog();
+
+    // SELECT 1+2 should produce a Values node (no FROM = dual virtual table)
+    let mut planner = fe_sql_planner::Planner::new(catalog.clone());
+    planner.set_database("test_db");
+    let plan = planner.plan(fe_sql_parser::parse_sql("SELECT 1+2").unwrap().into_iter().next().unwrap()).unwrap();
+    let optimized_plan = Optimizer::new().optimize(plan);
+
+    // The plan should have a Project on top of Values
+    // (Values provides the virtual rows, Project evaluates the expression)
+    assert!(matches!(optimized_plan.node_type, PlanNodeType::Project(_)),
+        "SELECT 1+2 should produce Project node, got {:?}", optimized_plan.node_type);
+    assert_eq!(optimized_plan.children.len(), 1,
+        "Project should have one child");
+    assert!(matches!(optimized_plan.children[0].node_type, PlanNodeType::Values(_)),
+        "Project child should be Values node for SELECT without FROM");
+
+    println!("SELECT 1+2 planning: Project + Values structure verified");
+}
+
+#[test]
+fn test_select_string_literal_planning() {
+    use fe_sql_planner::Optimizer;
+
+    let catalog = common::create_test_catalog();
+
+    let mut planner = fe_sql_planner::Planner::new(catalog.clone());
+    planner.set_database("test_db");
+    let plan = planner.plan(fe_sql_parser::parse_sql("SELECT 'hello'").unwrap().into_iter().next().unwrap()).unwrap();
+    let optimized_plan = Optimizer::new().optimize(plan);
+
+    assert!(matches!(optimized_plan.node_type, PlanNodeType::Project(_)));
+    assert_eq!(optimized_plan.children.len(), 1);
+    assert!(matches!(optimized_plan.children[0].node_type, PlanNodeType::Values(_)));
+
+    println!("SELECT 'hello' planning: Project + Values structure verified");
+}
+
+#[test]
+fn test_select_constant_integer_planning() {
+    use fe_sql_planner::Optimizer;
+
+    let catalog = common::create_test_catalog();
+
+    let mut planner = fe_sql_planner::Planner::new(catalog.clone());
+    planner.set_database("test_db");
+    let plan = planner.plan(fe_sql_parser::parse_sql("SELECT 999").unwrap().into_iter().next().unwrap()).unwrap();
+    let optimized_plan = Optimizer::new().optimize(plan);
+
+    assert!(matches!(optimized_plan.node_type, PlanNodeType::Project(_)));
+    assert_eq!(optimized_plan.children.len(), 1);
+    assert!(matches!(optimized_plan.children[0].node_type, PlanNodeType::Values(_)));
+
+    println!("SELECT 999 planning: Project + Values structure verified");
+}
+
+#[test]
+fn test_select_expression_without_from_executes() {
+    use be_execution::planner::{execute_plan, ExecutionContext};
+    use fe_sql_planner::Optimizer;
+    use types::Block;
+
+    let catalog = common::create_test_catalog();
+    let storage = common::create_test_storage_engine();
+    let exec_context = ExecutionContext::new(std::sync::Arc::new(storage), catalog.clone());
+
+    // SELECT 1+2 should execute and return a block with the computed result
+    let mut planner = fe_sql_planner::Planner::new(catalog.clone());
+    planner.set_database("test_db");
+    let plan = planner.plan(fe_sql_parser::parse_sql("SELECT 1+2 as result").unwrap().into_iter().next().unwrap()).unwrap();
+    let optimized_plan = Optimizer::new().optimize(plan);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let blocks = rt.block_on(execute_plan(&optimized_plan, &exec_context)).unwrap();
+
+    // Should return exactly one block with one row
+    assert!(!blocks.is_empty(), "SELECT 1+2 should return at least one block");
+    let block = &blocks[0];
+    assert_eq!(block.num_rows(), 1, "SELECT 1+2 should return exactly 1 row");
+    assert_eq!(block.num_columns(), 1, "SELECT 1+2 should return exactly 1 column");
+
+    // Verify the result is 3 (not "1" which was the bug)
+    let row = block.row(0);
+    assert_eq!(row.len(), 1);
+    match &row[0] {
+        types::ScalarValue::Int64(n) => assert_eq!(*n, 3, "SELECT 1+2 should evaluate to 3"),
+        other => panic!("Expected Int64(3), got {:?}", other),
+    }
+
+    println!("SELECT 1+2 executed correctly, returned 3");
+}
+
+#[test]
+fn test_select_string_literal_executes() {
+    use be_execution::planner::{execute_plan, ExecutionContext};
+    use fe_sql_planner::Optimizer;
+
+    let catalog = common::create_test_catalog();
+    let storage = common::create_test_storage_engine();
+    let exec_context = ExecutionContext::new(std::sync::Arc::new(storage), catalog.clone());
+
+    let mut planner = fe_sql_planner::Planner::new(catalog.clone());
+    planner.set_database("test_db");
+    let plan = planner.plan(fe_sql_parser::parse_sql("SELECT 'hello' as msg").unwrap().into_iter().next().unwrap()).unwrap();
+    let optimized_plan = Optimizer::new().optimize(plan);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let blocks = rt.block_on(execute_plan(&optimized_plan, &exec_context)).unwrap();
+
+    assert!(!blocks.is_empty(), "SELECT 'hello' should return at least one block");
+    let block = &blocks[0];
+    assert_eq!(block.num_rows(), 1);
+
+    let row = block.row(0);
+    assert_eq!(row.len(), 1);
+    match &row[0] {
+        types::ScalarValue::String(s) => assert_eq!(s, "hello"),
+        other => panic!("Expected String('hello'), got {:?}", other),
+    }
+
+    println!("SELECT 'hello' executed correctly");
+}
+
+#[test]
+fn test_select_integer_executes() {
+    use be_execution::planner::{execute_plan, ExecutionContext};
+    use fe_sql_planner::Optimizer;
+
+    let catalog = common::create_test_catalog();
+    let storage = common::create_test_storage_engine();
+    let exec_context = ExecutionContext::new(std::sync::Arc::new(storage), catalog.clone());
+
+    let mut planner = fe_sql_planner::Planner::new(catalog.clone());
+    planner.set_database("test_db");
+    let plan = planner.plan(fe_sql_parser::parse_sql("SELECT 999 as val").unwrap().into_iter().next().unwrap()).unwrap();
+    let optimized_plan = Optimizer::new().optimize(plan);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let blocks = rt.block_on(execute_plan(&optimized_plan, &exec_context)).unwrap();
+
+    assert!(!blocks.is_empty(), "SELECT 999 should return at least one block");
+    let block = &blocks[0];
+    assert_eq!(block.num_rows(), 1);
+
+    let row = block.row(0);
+    assert_eq!(row.len(), 1);
+    match &row[0] {
+        types::ScalarValue::Int64(n) => assert_eq!(*n, 999),
+        other => panic!("Expected Int64(999), got {:?}", other),
+    }
+
+    println!("SELECT 999 executed correctly");
+}
