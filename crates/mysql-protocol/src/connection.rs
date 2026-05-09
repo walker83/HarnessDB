@@ -363,14 +363,7 @@ impl Connection {
                 );
                 return self.send_result_set(result).await;
             }
-            // Simple expressions without FROM (e.g., "SELECT 1", "SELECT 1+1")
-            if !trimmed.contains("from") {
-                let result = QueryResult::with_rows(
-                    vec![ColumnDef { name: "1".to_string(), col_type: ColumnType::Int }],
-                    vec![vec![Some("1".to_string())]],
-                );
-                return self.send_result_set(result).await;
-            }
+
         }
 
         // Handle SHOW commands
