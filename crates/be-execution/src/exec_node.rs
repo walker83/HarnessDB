@@ -2420,9 +2420,9 @@ impl ExecNode for WindowExecNode {
                     }
                 }
                 let window_val = match &window_values {
-                    Vector::Int64(v) => ScalarValue::Int64(*v.data().get(i).unwrap_or(&0)),
-                    Vector::Int32(v) => ScalarValue::Int32(*v.data().get(i).unwrap_or(&0)),
-                    Vector::Float64(v) => ScalarValue::Float64(*v.data().get(i).unwrap_or(&0.0)),
+                    Vector::Int64(v) => ScalarValue::Int64(v.get_checked(i)),
+                    Vector::Int32(v) => ScalarValue::Int32(v.get_checked(i)),
+                    Vector::Float64(v) => ScalarValue::Float64(v.get_checked(i)),
                     Vector::String(v) => ScalarValue::String(v.get(i).unwrap_or("").to_string()),
                     _ => ScalarValue::Null,
                 };
