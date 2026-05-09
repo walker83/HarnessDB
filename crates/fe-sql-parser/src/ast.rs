@@ -16,7 +16,7 @@ pub enum Statement {
     AlterTable(AlterTableStmt),
     TruncateTable { database: Option<String>, table: String, if_exists: bool },
     ShowDatabases,
-    ShowTables(Option<String>),
+    ShowTables(Option<String>, Option<String>),
     ShowCreateTable(String, String),
     ShowCreateDatabase(String),
     ShowCreateView(String, String),

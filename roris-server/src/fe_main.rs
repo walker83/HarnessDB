@@ -159,7 +159,7 @@ impl RorisQueryHandler {
     fn execute_statement(&self, stmt: &Statement) -> Result<QueryResult, String> {
         match stmt {
             Statement::ShowDatabases => self.show_databases(),
-            Statement::ShowTables(db) => self.show_tables(db.clone()),
+            Statement::ShowTables(db, like) => self.show_tables(db.clone(), like.clone()),
             Statement::ShowCreateTable(db, table) => self.show_create_table(db.clone(), table.clone()),
             Statement::ShowCreateDatabase(db) => self.show_create_database(&db),
             Statement::ShowCreateView(db, view) => self.show_create_view(db.clone(), view.clone()),
@@ -281,7 +281,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    fn show_tables(&self, db: Option<String>) -> Result<QueryResult, String> {
+    fn show_tables(&self, db: Option<String>, like: Option<String>) -> Result<QueryResult, String> {
         let catalog = self.catalog.read().unwrap();
         let current_db = self.current_database.read().unwrap();
         let target_db = db.as_deref().unwrap_or(&current_db);
@@ -290,6 +290,12 @@ impl RorisQueryHandler {
             Some(tables) => {
                 let rows: Vec<Vec<Option<String>>> = tables
                     .iter()
+                    .filter(|t| {
+                        match &like {
+                            Some(pattern) => like_match(pattern, t),
+                            None => true,
+                        }
+                    })
                     .map(|t| vec![Some(t.clone())])
                     .collect();
                 Ok(QueryResult::with_rows(
@@ -1989,6 +1995,30 @@ fn parse_data_type(s: &str) -> DataType {
         "DATETIME" | "TIMESTAMP" => DataType::DateTime,
         _ => DataType::String,
     }
+}
+
+fn like_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let mut dp = vec![vec![false; t.len() + 1]; p.len() + 1];
+    dp[0][0] = true;
+    for i in 1..=p.len() {
+        if p[i - 1] == '%' {
+            dp[i][0] = dp[i - 1][0];
+        }
+    }
+    for i in 1..=p.len() {
+        for j in 1..=t.len() {
+            if p[i - 1] == '%' {
+                dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
+            } else if p[i - 1] == '_' {
+                dp[i][j] = dp[i - 1][j - 1];
+            } else {
+                dp[i][j] = dp[i - 1][j - 1] && p[i - 1].to_ascii_lowercase() == t[j - 1].to_ascii_lowercase();
+            }
+        }
+    }
+    dp[p.len()][t.len()]
 }
 
 fn block_to_query_result(blocks: Vec<Block>) -> Result<QueryResult, String> {

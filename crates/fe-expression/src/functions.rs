@@ -437,8 +437,8 @@ impl FunctionRegistry {
     /// NOW() / CURRENT_TIMESTAMP - Returns current datetime as milliseconds
     fn now(&self, _args: &[Vector]) -> Vector {
         let now = chrono::Local::now();
-        let utc_ts: Option<chrono::DateTime<Utc>> = Utc.from_local_datetime(&now.naive_local()).single();
-        int64_vec(vec![utc_ts.map(|dt| dt.timestamp_millis()).unwrap_or(0)])
+        let formatted = now.format("%Y-%m-%d %H:%M:%S").to_string();
+        string_vec(vec![Some(formatted)])
     }
 
     /// DATE_ADD(date, INTERVAL expr unit) - Adds interval to date

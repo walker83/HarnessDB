@@ -65,14 +65,6 @@ impl ExprStringParser {
     }
 
     fn parse_binary_op(&self, s: &str) -> Option<Expr> {
-        // Check for parentheses to avoid misparsing inside function args
-        let paren_count = s.chars().filter(|&c| c == '(' || c == ')').count();
-        if paren_count > 0 {
-            return None;
-        }
-
-        // Try operators from lowest to highest precedence
-        // OR, AND, LIKE/NOT LIKE, comparisons, then arithmetic (+ -, * / %)
         for (op_str, op) in [
             (" OR ", BinaryOperator::Or),
             (" AND ", BinaryOperator::And),
@@ -90,17 +82,25 @@ impl ExprStringParser {
             (" + ", BinaryOperator::Add),
             (" - ", BinaryOperator::Subtract),
         ] {
-            if let Some(pos) = s.find(op_str) {
-                let left = s[..pos].trim();
-                let right = s[pos + op_str.len()..].trim();
-                if !left.is_empty() && !right.is_empty() {
-                    if let Some(left_expr) = self.parse(left) {
-                        if let Some(right_expr) = self.parse(right) {
-                            return Some(Expr::BinaryOp {
-                                op,
-                                left: Box::new(left_expr),
-                                right: Box::new(right_expr),
-                            });
+            let mut paren_depth = 0i32;
+            let bytes = s.as_bytes();
+            let op_bytes = op_str.as_bytes();
+            for i in 0..=s.len().saturating_sub(op_str.len()) {
+                let ch = bytes[i] as char;
+                if ch == '(' { paren_depth += 1; }
+                else if ch == ')' { paren_depth -= 1; }
+                if paren_depth == 0 && bytes[i..].starts_with(op_bytes) {
+                    let left = s[..i].trim();
+                    let right = s[i + op_str.len()..].trim();
+                    if !left.is_empty() && !right.is_empty() {
+                        if let Some(left_expr) = self.parse(left) {
+                            if let Some(right_expr) = self.parse(right) {
+                                return Some(Expr::BinaryOp {
+                                    op,
+                                    left: Box::new(left_expr),
+                                    right: Box::new(right_expr),
+                                });
+                            }
                         }
                     }
                 }
@@ -247,15 +247,28 @@ impl ExprStringParser {
         }
 
         let args_str = &s[open_paren + 1..s.len() - 1];
-        let args = self.split_args(args_str);
+        let split_args = self.split_args(args_str);
 
-        let args_exprs: Vec<Expr> = args.iter()
+        let mut distinct = false;
+        let mut filtered_args: Vec<String> = split_args;
+        if !filtered_args.is_empty() {
+            let first = filtered_args[0].trim().to_uppercase();
+            if first == "DISTINCT" {
+                distinct = true;
+                filtered_args.remove(0);
+            } else if first.starts_with("DISTINCT ") {
+                distinct = true;
+                filtered_args[0] = filtered_args[0].trim()[9..].trim().to_string();
+            }
+        }
+
+        let args_exprs: Vec<Expr> = filtered_args.iter()
             .filter_map(|arg| self.parse(arg))
             .collect();
 
-        if args_exprs.len() == args.len() {
+        if args_exprs.len() == filtered_args.len() {
             Some(Expr::FunctionCall(FunctionCall {
-                name: name.to_lowercase(),
+                name: if distinct { format!("{}_distinct", name.to_lowercase()) } else { name.to_lowercase() },
                 args: args_exprs,
                 distinct: false,
             }))

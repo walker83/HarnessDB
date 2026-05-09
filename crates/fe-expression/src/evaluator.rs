@@ -50,8 +50,25 @@ impl ExprEvaluator {
                 bool_vec(data)
             }
             Expr::FunctionCall(call) => {
-                let args: Vec<Vector> = call.args.iter().map(|a| self.evaluate(a, block)).collect();
-                self.functions.call(&call.name, &args)
+                let args_str: Vec<String> = call.args.iter().map(|a| match a {
+                    Expr::Wildcard => "*".to_string(),
+                    Expr::ColumnRef(col) => col.name.clone(),
+                    Expr::Literal(v) => format!("{:?}", v),
+                    _ => "?".to_string(),
+                }).collect();
+                let func_name = call.name.to_lowercase();
+                let func_str = format!("{}({})", func_name, args_str.join(", "));
+                let distinct_str = format!("{}_distinct({})", func_name, args_str.join(", "));
+                if let Some((_, v)) = block.column_by_name(&func_str) {
+                    v.clone()
+                } else if let Some((_, v)) = block.column_by_name(&distinct_str) {
+                    v.clone()
+                } else if let Some((_, v)) = block.column_by_name(&call.name) {
+                    v.clone()
+                } else {
+                    let args: Vec<Vector> = call.args.iter().map(|a| self.evaluate(a, block)).collect();
+                    self.functions.call(&call.name, &args)
+                }
             }
             Expr::InList { expr: inner, list, negated } => {
                 let v = self.evaluate(inner, block);

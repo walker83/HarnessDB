@@ -1702,7 +1702,19 @@ fn convert_statement(
                 .show_in
                 .and_then(|si| si.parent_name)
                 .map(|n| n.to_string());
-            Ok(Statement::ShowTables(db_name))
+            let like_pattern = show_options
+                .filter_position
+                .and_then(|fp| match fp {
+                    sqlparser::ast::ShowStatementFilterPosition::Suffix(filter) 
+                    | sqlparser::ast::ShowStatementFilterPosition::Infix(filter) => {
+                        if let sqlparser::ast::ShowStatementFilter::Like(pattern) = filter {
+                            Some(pattern)
+                        } else {
+                            None
+                        }
+                    }
+                });
+            Ok(Statement::ShowTables(db_name, like_pattern))
         }
         sqlparser::ast::Statement::Use(use_expr) => {
             let db_name = match use_expr {
@@ -2277,8 +2289,9 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
         },
         sqlparser::ast::Expr::Function(fun) => {
             let name = fun.name.to_string();
-            let args = convert_function_args(fun.args);
-            Expr::FunctionCall { name, args, distinct: false }
+            let args = convert_function_args(fun.args.clone());
+            let distinct = matches!(&fun.args, sqlparser::ast::FunctionArguments::List(list) if matches!(list.duplicate_treatment, Some(sqlparser::ast::DuplicateTreatment::Distinct)));
+            Expr::FunctionCall { name, args, distinct }
         }
         sqlparser::ast::Expr::InList { expr, list, negated } => Expr::InList {
             expr: Box::new(convert_expr(*expr)),

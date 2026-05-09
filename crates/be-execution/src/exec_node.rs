@@ -1441,14 +1441,16 @@ impl ExecNode for ProjectExecNode {
                                 }
                             }
                         }
-                    } else if block.num_rows() == 1 && block.num_columns() > 0 {
-                        // For 1-row blocks (likely aggregate results), check if expression matches a column name
+                    } else {
+                        // For aggregate result blocks (columns have empty names), use index-based access
                         let expr_trimmed = expr_str.trim();
                         let matches_column = block.column_by_name(expr_trimmed).is_some();
+                        let is_agg_block = !matches_column && block.num_columns() > 0
+                            && (0..block.num_columns()).all(|i| {
+                                block.schema().field(i).map(|f| f.name.is_empty()).unwrap_or(true)
+                            });
 
-                        if !matches_column {
-                            // Expression doesn't match any column name - use index-based access
-                            // This handles aggregate results where columns have empty names
+                        if is_agg_block {
                             if let Some(col) = block.column(idx) {
                                 result_columns.push(col.clone());
                                 let data_type = col.data_type();
@@ -1457,19 +1459,7 @@ impl ExecNode for ProjectExecNode {
                             }
                         }
 
-                        // If expression matches a column name or index access failed, evaluate normally
                         if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
-                            let expanded_vector = if vector.len() == 1 && block.num_rows() > 1 {
-                                let scalar = vector.scalar_at(0);
-                                Vector::from_scalar(&scalar, block.num_rows())
-                            } else {
-                                vector
-                            };
-                            result_columns.push(expanded_vector);
-                            let data_type = result_columns.last().unwrap().data_type();
-                            result_fields.push(types::Field::new(expr_trimmed, data_type, true));
-                        }
-                    } else if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
                         // Handle window functions: expand to match block length with proper sequence
                         let expanded_vector = if vector.len() == 1 && block.num_rows() > 1 {
                             let scalar = vector.scalar_at(0);
@@ -1493,6 +1483,7 @@ impl ExecNode for ProjectExecNode {
                         let name = expr_str.trim().to_string();
                         let data_type = result_columns.last().unwrap().data_type();
                         result_fields.push(types::Field::new(&name, data_type, true));
+                        }
                     }
                 }
 
@@ -1547,6 +1538,16 @@ impl AggregateExecNode {
         let func_lower = func.to_lowercase();
         match func_lower.as_str() {
             "count" => ScalarValue::Int64(col.count_batch() as i64),
+            "count_distinct" => {
+                let mut seen = std::collections::HashSet::new();
+                for i in 0..col.len() {
+                    let val = col.scalar_at(i);
+                    if val != ScalarValue::Null {
+                        seen.insert(format!("{:?}", val));
+                    }
+                }
+                ScalarValue::Int64(seen.len() as i64)
+            }
             "sum" => col.sum_batch().unwrap_or(ScalarValue::Null),
             "min" => col.min_batch().unwrap_or(ScalarValue::Null),
             "max" => col.max_batch().unwrap_or(ScalarValue::Null),
@@ -1556,8 +1557,18 @@ impl AggregateExecNode {
     }
 
     fn compute_aggregate(values: &[ScalarValue], func: &str) -> ScalarValue {
-        match func {
+        let func_lower = func.to_lowercase();
+        match func_lower.as_str() {
             "count" => ScalarValue::Int64(values.len() as i64),
+            "count_distinct" => {
+                let mut seen = std::collections::HashSet::new();
+                for v in values {
+                    if v != &ScalarValue::Null {
+                        seen.insert(format!("{:?}", v));
+                    }
+                }
+                ScalarValue::Int64(seen.len() as i64)
+            }
             "sum" => {
                 let mut sum: i64 = 0;
                 for v in values {
@@ -1632,26 +1643,27 @@ impl ExecNode for AggregateExecNode {
                 let mut result_columns: Vec<Vector> = Vec::new();
                 let mut result_schema_fields: Vec<types::Field> = Vec::new();
 
-                for (func, _col_name) in &self.aggregates {
+                for (func, col_name) in &self.aggregates {
+                    let agg_col_name = format!("{}({})", func.to_lowercase(), col_name);
                     let (vector, field) = match func.to_lowercase().as_str() {
-                        "count" => {
+                        "count" | "count_distinct" => {
                             let v = Vector::Int64(types::vector::Int64Vector::from_vec(vec![0i64]));
-                            let f = types::Field::new("", types::DataType::Int64, false);
+                            let f = types::Field::new(&agg_col_name, types::DataType::Int64, false);
                             (v, f)
                         }
                         "sum" | "min" | "max" => {
                             let v = Vector::Int64(types::vector::Int64Vector::from_vec(vec![0i64]));
-                            let f = types::Field::new("", types::DataType::Int64, false);
+                            let f = types::Field::new(&agg_col_name, types::DataType::Int64, false);
                             (v, f)
                         }
                         "avg" => {
                             let v = Vector::Float64(types::vector::Float64Vector::from_vec(vec![0.0_f64]));
-                            let f = types::Field::new("", types::DataType::Float64, false);
+                            let f = types::Field::new(&agg_col_name, types::DataType::Float64, false);
                             (v, f)
                         }
                         _ => {
                             let v = Vector::Null(types::vector::NullVector::new(1));
-                            let f = types::Field::new("", types::DataType::Null, true);
+                            let f = types::Field::new(&agg_col_name, types::DataType::Null, true);
                             (v, f)
                         }
                     };
@@ -1685,37 +1697,44 @@ impl ExecNode for AggregateExecNode {
             let mut result_schema_fields: Vec<types::Field> = Vec::new();
 
             for (func, col_idx) in &self.resolved_aggregates {
+                let col_name = if *col_idx == usize::MAX {
+                    "*".to_string()
+                } else if *col_idx < block.num_columns() {
+                    block.schema().field(*col_idx).map(|f| f.name.clone()).unwrap_or_default()
+                } else {
+                    "?".to_string()
+                };
+                let agg_col_name = format!("{}({})", func.to_lowercase(), col_name);
                 if *col_idx == usize::MAX {
-                    // COUNT(*) - use total row count
                     let agg_value = ScalarValue::Int64(block.num_rows() as i64);
                     let vector = Vector::Int64(types::vector::Int64Vector::from_vec(vec![match agg_value {
                         ScalarValue::Int64(v) => v,
                         _ => 0,
                     }]));
                     result_columns.push(vector);
-                    result_schema_fields.push(types::Field::new("", types::DataType::Int64, false));
+                    result_schema_fields.push(types::Field::new(&agg_col_name, types::DataType::Int64, false));
                 } else if *col_idx < block.num_columns() {
                     if let Some(col) = block.column(*col_idx) {
                         let agg_value = Self::compute_aggregate_batch(col, func);
                         let (vector, field) = match agg_value {
                             ScalarValue::Int64(v) => {
                                 let vec = Vector::Int64(types::vector::Int64Vector::from_vec(vec![v]));
-                                let fld = types::Field::new("", types::DataType::Int64, false);
+                                let fld = types::Field::new(&agg_col_name, types::DataType::Int64, false);
                                 (vec, fld)
                             }
                             ScalarValue::Float64(v) => {
                                 let vec = Vector::Float64(types::vector::Float64Vector::from_vec(vec![v]));
-                                let fld = types::Field::new("", types::DataType::Float64, false);
+                                let fld = types::Field::new(&agg_col_name, types::DataType::Float64, false);
                                 (vec, fld)
                             }
                             ScalarValue::Int32(v) => {
                                 let vec = Vector::Int32(types::vector::Int32Vector::from_vec(vec![v]));
-                                let fld = types::Field::new("", types::DataType::Int32, false);
+                                let fld = types::Field::new(&agg_col_name, types::DataType::Int32, false);
                                 (vec, fld)
                             }
                             _ => {
                                 let vec = Vector::Null(types::vector::NullVector::new(1));
-                                let fld = types::Field::new("", types::DataType::Null, true);
+                                let fld = types::Field::new(&agg_col_name, types::DataType::Null, true);
                                 (vec, fld)
                             }
                         };
@@ -1773,7 +1792,9 @@ impl ExecNode for AggregateExecNode {
                     let values: Vec<ScalarValue> = group_rows.iter()
                         .filter_map(|row| row.get(*col_idx).cloned())
                         .collect();
-                    result_row.push(Self::compute_aggregate(&values, func));
+                    let agg = Self::compute_aggregate(&values, func);
+                    eprintln!("DEBUG: func={:?} col_idx={} values={:?} agg={:?}", func, col_idx, values, agg);
+                    result_row.push(agg);
                 }
             }
 
@@ -1826,20 +1847,20 @@ impl ExecNode for AggregateExecNode {
         }
 
         let schema_fields: Vec<types::Field> = (0..num_result_cols).map(|col_idx| {
-            if col_idx < self.resolved_group_by.len() {
-                // GROUP BY columns - use Null type since we don't track original types
-                types::Field::new("", types::DataType::Null, true)
+            if col_idx < self.group_by.len() {
+                let name = &self.group_by[col_idx];
+                types::Field::new(name.as_str(), types::DataType::Null, true)
             } else {
-                // Aggregate columns - determine type from function
-                let agg_idx = col_idx - self.resolved_group_by.len();
-                if agg_idx < self.resolved_aggregates.len() {
-                    let (func, _) = &self.resolved_aggregates[agg_idx];
+                let agg_idx = col_idx - self.group_by.len();
+                if agg_idx < self.aggregates.len() {
+                    let (func, col_name) = &self.aggregates[agg_idx];
+                    let field_name = format!("{}({})", func.to_lowercase(), col_name);
                     match func.to_lowercase().as_str() {
                         "count" | "sum" | "min" | "max" => {
-                            types::Field::new("", types::DataType::Int64, false)
+                            types::Field::new(&field_name, types::DataType::Int64, false)
                         }
-                        "avg" => types::Field::new("", types::DataType::Float64, false),
-                        _ => types::Field::new("", types::DataType::Null, true),
+                        "avg" => types::Field::new(&field_name, types::DataType::Float64, false),
+                        _ => types::Field::new(&field_name, types::DataType::Null, true),
                     }
                 } else {
                     types::Field::new("", types::DataType::Null, true)

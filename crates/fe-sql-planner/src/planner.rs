@@ -73,7 +73,7 @@ impl Planner {
             Statement::DropTable(drop_tbl) => self.plan_drop_table(drop_tbl),
             Statement::UseDatabase(db) => self.plan_use(db),
             Statement::ShowDatabases => self.plan_show_databases(),
-            Statement::ShowTables(db) => self.plan_show_tables(db),
+            Statement::ShowTables(db, like) => self.plan_show_tables(db, like),
             Statement::Explain(explain) => {
                 self.plan(*explain.statement)
             }
@@ -508,15 +508,19 @@ impl Planner {
         ))
     }
 
-    fn plan_show_tables(&self, db: Option<String>) -> Result<PlanNode, DrorisError> {
+    fn plan_show_tables(&self, db: Option<String>, like: Option<String>) -> Result<PlanNode, DrorisError> {
         let target_db = db.as_deref().unwrap_or(&self.current_database);
+        let mut predicates = vec![format!("table_schema = '{}'", target_db)];
+        if let Some(pattern) = like {
+            predicates.push(format!("table_name LIKE '{}'", pattern));
+        }
         Ok(self.make_node(
             PlanNodeType::Scan(ScanNode {
                 catalog: None,
                 table_name: "information_schema.tables".into(),
                 database: Some("information_schema".into()),
                 columns: vec!["table_name".into()],
-                predicates: vec![format!("table_schema = '{}'", target_db)],
+                predicates,
                 limit: None,
             }),
             vec![],
@@ -593,12 +597,17 @@ impl Planner {
                     if let Expr::FunctionCall {
                         name,
                         args,
-                        distinct: _,
+                        distinct,
                     } = &item.expr
                     {
                         if is_aggregate_function(name) {
+                            let func_name = if *distinct {
+                                format!("{}_distinct", name.to_lowercase())
+                            } else {
+                                name.clone()
+                            };
                             Some(AggregateExpr {
-                                func: name.clone(),
+                                func: func_name,
                                 arg: args
                                     .first()
                                     .map(expression::expr_to_string)
