@@ -40,7 +40,8 @@ impl Optimizer {
     fn apply_rules(&self, plan: PlanNode) -> PlanNode {
         let plan = self.push_down_predicates(plan);
         let plan = self.prune_columns(plan);
-        let plan = self.push_down_limit(plan);
+        // TODO: fix limit pushdown - currently pushes LIMIT to Scan before Sort, breaking ORDER BY
+        // let plan = self.push_down_limit(plan);
         let plan = self.reorder_joins(plan);
 
         let rule = RuntimeFilterRule::new();

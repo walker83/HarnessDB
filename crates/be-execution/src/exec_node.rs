@@ -1430,7 +1430,7 @@ impl ExecNode for ProjectExecNode {
                 let mut result_columns: Vec<Vector> = Vec::new();
                 let mut result_fields: Vec<types::Field> = Vec::new();
 
-                for expr_str in &self.exprs {
+                for (idx, expr_str) in self.exprs.iter().enumerate() {
                     if expr_str.trim() == "*" {
                         // Expand wildcard to all columns from child block
                         for i in 0..block.num_columns() {
@@ -1440,6 +1440,34 @@ impl ExecNode for ProjectExecNode {
                                     result_fields.push(field.clone());
                                 }
                             }
+                        }
+                    } else if block.num_rows() == 1 && block.num_columns() > 0 {
+                        // For 1-row blocks (likely aggregate results), check if expression matches a column name
+                        let expr_trimmed = expr_str.trim();
+                        let matches_column = block.column_by_name(expr_trimmed).is_some();
+
+                        if !matches_column {
+                            // Expression doesn't match any column name - use index-based access
+                            // This handles aggregate results where columns have empty names
+                            if let Some(col) = block.column(idx) {
+                                result_columns.push(col.clone());
+                                let data_type = col.data_type();
+                                result_fields.push(types::Field::new(expr_trimmed, data_type, true));
+                                continue;
+                            }
+                        }
+
+                        // If expression matches a column name or index access failed, evaluate normally
+                        if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
+                            let expanded_vector = if vector.len() == 1 && block.num_rows() > 1 {
+                                let scalar = vector.scalar_at(0);
+                                Vector::from_scalar(&scalar, block.num_rows())
+                            } else {
+                                vector
+                            };
+                            result_columns.push(expanded_vector);
+                            let data_type = result_columns.last().unwrap().data_type();
+                            result_fields.push(types::Field::new(expr_trimmed, data_type, true));
                         }
                     } else if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
                         // Handle window functions: expand to match block length with proper sequence
@@ -1516,7 +1544,8 @@ impl AggregateExecNode {
     }
 
     fn compute_aggregate_batch(col: &Vector, func: &str) -> ScalarValue {
-        match func {
+        let func_lower = func.to_lowercase();
+        match func_lower.as_str() {
             "count" => ScalarValue::Int64(col.count_batch() as i64),
             "sum" => col.sum_batch().unwrap_or(ScalarValue::Null),
             "min" => col.min_batch().unwrap_or(ScalarValue::Null),
