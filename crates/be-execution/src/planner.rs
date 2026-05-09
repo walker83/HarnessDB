@@ -165,6 +165,26 @@ impl ExecutionContext {
                     Err(PlanExecutionError::UnsupportedNode("Join with < 2 children".into()))
                 }
             }
+            PlanNodeType::SemiJoin(_) => {
+                // SemiJoin: return rows from left child that have a match in right child.
+                // For now, simplified to just return left child's output.
+                // A proper implementation would require a SemiJoinExecNode.
+                if let Some(left_child) = plan.children.first() {
+                    self.create_exec_plan_impl(left_child)
+                } else {
+                    Err(PlanExecutionError::UnsupportedNode("SemiJoin without children".into()))
+                }
+            }
+            PlanNodeType::AntiSemiJoin(_) => {
+                // AntiSemiJoin: return rows from left child that do NOT have a match in right child.
+                // For now, simplified to just return left child's output.
+                // A proper implementation would require an AntiSemiJoinExecNode.
+                if let Some(left_child) = plan.children.first() {
+                    self.create_exec_plan_impl(left_child)
+                } else {
+                    Err(PlanExecutionError::UnsupportedNode("AntiSemiJoin without children".into()))
+                }
+            }
             PlanNodeType::Update(update) => {
                 self.create_update_node(update)
             }

@@ -3,6 +3,7 @@ use clap::Parser;
 use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
+use types::ScalarValue;
 
 use be_storage::StorageEngine;
 use fe_common::edit_log::EditLog;
@@ -15,7 +16,7 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
 use fe_sql_parser::{parse_sql, Statement};
 use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt, DeleteStmt};
-use types::{DataType, ScalarValue, Block};
+use types::{DataType, Block};
 use fe_catalog::table::{Table, TableColumn, KeysType};
 use be_execution::exec_node::TransactionContext;
 use be_execution::planner::{ExecutionContext, execute_plan};
@@ -1057,8 +1058,19 @@ impl RorisQueryHandler {
         .map_err(|e| format!("Execution error: {:?}", e))?
         .map_err(|e| format!("Execution error: {}", e))?;
 
-        // Extract affected rows from results
-        let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
+        // Extract affected rows from result blocks (value stored in first column)
+        let affected_rows: usize = results.iter()
+            .filter_map(|b| b.column(0))
+            .map(|col| {
+                (0..col.len()).filter_map(|i| {
+                    match col.scalar_at(i) {
+                        ScalarValue::Int64(n) => Some(n as usize),
+                        ScalarValue::Int32(n) => Some(n as usize),
+                        _ => None,
+                    }
+                }).sum::<usize>()
+            })
+            .sum();
 
         tracing::info!("INSERT into {}.{}: {} rows affected", database.as_ref().unwrap_or(&"default".to_string()), table_name, affected_rows);
         Ok(QueryResult::with_rows(
@@ -1115,8 +1127,19 @@ impl RorisQueryHandler {
         .map_err(|e| format!("Execution error: {:?}", e))?
         .map_err(|e| format!("Execution error: {}", e))?;
 
-        // Extract affected rows from results
-        let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
+        // Extract affected rows from result blocks (value stored in first column)
+        let affected_rows: usize = results.iter()
+            .filter_map(|b| b.column(0))
+            .map(|col| {
+                (0..col.len()).filter_map(|i| {
+                    match col.scalar_at(i) {
+                        ScalarValue::Int64(n) => Some(n as usize),
+                        ScalarValue::Int32(n) => Some(n as usize),
+                        _ => None,
+                    }
+                }).sum::<usize>()
+            })
+            .sum();
 
         tracing::info!("UPDATE on {}.{}: {} rows affected", database, table_name, affected_rows);
         Ok(QueryResult::with_rows(

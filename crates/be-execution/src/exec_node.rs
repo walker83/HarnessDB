@@ -476,33 +476,57 @@ impl ValuesExecNode {
         }
     }
 
+    fn coerce_scalar(value: &ScalarValue, target_type: &types::DataType) -> ScalarValue {
+        match (value, target_type) {
+            // Int64 → narrower int types
+            (ScalarValue::Int64(n), types::DataType::Int8) => ScalarValue::Int8(*n as i8),
+            (ScalarValue::Int64(n), types::DataType::Int16) => ScalarValue::Int16(*n as i16),
+            (ScalarValue::Int64(n), types::DataType::Int32) => ScalarValue::Int32(*n as i32),
+            (ScalarValue::Int64(n), types::DataType::Float32) => ScalarValue::Float32(*n as f32),
+            (ScalarValue::Int64(n), types::DataType::Float64) => ScalarValue::Float64(*n as f64),
+            // Int32 → narrower int types
+            (ScalarValue::Int32(n), types::DataType::Int8) => ScalarValue::Int8(*n as i8),
+            (ScalarValue::Int32(n), types::DataType::Int16) => ScalarValue::Int16(*n as i16),
+            (ScalarValue::Int32(n), types::DataType::Int64) => ScalarValue::Int64(*n as i64),
+            (ScalarValue::Int32(n), types::DataType::Float32) => ScalarValue::Float32(*n as f32),
+            (ScalarValue::Int32(n), types::DataType::Float64) => ScalarValue::Float64(*n as f64),
+            // Float64 → Float32
+            (ScalarValue::Float64(f), types::DataType::Float32) => ScalarValue::Float32(*f as f32),
+            // Null stays Null
+            (ScalarValue::Null, _) => ScalarValue::Null,
+            // Already matching or no coercion needed
+            _ => value.clone(),
+        }
+    }
+
     fn scalar_to_vector(values: &[ScalarValue], data_type: &types::DataType) -> Vector {
+        let coerced: Vec<ScalarValue> = values.iter().map(|v| Self::coerce_scalar(v, data_type)).collect();
         match data_type {
             types::DataType::Boolean => Vector::Boolean(BooleanVector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Boolean(b) = v { Some(*b) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Boolean(b) = v { Some(*b) } else { None }).collect())),
             types::DataType::Int8 => Vector::Int8(Int8Vector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Int8(n) = v { Some(*n) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Int8(n) = v { Some(*n) } else { None }).collect())),
             types::DataType::Int16 => Vector::Int16(Int16Vector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Int16(n) = v { Some(*n) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Int16(n) = v { Some(*n) } else { None }).collect())),
             types::DataType::Int32 => Vector::Int32(Int32Vector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Int32(n) = v { Some(*n) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Int32(n) = v { Some(*n) } else { None }).collect())),
             types::DataType::Int64 => Vector::Int64(Int64Vector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Int64(n) = v { Some(*n) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Int64(n) = v { Some(*n) } else { None }).collect())),
             types::DataType::Int128 => Vector::Int128(Int128Vector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Int128(n) = v { Some(*n) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Int128(n) = v { Some(*n) } else { None }).collect())),
             types::DataType::Float32 => Vector::Float32(Float32Vector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Float32(n) = v { Some(*n) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Float32(n) = v { Some(*n) } else { None }).collect())),
             types::DataType::Float64 => Vector::Float64(Float64Vector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Float64(n) = v { Some(*n) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Float64(n) = v { Some(*n) } else { None }).collect())),
             types::DataType::String => Vector::String(StringVector::from_option_vec(
-                values.iter().map(|v| if let ScalarValue::String(s) = v { Some(s.clone()) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::String(s) = v { Some(s.clone()) } else { None }).collect())),
             types::DataType::Date => Vector::Date(DateVector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::Date(d) = v { Some(*d) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::Date(d) = v { Some(*d) } else { None }).collect())),
             types::DataType::DateTime => Vector::DateTime(DateTimeVector::from_nullable_vec(
-                values.iter().map(|v| if let ScalarValue::DateTime(d) = v { Some(*d) } else { None }).collect())),
+                coerced.iter().map(|v| if let ScalarValue::DateTime(d) = v { Some(*d) } else { None }).collect())),
             types::DataType::Json => Vector::Json(JsonVector::from_option_vec(
-                values.iter().map(|v| if let ScalarValue::Json(j) = v { Some(ScalarValue::Json(j.clone())) } else { None }).collect())),
-            _ => Vector::Null(NullVector::new(values.len())),
+                coerced.iter().map(|v| if let ScalarValue::Json(j) = v { Some(ScalarValue::Json(j.clone())) } else { None }).collect())),
+            _ => Vector::Null(NullVector::new(coerced.len())),
         }
     }
 
@@ -1390,12 +1414,33 @@ impl ExecNode for ProjectExecNode {
         match self.child.get_next().await? {
             Some(block) => {
                 let mut result_columns: Vec<Vector> = Vec::new();
+                let mut result_fields: Vec<types::Field> = Vec::new();
+
                 for expr_str in &self.exprs {
-                    if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
+                    if expr_str.trim() == "*" {
+                        // Expand wildcard to all columns from child block
+                        for i in 0..block.num_columns() {
+                            if let Some(col) = block.column(i) {
+                                result_columns.push(col.clone());
+                                if let Some(field) = block.schema().field(i) {
+                                    result_fields.push(field.clone());
+                                }
+                            }
+                        }
+                    } else if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
                         result_columns.push(vector);
+                        // Derive field name from expression
+                        let name = expr_str.trim().to_string();
+                        let data_type = result_columns.last().unwrap().data_type();
+                        result_fields.push(types::Field::new(&name, data_type, true));
                     }
                 }
-                Ok(Some(Block::new(Schema::new(vec![]), result_columns)))
+
+                if result_columns.is_empty() {
+                    return Ok(None);
+                }
+
+                Ok(Some(Block::new(Schema::new(result_fields), result_columns)))
             }
             None => Ok(None),
         }

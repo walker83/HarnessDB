@@ -11,7 +11,16 @@ impl ExprEvaluator {
 
     pub fn evaluate(&self, expr: &Expr, block: &Block) -> Vector {
         match expr {
-            Expr::ColumnRef(col) => block.column(col.index).cloned().unwrap_or_else(|| Vector::Null(types::vector::NullVector::new(0))),
+            Expr::ColumnRef(col) => {
+                // Resolve by name first (parser sets index=0 for all columns)
+                if let Some((_, v)) = block.column_by_name(&col.name) {
+                    v.clone()
+                } else if let Some(v) = block.column(col.index) {
+                    v.clone()
+                } else {
+                    Vector::Null(types::vector::NullVector::new(block.num_rows()))
+                }
+            }
             Expr::Literal(val) => Vector::from_scalar(val, block.num_rows()),
             Expr::BinaryOp { op, left, right } => {
                 let lv = self.evaluate(left, block);

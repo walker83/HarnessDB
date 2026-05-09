@@ -130,6 +130,24 @@ impl MemTable {
         Ok(())
     }
 
+    fn coerce_scalar(value: &ScalarValue, target_type: &DataType) -> ScalarValue {
+        match (value, target_type) {
+            (ScalarValue::Int64(n), DataType::Int8) => ScalarValue::Int8(*n as i8),
+            (ScalarValue::Int64(n), DataType::Int16) => ScalarValue::Int16(*n as i16),
+            (ScalarValue::Int64(n), DataType::Int32) => ScalarValue::Int32(*n as i32),
+            (ScalarValue::Int64(n), DataType::Float32) => ScalarValue::Float32(*n as f32),
+            (ScalarValue::Int64(n), DataType::Float64) => ScalarValue::Float64(*n as f64),
+            (ScalarValue::Int32(n), DataType::Int8) => ScalarValue::Int8(*n as i8),
+            (ScalarValue::Int32(n), DataType::Int16) => ScalarValue::Int16(*n as i16),
+            (ScalarValue::Int32(n), DataType::Int64) => ScalarValue::Int64(*n as i64),
+            (ScalarValue::Int32(n), DataType::Float32) => ScalarValue::Float32(*n as f32),
+            (ScalarValue::Int32(n), DataType::Float64) => ScalarValue::Float64(*n as f64),
+            (ScalarValue::Float64(f), DataType::Float32) => ScalarValue::Float32(*f as f32),
+            (ScalarValue::Null, _) => ScalarValue::Null,
+            _ => value.clone(),
+        }
+    }
+
     pub fn to_block(&self, schema: &Schema) -> Block {
         if self.rows.is_empty() {
             return Block::empty(schema.clone());
@@ -137,33 +155,34 @@ impl MemTable {
 
         let num_rows = self.rows.len();
         let num_cols = schema.fields().len();
-        
+
         let mut columns: Vec<Vector> = Vec::with_capacity(num_cols);
-        
+
         for col_idx in 0..num_cols {
             let field = &schema.fields()[col_idx];
             let scalars: Vec<ScalarValue> = self.rows.values()
                 .map(|row| row.columns.get(col_idx).cloned().unwrap_or(ScalarValue::Null))
+                .map(|s| Self::coerce_scalar(&s, &field.data_type))
                 .collect();
-            
+
             let vector = match field.data_type {
                 DataType::Boolean => {
-                    let data: Vec<bool> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Boolean(b) = s { Some(*b) } else { None })
+                    let data: Vec<Option<bool>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Boolean(b) = s { Some(*b) } else { None })
                         .collect();
-                    Vector::Boolean(types::vector::BooleanVector::from_vec(data))
+                    Vector::Boolean(types::vector::BooleanVector::from_nullable_vec(data))
                 }
                 DataType::Int8 => {
-                    let data: Vec<i8> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Int8(i) = s { Some(*i) } else { None })
+                    let data: Vec<Option<i8>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Int8(i) = s { Some(*i) } else { None })
                         .collect();
-                    Vector::Int8(types::vector::Int8Vector::from_vec(data))
+                    Vector::Int8(types::vector::Int8Vector::from_nullable_vec(data))
                 }
                 DataType::Int16 => {
-                    let data: Vec<i16> = scalars.iter()
-                        .filter_map(|s| if let ScalarValue::Int16(i) = s { Some(*i) } else { None })
+                    let data: Vec<Option<i16>> = scalars.iter()
+                        .map(|s| if let ScalarValue::Int16(i) = s { Some(*i) } else { None })
                         .collect();
-                    Vector::Int16(types::vector::Int16Vector::from_vec(data))
+                    Vector::Int16(types::vector::Int16Vector::from_nullable_vec(data))
                 }
                 DataType::Int32 => {
                     let data: Vec<Option<i32>> = scalars.iter()
@@ -196,12 +215,10 @@ impl MemTable {
                     Vector::Float64(types::vector::Float64Vector::from_nullable_vec(data))
                 }
                 DataType::String => {
-                    let data: Vec<Option<&str>> = scalars.iter()
-                        .map(|s| if let ScalarValue::String(s) = s { Some(s.as_str()) } else { None })
+                    let data: Vec<Option<String>> = scalars.iter()
+                        .map(|s| if let ScalarValue::String(s) = s { Some(s.clone()) } else { None })
                         .collect();
-                    let data_owned: Vec<String> = data.iter().filter_map(|s| s.map(|s| s.to_string())).collect();
-                    let data_refs: Vec<&str> = data_owned.iter().map(|s| s.as_str()).collect();
-                    Vector::String(types::vector::StringVector::from_vec(data_refs))
+                    Vector::String(types::vector::StringVector::from_option_vec(data))
                 }
                 DataType::Date => {
                     let data: Vec<Option<i32>> = scalars.iter()
@@ -219,7 +236,7 @@ impl MemTable {
             };
             columns.push(vector);
         }
-        
+
         Block::new(schema.clone(), columns)
     }
 
