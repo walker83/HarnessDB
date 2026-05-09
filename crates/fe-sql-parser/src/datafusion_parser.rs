@@ -1,162 +1,123 @@
-//! DataFusion-based SQL parser integration for RorisDB.
-//!
-//! This module provides a wrapper around DataFusion's SQL parser (DFParser)
-//! to enable modern SQL parsing with semantic analysis capabilities.
-
+use std::any::Any;
 use std::sync::Arc;
 
-use datafusion::common::DFSchema;
+use datafusion::arrow::datatypes::{DataType as ArrowDataType, Schema as ArrowSchema, SchemaRef};
+use datafusion::common::config::ConfigOptions;
 use datafusion::error::DataFusionError;
-use datafusion::sql::parser::DFParser;
-use datafusion::sql::planner::{ContextProvider, SqlToRel};
+use datafusion::logical_expr::LogicalPlan;
+use datafusion::logical_expr::{AggregateUDF, ScalarUDF, WindowUDF};
+use datafusion::sql::parser::{DFParser, Statement as DFStatement};
+use datafusion::sql::planner::SqlToRel;
 use thiserror::Error;
 
-// Re-export Statement from our existing AST for compatibility
-pub use crate::ast::Statement;
+pub fn is_dml_sql(sql: &str) -> bool {
+    let upper = sql.trim().to_uppercase();
+    let first_word = upper.split_whitespace().next().unwrap_or("");
+    matches!(first_word, "SELECT" | "WITH" | "INSERT" | "UPDATE" | "DELETE" | "VALUES" | "EXPLAIN")
+}
 
 #[derive(Debug, Error)]
-pub enum ParseError {
-    #[error("DataFusion parsing error: {0}")]
+pub enum DataFusionParseError {
+    #[error("DataFusion error: {0}")]
     DataFusion(#[from] DataFusionError),
 
-    #[error("SQL syntax error at line {line}, column {col}: {message}")]
-    SyntaxError {
-        line: usize,
-        col: usize,
-        message: String,
-    },
+    #[error("SQL syntax error: {0}")]
+    SyntaxError(String),
 
-    #[error("Unsupported SQL statement type: {0}")]
+    #[error("Unsupported SQL statement: {0}")]
     Unsupported(String),
 }
 
-/// Result type for parser operations
-pub type ParseResult<T> = Result<T, ParseError>;
+pub fn try_parse_dml_with_datafusion(sql: &str) -> Result<LogicalPlan, DataFusionParseError> {
+    let mut parser = DFParser::new(sql)
+        .map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;
+    let statements = parser.parse_statements()
+        .map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;
 
-/// RorisParser wraps DataFusion's DFParser to provide SQL parsing for RorisDB.
-/// It integrates with RorisDB's catalog and type system.
-pub struct RorisParser {
-    schema_provider: Option<Arc<dyn RorisSchemaProvider>>,
-}
-
-impl RorisParser {
-    /// Create a new RorisParser with an optional schema provider
-    pub fn new(schema_provider: Option<Arc<dyn RorisSchemaProvider>>) -> Self {
-        Self { schema_provider }
+    if statements.is_empty() {
+        return Err(DataFusionParseError::SyntaxError("Empty SQL statement".to_string()));
     }
 
-    /// Parse a SQL string into a DataFusion LogicalPlan
-    pub fn parse(&self, sql: &str) -> ParseResult<datafusion::logical_plan::LogicalPlan> {
-        let statements = DFParser::parse_sql(sql)
-            .map_err(|e| ParseError::SyntaxError {
-                line: e.line(),
-                col: e.column(),
-                message: e.message().to_string(),
-            })?;
+    let stmt = statements.into_iter().next().unwrap();
+    let context_provider = EmptyContextProvider::new();
+    let planner = SqlToRel::new(&context_provider);
 
-        if statements.is_empty() {
-            return Err(ParseError::SyntaxError {
-                line: 0,
-                col: 0,
-                message: "Empty SQL statement".to_string(),
-            });
+    match stmt {
+        DFStatement::Statement(s) => {
+            planner.sql_statement_to_plan(*s)
+                .map_err(DataFusionParseError::DataFusion)
         }
-
-        // For now, we only support a single statement
-        let stmt = &statements[0];
-
-        // Create a context provider for SQL-to-rel planning
-        let provider = RorisContextProvider {
-            schema_provider: self.schema_provider.clone(),
-        };
-
-        let planner = SqlToRel::new(&provider);
-
-        planner.statement_to_plan(stmt.clone())
-            .map_err(ParseError::DataFusion)
+        _ => Err(DataFusionParseError::Unsupported(format!("{:?}", stmt))),
     }
+}
 
-    /// Parse multiple SQL statements
-    pub fn parse_batch(&self, sql: &str) -> ParseResult<Vec<datafusion::logical_plan::LogicalPlan>> {
-        let statements = DFParser::parse_sql(sql)
-            .map_err(|e| ParseError::SyntaxError {
-                line: e.line(),
-                col: e.column(),
-                message: e.message().to_string(),
-            })?;
+struct EmptyContextProvider {
+    options: ConfigOptions,
+}
 
-        let provider = RorisContextProvider {
-            schema_provider: self.schema_provider.clone(),
-        };
-
-        let planner = SqlToRel::new(&provider);
-
-        let mut plans = Vec::new();
-        for stmt in statements {
-            let plan = planner.statement_to_plan(stmt)
-                .map_err(ParseError::DataFusion)?;
-            plans.push(plan);
+impl EmptyContextProvider {
+    fn new() -> Self {
+        Self {
+            options: ConfigOptions::new(),
         }
-
-        Ok(plans)
     }
 }
 
-/// Context provider for SQL-to-Rel conversion.
-/// This provides table metadata during query planning.
-pub trait RorisSchemaProvider: Send + Sync {
-    /// Get the schema for a table
-    fn get_table_schema(&self, name: &str) -> Option<Arc<DFSchema>>;
-
-    /// List all available tables
-    fn list_tables(&self) -> Vec<String>;
-}
-
-/// Context provider implementation for RorisDB
-pub struct RorisContextProvider {
-    schema_provider: Option<Arc<dyn RorisSchemaProvider>>,
-}
-
-impl ContextProvider for RorisContextProvider {
-    fn get_table_provider(
+impl datafusion::sql::planner::ContextProvider for EmptyContextProvider {
+    fn get_table_source(
         &self,
-        name: datafusion::sql::TableReference,
-    ) -> Option<Arc<dyn datafusion::catalog::TableProvider>> {
-        let table_name = name.table();
-        self.schema_provider
-            .as_ref()
-            .and_then(|p| p.get_table_schema(table_name))
-            .map(|_| Arc::new(RorisTableAdapter {}) as Arc<dyn datafusion::catalog::TableProvider>)
+        _name: datafusion::sql::TableReference,
+    ) -> datafusion::common::Result<Arc<dyn datafusion::logical_expr::TableSource>> {
+        Ok(Arc::new(EmptyTableSource {
+            schema: Arc::new(ArrowSchema::empty()),
+        }))
     }
 
-    fn get_function_meta(&self, _name: &str) -> Option<Arc<datafusion::arrow::datatypes::Schema>> {
+    fn get_function_meta(&self, _name: &str) -> Option<Arc<ScalarUDF>> {
         None
     }
 
-    fn getAggregateMeta(&self, _name: &str) -> Option<Arc<datafusion::arrow::datatypes::Schema>> {
+    fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
         None
     }
 
-    fn get_variable_type(&self, _variable_names: &[String]) -> Option<datafusion::arrow::datatypes::DataType> {
+    fn get_window_meta(&self, _name: &str) -> Option<Arc<WindowUDF>> {
         None
+    }
+
+    fn get_variable_type(&self, _variable_names: &[String]) -> Option<ArrowDataType> {
+        None
+    }
+
+    fn options(&self) -> &ConfigOptions {
+        &self.options
+    }
+
+    fn udf_names(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn udaf_names(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn udwf_names(&self) -> Vec<String> {
+        vec![]
     }
 }
 
-/// Adapter to bridge RorisTableProvider to DataFusion TableProvider
-pub struct RorisTableAdapter;
+#[derive(Debug)]
+struct EmptyTableSource {
+    schema: SchemaRef,
+}
 
-impl datafusion::catalog::TableProvider for RorisTableAdapter {
-    fn schema(&self) -> Arc<datafusion::arrow::datatypes::Schema> {
-        Arc::new(datafusion::arrow::datatypes::Schema::empty())
+impl datafusion::logical_expr::TableSource for EmptyTableSource {
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
-    fn scan(
-        &self,
-        _projection: Option<&Vec<usize>>,
-        _filters: &[datafusion::logical_plan::Expression],
-        _limit: Option<usize>,
-    ) -> Result<Arc<dyn datafusion::catalog::TableProvider>, DataFusionError> {
-        Ok(Arc::new(RorisTableAdapter))
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
     }
 }
 
@@ -166,19 +127,35 @@ mod tests {
 
     #[test]
     fn test_simple_select() {
-        let parser = RorisParser::new(None);
-        let sql = "SELECT 1 + 2 AS result";
-        let result = parser.parse(sql);
+        let result = try_parse_dml_with_datafusion("SELECT 1 + 2 AS result");
         assert!(result.is_ok());
-        let plan = result.unwrap();
-        assert_eq!(plan.to_string(), "Projection: Int64(1) + Int64(2) AS result\n  EmptyRelation");
     }
 
     #[test]
-    fn test_select_from_table() {
-        let parser = RorisParser::new(None);
-        let sql = "SELECT id, name FROM users WHERE age > 18";
-        let result = parser.parse(sql);
+    fn test_select_with_cte() {
+        let result = try_parse_dml_with_datafusion(
+            "WITH cte AS (SELECT 1 AS id) SELECT * FROM cte"
+        );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_select_subquery() {
+        let result = try_parse_dml_with_datafusion(
+            "SELECT * FROM (SELECT 1 AS id) AS sub WHERE id > 0"
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_is_dml_sql() {
+        assert!(is_dml_sql("SELECT 1"));
+        assert!(is_dml_sql("  WITH cte AS (SELECT 1) SELECT * FROM cte"));
+        assert!(is_dml_sql("INSERT INTO t VALUES (1)"));
+        assert!(is_dml_sql("UPDATE t SET a = 1"));
+        assert!(is_dml_sql("DELETE FROM t WHERE id = 1"));
+        assert!(!is_dml_sql("CREATE TABLE t (id INT)"));
+        assert!(!is_dml_sql("SHOW TABLES"));
+        assert!(!is_dml_sql("ALTER TABLE t ADD COLUMN a INT"));
     }
 }

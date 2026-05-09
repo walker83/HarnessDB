@@ -86,6 +86,11 @@ chrono = "0.4"
 # SQL parsing
 sqlparser = "0.53"
 
+# Query engine
+datafusion = { version = "47", default-features = false }
+arrow = { version = "54", default-features = false, features = ["prettyprint"] }
+arrow-schema = { version = "54", default-features = false }
+
 # Storage
 rocksdb = "0.23"
 lz4 = "1.28"

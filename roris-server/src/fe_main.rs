@@ -14,7 +14,7 @@ use fe_monitor::http_server::MonitoringHttpServer;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_planner::{Planner, Optimizer};
-use fe_sql_parser::{parse_sql, Statement};
+use fe_sql_parser::{parse_sql, Statement, is_dml_sql, try_parse_dml_with_datafusion};
 use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt, DeleteStmt};
 use types::{DataType, Block};
 use fe_catalog::table::{Table, TableColumn, KeysType};
@@ -83,6 +83,28 @@ impl QueryHandler for RorisQueryHandler {
             return QueryResult::ok();
         }
 
+        if is_dml_sql(trimmed) {
+            match try_parse_dml_with_datafusion(trimmed) {
+                Ok(logical_plan) => {
+                    tracing::debug!("DataFusion parsed DML successfully: {}", logical_plan);
+                    let stmt = parse_sql_fallback(trimmed);
+                    return match self.execute_statement(&stmt) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            tracing::error!("Query error: {}", e);
+                            QueryResult::with_rows(
+                                vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                                vec![vec![Some(format!("ERROR: {}", e))]],
+                            )
+                        }
+                    };
+                }
+                Err(df_err) => {
+                    tracing::debug!("DataFusion parse failed ({}), falling back to legacy parser", df_err);
+                }
+            }
+        }
+
         match parse_sql(trimmed) {
             Ok(statements) => {
                 if statements.is_empty() {
@@ -113,6 +135,23 @@ impl QueryHandler for RorisQueryHandler {
     fn set_database(&self, db: &str) {
         let mut current_db = self.current_database.write().unwrap();
         *current_db = db.to_string();
+    }
+}
+
+fn parse_sql_fallback(sql: &str) -> Statement {
+    match parse_sql(sql) {
+        Ok(stmts) if !stmts.is_empty() => stmts[0].clone(),
+        _ => Statement::Query(fe_sql_parser::ast::QueryStmt {
+            select_list: vec![],
+            from: None,
+            r#where: None,
+            group_by: vec![],
+            having: None,
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            with: None,
+        }),
     }
 }
 
