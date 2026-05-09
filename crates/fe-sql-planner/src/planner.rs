@@ -375,8 +375,25 @@ impl Planner {
     }
 
     fn plan_delete(&self, stmt: DeleteStmt) -> Result<PlanNode, DrorisError> {
-        // Handle multi-table DELETE: take first table
-        let table_name = stmt.tables.first().cloned().unwrap_or_default();
+        // Get table name - first check stmt.tables, then fall back to stmt.from
+        let table_name = stmt.tables.first().cloned().unwrap_or_else(|| {
+            // Fall back to extracting from FROM clause
+            if let Some(ref from) = stmt.from {
+                match from {
+                    TableRef::Table { name, .. } => {
+                        let full_name = if name.contains('.') {
+                            name.splitn(2, '.').last().unwrap_or(name).to_string()
+                        } else {
+                            name.clone()
+                        };
+                        return full_name;
+                    }
+                    _ => {}
+                }
+            }
+            String::new()
+        });
+
         let (database, table_name) = if table_name.contains('.') {
             let parts: Vec<&str> = table_name.splitn(2, '.').collect();
             (Some(parts[0].to_string()), parts[1].to_string())

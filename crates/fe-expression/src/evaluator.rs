@@ -21,6 +21,11 @@ impl ExprEvaluator {
                     Vector::Null(types::vector::NullVector::new(block.num_rows()))
                 }
             }
+            Expr::Wildcard => {
+                // Wildcard in COUNT(*) context - return a scalar that represents row count
+                // When COUNT receives this, it will use the scalar value directly
+                Vector::from_scalar(&ScalarValue::Int64(block.num_rows() as i64), 1)
+            }
             Expr::Literal(val) => Vector::from_scalar(val, block.num_rows()),
             Expr::BinaryOp { op, left, right } => {
                 let lv = self.evaluate(left, block);
@@ -182,11 +187,30 @@ fn arith(left: &Vector, right: &Vector, ff: fn(f64, f64) -> f64, fi: fn(i64, i64
 
 fn cmp<F, G>(left: &Vector, right: &Vector, fi: F, ff: G) -> Vector
 where F: Fn(i64, i64) -> bool, G: Fn(f64, f64) -> bool {
+    let len = left.len().max(right.len());
     match (left, right) {
-        (Vector::Int64(l), Vector::Int64(r)) => bool_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| fi(a, b)).collect()),
-        (Vector::Float64(l), Vector::Float64(r)) => bool_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| ff(a, b)).collect()),
-        (Vector::String(l), Vector::String(r)) => bool_vec((0..l.len()).map(|i| l.get(i).unwrap_or("") == r.get(i).unwrap_or("")).collect()),
-        _ => bool_vec(vec![false; left.len()]),
+        (Vector::Int64(l), Vector::Int64(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv_scalar = if l.len() == 1 { l.get(0).unwrap_or(0) } else { l.get(i).unwrap_or(0) };
+                let rv_scalar = if r.len() == 1 { r.get(0).unwrap_or(0) } else { r.get(i).unwrap_or(0) };
+                fi(lv_scalar, rv_scalar)
+            }).collect())
+        }
+        (Vector::Float64(l), Vector::Float64(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv_scalar = if l.len() == 1 { l.get(0).unwrap_or(0.0) } else { l.get(i).unwrap_or(0.0) };
+                let rv_scalar = if r.len() == 1 { r.get(0).unwrap_or(0.0) } else { r.get(i).unwrap_or(0.0) };
+                ff(lv_scalar, rv_scalar)
+            }).collect())
+        }
+        (Vector::String(l), Vector::String(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0) } else { l.get(i) };
+                let rv = if r.len() == 1 { r.get(0) } else { r.get(i) };
+                lv.unwrap_or("") == rv.unwrap_or("")
+            }).collect())
+        }
+        _ => bool_vec(vec![false; len]),
     }
 }
 

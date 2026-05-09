@@ -126,6 +126,9 @@ pub enum Expr {
         negated: bool,
     },
 
+    /// Wildcard `*` - used in COUNT(*) to indicate count all rows
+    Wildcard,
+
     /// CASE WHEN ... THEN ... [ELSE ...] END.
     CaseWhen {
         cases: Vec<WhenThen>,

@@ -82,6 +82,23 @@ pub fn expr_to_string(expr: &Expr) -> String {
         Expr::Cast { expr, target_type } => {
             format!("CAST({} AS {})", expr_to_string(expr), target_type)
         }
+        Expr::CaseWhen { cases, else_expr } => {
+            let mut s = String::from("CASE ");
+            for case in cases {
+                s.push_str("WHEN ");
+                s.push_str(&expr_to_string(&case.when));
+                s.push_str(" THEN ");
+                s.push_str(&expr_to_string(&case.then));
+                s.push(' ');
+            }
+            if let Some(ee) = else_expr {
+                s.push_str("ELSE ");
+                s.push_str(&expr_to_string(ee));
+                s.push(' ');
+            }
+            s.push_str("END");
+            s
+        }
         Expr::Wildcard => "*".to_string(),
         Expr::Default => "DEFAULT".to_string(),
     }
@@ -164,6 +181,7 @@ pub fn infer_type(expr: &Expr) -> Option<DataType> {
         Expr::IsNull { .. } => Some(DataType::Boolean),
         Expr::Like { .. } => Some(DataType::Boolean),
         Expr::Cast { target_type, .. } => parse_type_name(target_type),
+        Expr::CaseWhen { .. } => None,
         Expr::Wildcard => None,
         Expr::Default => None,
     }
@@ -413,6 +431,15 @@ fn collect_columns_recursive(expr: &Expr, cols: &mut Vec<(Option<String>, String
         }
         Expr::Cast { expr, .. } => {
             collect_columns_recursive(expr, cols);
+        }
+        Expr::CaseWhen { cases, else_expr } => {
+            for case in cases {
+                collect_columns_recursive(&case.when, cols);
+                collect_columns_recursive(&case.then, cols);
+            }
+            if let Some(ee) = else_expr {
+                collect_columns_recursive(ee, cols);
+            }
         }
         _ => {}
     }

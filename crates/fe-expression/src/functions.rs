@@ -23,7 +23,20 @@ impl FunctionRegistry {
             "ifnull" => self.ifnull(args),
             "nullif" => self.nullif(args),
             "cast" => args.first().cloned().unwrap_or_else(|| bool_vec(vec![])),
-            "count" => int64_vec(vec![args.first().map(|v| v.len() as i64).unwrap_or(0)]),
+            "count" => {
+                let count_val = args.first().map(|v| {
+                    if v.len() == 1 {
+                        if let ScalarValue::Int64(n) = v.scalar_at(0) {
+                            n
+                        } else {
+                            0
+                        }
+                    } else {
+                        v.len() as i64
+                    }
+                }).unwrap_or(0);
+                int64_vec(vec![count_val])
+            }
             "sum" => self.sum(args),
             "avg" => self.avg(args),
             "min" => self.min(args),
@@ -199,17 +212,39 @@ impl FunctionRegistry {
     }
 
     fn substring(&self, args: &[Vector]) -> Vector {
-        match (args.first(), args.get(1)) {
-            (Some(Vector::String(v)), Some(Vector::Int64(start))) => {
-                let result: Vec<Option<String>> = (0..v.len()).map(|i| {
-                    let s = v.get(i)?;
-                    let st = start.get(i).unwrap_or(1).max(1) as usize;
-                    Some(s[st.saturating_sub(1)..].to_string())
-                }).collect();
-                string_vec(result)
+        let len = args.first().map(|v| v.len()).unwrap_or(0);
+        let mut result: Vec<Option<String>> = Vec::with_capacity(len);
+
+        for i in 0..len {
+            let s: Option<&str> = match args.first() {
+                Some(Vector::String(v)) => v.get(i),
+                _ => None,
+            };
+            let start: usize = match args.get(1) {
+                Some(Vector::Int64(v)) => v.get(i).unwrap_or(1).max(1) as usize,
+                Some(Vector::Int32(v)) => v.get(i).unwrap_or(1).max(1) as usize,
+                _ => 1,
+            };
+            let length: Option<usize> = match args.get(2) {
+                Some(Vector::Int64(v)) => Some(v.get(i).unwrap_or(0) as usize),
+                Some(Vector::Int32(v)) => Some(v.get(i).unwrap_or(0) as usize),
+                _ => None,
+            };
+
+            if let Some(s) = s {
+                let st = start.saturating_sub(1);
+                let result_str: String = if let Some(l) = length {
+                    let end = (st + l).min(s.len());
+                    s[st..end].to_string()
+                } else {
+                    s[st..].to_string()
+                };
+                result.push(Some(result_str));
+            } else {
+                result.push(None);
             }
-            _ => bool_vec(vec![]),
         }
+        string_vec(result)
     }
 
     fn trim(&self, args: &[Vector]) -> Vector {

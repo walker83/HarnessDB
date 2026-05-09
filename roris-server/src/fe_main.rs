@@ -1224,7 +1224,8 @@ impl RorisQueryHandler {
 
         let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
         catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let planner = Planner::new(Arc::new(catalog_for_planner));
+        let mut planner = Planner::new(Arc::new(catalog_for_planner));
+        planner.set_database(&database);
 
         let delete_stmt = Statement::Delete(stmt.clone());
         let plan = planner.plan(delete_stmt).map_err(|e| format!("Planning error: {}", e))?;

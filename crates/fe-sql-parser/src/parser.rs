@@ -2349,6 +2349,27 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
             pattern: Box::new(convert_expr(*pattern)),
             negated,
         },
+        sqlparser::ast::Expr::Case { operand, conditions, results, else_result } => {
+            let cases: Vec<WhenThen> = conditions
+                .into_iter()
+                .zip(results.into_iter())
+                .map(|(when_cond, then_val)| WhenThen {
+                    when: convert_expr(when_cond),
+                    then: convert_expr(then_val),
+                })
+                .collect();
+            Expr::CaseWhen {
+                cases,
+                else_expr: else_result.map(|e| Box::new(convert_expr(*e))),
+            }
+        }
+        sqlparser::ast::Expr::Substring { expr, substring_from, substring_for, .. } => {
+            let args = std::iter::once(convert_expr(*expr))
+                .chain(substring_from.map(|e| convert_expr(*e)).into_iter())
+                .chain(substring_for.map(|e| convert_expr(*e)).into_iter())
+                .collect();
+            Expr::FunctionCall { name: "substring".to_string(), args, distinct: false }
+        }
         _ => Expr::Wildcard,
     }
 }

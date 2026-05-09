@@ -333,6 +333,12 @@ pub struct OrderByItem {
 }
 
 #[derive(Debug, Clone)]
+pub struct WhenThen {
+    pub when: Expr,
+    pub then: Expr,
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Literal(LiteralValue),
     ColumnRef { table: Option<String>, column: String },
@@ -347,6 +353,7 @@ pub enum Expr {
     IsNull { expr: Box<Expr>, negated: bool },
     Like { expr: Box<Expr>, pattern: Box<Expr>, negated: bool },
     Cast { expr: Box<Expr>, target_type: String },
+    CaseWhen { cases: Vec<WhenThen>, else_expr: Option<Box<Expr>> },
     Wildcard,
     /// DEFAULT keyword - represents the default value for a column
     Default,

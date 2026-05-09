@@ -1,4 +1,4 @@
-use crate::expr::{BinaryOperator, Expr, UnaryOperator, ColumnRef, FunctionCall};
+use crate::expr::{BinaryOperator, Expr, UnaryOperator, ColumnRef, FunctionCall, WhenThen};
 use crate::evaluator::ExprEvaluator;
 use types::{Block, Vector, ScalarValue};
 
@@ -37,6 +37,11 @@ impl ExprStringParser {
             return Some(expr);
         }
 
+        // Handle CASE WHEN expressions
+        if let Some(expr) = self.parse_case_when(trimmed) {
+            return Some(expr);
+        }
+
         // Handle function calls
         if let Some(expr) = self.parse_function_call(trimmed) {
             return Some(expr);
@@ -48,6 +53,11 @@ impl ExprStringParser {
                 index: 0,
                 name: trimmed.to_string(),
             }));
+        }
+
+        // Handle wildcard '*' for COUNT(*)
+        if trimmed == "*" {
+            return Some(Expr::Wildcard);
         }
 
         // Handle literals
@@ -120,6 +130,109 @@ impl ExprStringParser {
             }
         }
         None
+    }
+
+    fn parse_case_when(&self, s: &str) -> Option<Expr> {
+        let s = s.trim();
+        let upper = s.to_uppercase();
+        if !upper.starts_with("CASE ") || !upper.ends_with(" END") {
+            return None;
+        }
+
+        let inner = &s[5..s.len() - 4].trim();
+        let (cases, else_expr) = self.parse_case_when_parts(inner)?;
+
+        Some(Expr::CaseWhen {
+            cases,
+            else_expr,
+        })
+    }
+
+    fn parse_case_when_parts(&self, inner: &str) -> Option<(Vec<WhenThen>, Option<Box<Expr>>)> {
+        let mut cases = Vec::new();
+        let mut remaining = inner;
+        let mut else_expr = None;
+
+        loop {
+            let upper = remaining.trim().to_uppercase();
+            if upper.starts_with("ELSE ") {
+                let else_str = &remaining[5..].trim();
+                if else_str.ends_with(" END") {
+                    else_expr = Some(Box::new(self.parse(&else_str[..else_str.len() - 4].trim())?));
+                } else {
+                    else_expr = Some(Box::new(self.parse(else_str)?));
+                }
+                break;
+            }
+            if !upper.starts_with("WHEN ") {
+                break;
+            }
+
+            let after_when = &remaining[5..].trim();
+            if let Some(then_pos) = Self::find_keyword_position(after_when, " THEN ") {
+                let when_cond = &after_when[..then_pos].trim();
+                let after_then = &after_when[then_pos + 6..].trim();
+                let (then_expr, next_part) = self.parse_then_and_next(after_then)?;
+                let when_expr = self.parse(when_cond)?;
+                cases.push(WhenThen {
+                    when: when_expr,
+                    then: then_expr,
+                });
+                remaining = next_part;
+            } else {
+                break;
+            }
+        }
+
+        Some((cases, else_expr))
+    }
+
+    fn find_keyword_position(s: &str, keyword: &str) -> Option<usize> {
+        let upper = s.to_uppercase();
+        let key_upper = keyword.to_uppercase();
+        let mut depth: i32 = 0;
+        let mut in_string = false;
+        for (i, ch) in s.chars().enumerate() {
+            match ch {
+                '\'' => in_string = !in_string,
+                '(' if !in_string => depth += 1,
+                ')' if !in_string => depth = depth.saturating_sub(1),
+                _ if !in_string && depth == 0 => {
+                    if upper[i..].starts_with(&key_upper) {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn parse_then_and_next<'a>(&self, s: &'a str) -> Option<(Expr, &'a str)> {
+        let upper = s.to_uppercase();
+
+        if upper.starts_with("WHEN ") {
+            return None;
+        }
+        if upper.starts_with("ELSE ") {
+            return None;
+        }
+
+        if let Some(else_pos) = Self::find_keyword_position(s, " ELSE ") {
+            let then_expr_str = &s[..else_pos].trim();
+            let next_part = &s[else_pos + 6..].trim();
+            let then_expr = self.parse(then_expr_str)?;
+            return Some((then_expr, next_part));
+        }
+
+        if let Some(end_pos) = s.to_uppercase().find(" END") {
+            let then_expr_str = &s[..end_pos].trim();
+            let then_expr = self.parse(then_expr_str)?;
+            return Some((then_expr, &s[end_pos..]));
+        }
+
+        let then_expr = self.parse(s.trim())?;
+        Some((then_expr, ""))
     }
 
     fn parse_function_call(&self, s: &str) -> Option<Expr> {
