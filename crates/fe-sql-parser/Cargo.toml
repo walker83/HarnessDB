@@ -8,3 +8,4 @@ sqlparser = { workspace = true }
 thiserror = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }
+datafusion = "42"
