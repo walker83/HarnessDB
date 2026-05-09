@@ -12,6 +12,7 @@ use types::runtime_filter::{MinMaxFilter, InFilter};
 use be_storage::index::BloomFilter;
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::collections::HashMap;
+use std::io::Write as IoWrite;
 use be_storage::StorageEngine;
 use be_storage::index::{ColumnPredicate, apply_predicates_to_block};
 use crate::predicate_parser::{parse_predicates, parse_set_value, make_affected_rows_block};
@@ -1428,7 +1429,25 @@ impl ExecNode for ProjectExecNode {
                             }
                         }
                     } else if let Some(vector) = expr_parser.evaluate(expr_str, &block) {
-                        result_columns.push(vector);
+                        // Handle window functions: expand to match block length with proper sequence
+                        let expanded_vector = if vector.len() == 1 && block.num_rows() > 1 {
+                            let scalar = vector.scalar_at(0);
+                            // Check if this is a window function that needs sequence expansion
+                            let expr_upper = expr_str.trim().to_uppercase();
+                            if expr_upper.starts_with("ROW_NUMBER()")
+                                || expr_upper.starts_with("RANK()")
+                                || expr_upper.starts_with("DENSE_RANK()") {
+                                let count = block.num_rows();
+                                let data: Vec<i64> = (1..=count as i64).collect();
+                                Vector::Int64(Int64Vector::from_vec(data))
+                            } else {
+                                // Broadcast scalar to match block length
+                                Vector::from_scalar(&scalar, block.num_rows())
+                            }
+                        } else {
+                            vector
+                        };
+                        result_columns.push(expanded_vector);
                         // Derive field name from expression
                         let name = expr_str.trim().to_string();
                         let data_type = result_columns.last().unwrap().data_type();
@@ -2420,10 +2439,36 @@ impl ExecNode for WindowExecNode {
                     }
                 }
                 let window_val = match &window_values {
-                    Vector::Int64(v) => ScalarValue::Int64(v.get_checked(i)),
-                    Vector::Int32(v) => ScalarValue::Int32(v.get_checked(i)),
-                    Vector::Float64(v) => ScalarValue::Float64(v.get_checked(i)),
-                    Vector::String(v) => ScalarValue::String(v.get(i).unwrap_or("").to_string()),
+                    Vector::Int64(v) => {
+                        let valid = v.validity().is_valid(i);
+                        let val = v.get_checked(i);
+                        if valid {
+                            ScalarValue::Int64(val)
+                        } else {
+                            ScalarValue::Null
+                        }
+                    }
+                    Vector::Int32(v) => {
+                        if v.validity().is_valid(i) {
+                            ScalarValue::Int32(v.get_checked(i))
+                        } else {
+                            ScalarValue::Null
+                        }
+                    }
+                    Vector::Float64(v) => {
+                        if v.validity().is_valid(i) {
+                            ScalarValue::Float64(v.get_checked(i))
+                        } else {
+                            ScalarValue::Null
+                        }
+                    }
+                    Vector::String(v) => {
+                        if v.validity().is_valid(i) {
+                            ScalarValue::String(v.get(i).unwrap_or("").to_string())
+                        } else {
+                            ScalarValue::Null
+                        }
+                    }
                     _ => ScalarValue::Null,
                 };
                 result_row.push(window_val);
@@ -2442,36 +2487,38 @@ impl ExecNode for WindowExecNode {
         let mut columns: Vec<Vector> = Vec::new();
         for col_idx in 0..num_cols {
             let scalars: Vec<ScalarValue> = result_rows.iter()
-                .filter_map(|row| row.get(col_idx).cloned())
+                .map(|row| row.get(col_idx).cloned().unwrap_or(ScalarValue::Null))
                 .collect();
 
-            let vector = match scalars.first().unwrap_or(&ScalarValue::Null) {
+            // Determine type from first non-null scalar, use it for all rows
+            let first_non_null = scalars.iter().find(|s| !matches!(s, ScalarValue::Null));
+
+            let vector = match first_non_null.unwrap_or(&ScalarValue::Null) {
                 ScalarValue::Int64(_) => {
-                    let data: Vec<i64> = scalars.iter().filter_map(|s| {
-                        if let ScalarValue::Int64(i) = s { Some(*i) } else { None }
+                    let data: Vec<i64> = scalars.iter().map(|s| {
+                        if let ScalarValue::Int64(v) = s { *v } else { 0 }
                     }).collect();
-                    Vector::Int64(types::vector::Int64Vector::from_vec(data))
+                    Vector::Int64(Int64Vector::from_vec(data))
                 }
                 ScalarValue::Int32(_) => {
-                    let data: Vec<i32> = scalars.iter().filter_map(|s| {
-                        if let ScalarValue::Int32(i) = s { Some(*i) } else { None }
+                    let data: Vec<i32> = scalars.iter().map(|s| {
+                        if let ScalarValue::Int32(v) = s { *v } else { 0 }
                     }).collect();
-                    Vector::Int32(types::vector::Int32Vector::from_vec(data))
+                    Vector::Int32(Int32Vector::from_vec(data))
                 }
                 ScalarValue::Float64(_) => {
-                    let data: Vec<f64> = scalars.iter().filter_map(|s| {
-                        if let ScalarValue::Float64(f) = s { Some(*f) } else { None }
+                    let data: Vec<f64> = scalars.iter().map(|s| {
+                        if let ScalarValue::Float64(v) = s { *v } else { 0.0 }
                     }).collect();
-                    Vector::Float64(types::vector::Float64Vector::from_vec(data))
+                    Vector::Float64(Float64Vector::from_vec(data))
                 }
                 ScalarValue::String(_) => {
-                    let data: Vec<String> = scalars.iter().filter_map(|s| {
-                        if let ScalarValue::String(s) = s { Some(s.clone()) } else { None }
+                    let data: Vec<&str> = scalars.iter().map(|s| {
+                        if let ScalarValue::String(v) = s { v.as_str() } else { "" }
                     }).collect();
-                    let data_refs: Vec<&str> = data.iter().map(|s| s.as_str()).collect();
-                    Vector::String(types::vector::StringVector::from_vec(data_refs))
+                    Vector::String(StringVector::from_vec(data))
                 }
-                _ => Vector::Null(types::vector::NullVector::new(num_result_rows)),
+                _ => Vector::Null(NullVector::new(num_result_rows)),
             };
             columns.push(vector);
         }
@@ -2479,8 +2526,10 @@ impl ExecNode for WindowExecNode {
         let mut schema_fields: Vec<types::Field> = block.schema().fields().to_vec();
         schema_fields.push(types::Field::new("window_col", types::DataType::Int64, true));
 
+        let result_block = Block::new(Schema::new(schema_fields), columns);
+
         self.returned = true;
-        Ok(Some(Block::new(Schema::new(schema_fields), columns)))
+        Ok(Some(result_block))
     }
 
     async fn close(&mut self) -> Result<()> {
