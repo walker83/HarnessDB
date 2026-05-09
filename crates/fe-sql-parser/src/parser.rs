@@ -2344,6 +2344,11 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
             expr: Box::new(convert_expr(*expr)),
             negated: false,
         },
+        sqlparser::ast::Expr::Like { expr, pattern, negated, .. } => Expr::Like {
+            expr: Box::new(convert_expr(*expr)),
+            pattern: Box::new(convert_expr(*pattern)),
+            negated,
+        },
         _ => Expr::Wildcard,
     }
 }

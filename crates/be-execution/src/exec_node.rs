@@ -537,6 +537,9 @@ impl ValuesExecNode {
         }
         let num_cols = self.schema.num_fields();
         let num_rows = self.rows.len();
+        if num_cols == 0 && num_rows > 0 {
+            return Ok(Block::single_row());
+        }
         let mut column_values: Vec<Vec<ScalarValue>> = vec![Vec::with_capacity(num_rows); num_cols];
         for row in &self.rows {
             if row.len() != num_cols {
@@ -1370,12 +1373,22 @@ impl ExecNode for FilterExecNode {
     }
 
     async fn get_next(&mut self) -> Result<Option<Block>> {
+        let expr_parser = fe_expression::expr_parser::ExprStringParser::new();
         while let Some(block) = self.child.get_next().await? {
-            let mut selection = Bitmap::with_capacity(block.num_rows());
-
-            for _ in 0..block.num_rows() {
-                selection.push(true);
-            }
+            let selection = if let Some(vector) = expr_parser.evaluate(&self.predicate, &block) {
+                if let types::Vector::Boolean(bv) = vector {
+                    let len = bv.len();
+                    let mut selection = Bitmap::with_capacity(len);
+                    for i in 0..len {
+                        selection.push(bv.get(i).unwrap_or(false));
+                    }
+                    selection
+                } else {
+                    return Ok(None);
+                }
+            } else {
+                return Ok(None);
+            };
 
             let filtered = block.filter(&selection);
             if !filtered.is_empty() {

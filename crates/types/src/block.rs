@@ -4,16 +4,26 @@ use crate::{Schema, Vector, ScalarValue};
 pub struct Block {
     schema: Schema,
     columns: Vec<Vector>,
+    row_count: usize,
 }
 
 impl Block {
     pub fn new(schema: Schema, columns: Vec<Vector>) -> Self {
-        Self { schema, columns }
+        let row_count = columns.first().map(|c| c.len()).unwrap_or(0);
+        Self { schema, columns, row_count }
     }
 
     pub fn empty(schema: Schema) -> Self {
         let columns = schema.fields().iter().map(|f| empty_vector(&f.data_type)).collect();
-        Self { schema, columns }
+        Self { schema, columns, row_count: 0 }
+    }
+
+    pub fn single_row() -> Self {
+        Self {
+            schema: Schema::empty(),
+            columns: vec![],
+            row_count: 1,
+        }
     }
 
     pub fn schema(&self) -> &Schema {
@@ -40,7 +50,7 @@ impl Block {
     }
 
     pub fn num_rows(&self) -> usize {
-        self.columns.first().map(|c| c.len()).unwrap_or(0)
+        self.columns.first().map(|c| c.len()).unwrap_or(self.row_count)
     }
 
     pub fn num_columns(&self) -> usize {
@@ -56,10 +66,11 @@ impl Block {
     }
 
     pub fn slice(&self, start: usize, len: usize) -> Self {
-        let columns = self.columns.iter()
-            .map(|c| c.slice(start, len))
+        let columns: Vec<Vector> = self.columns.iter()
+            .map(|c: &Vector| c.slice(start, len))
             .collect();
-        Self { schema: self.schema.clone(), columns }
+        let row_count = columns.first().map(|c: &Vector| c.len()).unwrap_or(0);
+        Self { schema: self.schema.clone(), columns, row_count }
     }
 
     pub fn project(&self, indices: &[usize]) -> Self {
@@ -67,20 +78,16 @@ impl Block {
         let columns: Vec<Vector> = indices.iter()
             .map(|&i| self.columns[i].clone())
             .collect();
-        Self { schema, columns }
+        let row_count = columns.first().map(|c: &Vector| c.len()).unwrap_or(self.row_count);
+        Self { schema, columns, row_count }
     }
 
     pub fn filter(&self, selection: &crate::Bitmap) -> Self {
-        // Pre-count selected rows for preallocation
-        let _num_selected = selection.set_count();
-        let _num_cols = self.columns.len();
-
-        // Preallocate all columns
         let columns: Vec<Vector> = self.columns.iter()
-            .map(|c| c.filter(selection))
+            .map(|c: &Vector| c.filter(selection))
             .collect();
-
-        Self { schema: self.schema.clone(), columns }
+        let row_count = columns.first().map(|c: &Vector| c.len()).unwrap_or(0);
+        Self { schema: self.schema.clone(), columns, row_count }
     }
 
     pub fn append_block(&mut self, other: &Block) {
@@ -89,6 +96,7 @@ impl Block {
                 col.append_vector(&other.columns[i]);
             }
         }
+        self.row_count = self.num_rows();
     }
 
     pub fn concat(blocks: &[Block]) -> Option<Block> {

@@ -78,6 +78,13 @@ impl ExecutionContext {
 
     fn create_exec_plan_impl(&self, plan: &PlanNode) -> Result<ExecutionPlan, PlanExecutionError> {
         match &plan.node_type {
+            PlanNodeType::Values(vals) => {
+                let schema = Schema::new(vec![]);
+                Ok(ExecutionPlan::Values(ValuesExecNode::new(
+                    vals.rows.clone(),
+                    schema,
+                )))
+            }
             PlanNodeType::Scan(scan) => {
                 self.create_scan_node(scan)
             }

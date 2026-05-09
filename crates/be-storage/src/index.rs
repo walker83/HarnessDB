@@ -778,7 +778,7 @@ pub fn apply_predicates_to_block(block: &Block, predicates: &[ColumnPredicate]) 
                         let mut sel = Bitmap::with_capacity(num_rows);
                         for i in 0..num_rows {
                             let val = v.scalar_at(i);
-                            sel.push(eval_predicate(&predicate.op, &val, &predicate.value));
+                            sel.push(eval_predicate_with_values(&predicate.op, &val, &predicate.value, &predicate.values));
                         }
                         sel
                     }

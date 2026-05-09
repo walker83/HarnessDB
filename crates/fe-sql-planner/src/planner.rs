@@ -549,13 +549,8 @@ impl Planner {
             self.plan_table_ref_with_cte(table_ref, cte_ctx)?
         } else {
             self.make_node(
-                PlanNodeType::Scan(ScanNode {
-                    catalog: None,
-                    table_name: "dual".into(),
-                    database: None,
-                    columns: vec![],
-                    predicates: vec![],
-                    limit: None,
+                PlanNodeType::Values(VirtualValuesNode {
+                    rows: vec![vec![]],
                 }),
                 vec![],
             )
