@@ -1651,6 +1651,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-datafusion"
+version = "0.1.5"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "common",
+ "dashmap",
+ "datafusion",
+ "fe-catalog",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "types",
+]
+
+[[package]]
 name = "fe-expression"
 version = "0.1.5"
 dependencies = [
@@ -3390,10 +3406,13 @@ dependencies = [
  "be-common",
  "be-execution",
  "be-storage",
+ "chrono",
  "clap",
  "common",
+ "datafusion",
  "fe-catalog",
  "fe-common",
+ "fe-datafusion",
  "fe-expression",
  "fe-monitor",
  "fe-scheduler",

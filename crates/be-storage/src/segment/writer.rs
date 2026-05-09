@@ -132,6 +132,7 @@ impl SegmentWriter {
         file.write_all(&footer_offset.to_le_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
         file.flush().map_err(|e| format!("Flush error: {}", e))?;
+        file.sync_all().map_err(|e| format!("Sync error: {}", e))?;
 
         Ok(offset + footer_json.len() as u64 + 16)
     }

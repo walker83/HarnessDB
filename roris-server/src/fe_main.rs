@@ -3,9 +3,7 @@ use clap::Parser;
 use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
-use types::ScalarValue;
 
-use be_storage::StorageEngine;
 use fe_common::edit_log::EditLog;
 use fe_catalog::CatalogManager;
 use fe_scheduler::ClusterManager;
@@ -13,13 +11,13 @@ use fe_monitor::MonitoringManager;
 use fe_monitor::http_server::MonitoringHttpServer;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
 use mysql_protocol::server::{ColumnDef, ColumnType};
-use fe_sql_planner::{Planner, Optimizer};
-use fe_sql_parser::{parse_sql, Statement, is_dml_sql, try_parse_dml_with_datafusion};
+use fe_sql_parser::{parse_sql, Statement, is_dml_sql};
 use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt, DeleteStmt};
-use types::{DataType, Block};
+use types::DataType;
 use fe_catalog::table::{Table, TableColumn, KeysType};
 use be_execution::exec_node::TransactionContext;
-use be_execution::planner::{ExecutionContext, execute_plan};
+use datafusion::prelude::{SessionContext, SessionConfig};
+use fe_datafusion::catalog::RorisCatalogProvider;
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
@@ -46,9 +44,9 @@ struct Args {
 struct RorisQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
-    storage: Arc<StorageEngine>,
     views: Arc<StdRwLock<Vec<ViewInfo>>>,
     transaction: Arc<StdRwLock<TransactionContext>>,
+    session_ctx: SessionContext,
 }
 
 #[derive(Clone)]
@@ -60,13 +58,21 @@ struct ViewInfo {
 }
 
 impl RorisQueryHandler {
-    fn new(catalog: Arc<StdRwLock<CatalogManager>>, storage: Arc<StorageEngine>) -> Self {
+    fn new(catalog: Arc<StdRwLock<CatalogManager>>) -> Self {
+        let df_catalog = Arc::new(RorisCatalogProvider::new(catalog.clone()));
+        let config = SessionConfig::new()
+            .with_default_catalog_and_schema("roris", "information_schema")
+            .with_create_default_catalog_and_schema(false)
+            .with_information_schema(true);
+        let session_ctx = SessionContext::new_with_config(config);
+        session_ctx.register_catalog("roris", df_catalog);
+        
         Self {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
             views: Arc::new(StdRwLock::new(Vec::new())),
-            storage,
             transaction: Arc::new(StdRwLock::new(TransactionContext::new())),
+            session_ctx,
         }
     }
 
@@ -84,23 +90,41 @@ impl QueryHandler for RorisQueryHandler {
         }
 
         if is_dml_sql(trimmed) {
-            match try_parse_dml_with_datafusion(trimmed) {
-                Ok(logical_plan) => {
-                    tracing::debug!("DataFusion parsed DML successfully: {}", logical_plan);
-                    let stmt = parse_sql_fallback(trimmed);
-                    return match self.execute_statement(&stmt) {
-                        Ok(result) => result,
-                        Err(e) => {
-                            tracing::error!("Query error: {}", e);
-                            QueryResult::with_rows(
-                                vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
-                                vec![vec![Some(format!("ERROR: {}", e))]],
-                            )
-                        }
-                    };
-                }
-                Err(df_err) => {
-                    tracing::debug!("DataFusion parse failed ({}), falling back to legacy parser", df_err);
+            let upper = trimmed.to_uppercase();
+            if upper.starts_with("DELETE") || upper.starts_with("UPDATE") {
+            } else {
+                let result = std::thread::spawn({
+                    let ctx = self.session_ctx.clone();
+                    let sql = trimmed.to_string();
+                    move || {
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        rt.block_on(async {
+                            let df = ctx.sql(&sql).await?;
+                            let batches = df.collect().await?;
+                            Ok::<_, datafusion::error::DataFusionError>(batches)
+                        })
+                    }
+                })
+                .join();
+
+                match result {
+                    Ok(Ok(batches)) => {
+                        return record_batches_to_query_result(&batches);
+                    }
+                    Ok(Err(df_err)) => {
+                        tracing::error!("DataFusion error: {}", df_err);
+                        return QueryResult::with_rows(
+                            vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                            vec![vec![Some(format!("ERROR: {}", df_err))]],
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Thread error: {:?}", e);
+                        return QueryResult::with_rows(
+                            vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                            vec![vec![Some(format!("ERROR: thread panicked"))]],
+                        );
+                    }
                 }
             }
         }
@@ -133,8 +157,11 @@ impl QueryHandler for RorisQueryHandler {
     }
 
     fn set_database(&self, db: &str) {
-        let mut current_db = self.current_database.write().unwrap();
-        *current_db = db.to_string();
+        {
+            let mut current_db = self.current_database.write().unwrap();
+            *current_db = db.to_string();
+        }
+        self.session_ctx.state_ref().write().config_mut().options_mut().catalog.default_schema = db.to_string();
     }
 }
 
@@ -183,8 +210,8 @@ impl RorisQueryHandler {
             Statement::RollbackTo(name) => self.rollback_to_savepoint(name.clone()),
             Statement::ReleaseSavepoint(name) => self.release_savepoint(name.clone()),
             Statement::SetTransactionIsolation(level) => self.set_transaction_isolation(level.clone()),
-            Statement::Query(_) => self.execute_query(stmt),
-            Statement::Explain(explain) => self.explain(&explain.statement),
+            Statement::Query(_) => Err("Query statements should be handled by DataFusion path".to_string()),
+            Statement::Explain(_) => Err("Explain statements should be handled by DataFusion path".to_string()),
             Statement::ShowPartitions(db, table) => self.show_partitions(db.clone(), table.clone()),
             Statement::ShowTableStatus(db) => self.show_table_status(db.clone()),
             Statement::ShowVariables { global, pattern } => self.show_variables(*global, pattern.clone()),
@@ -228,7 +255,7 @@ impl RorisQueryHandler {
             Statement::ShowCatalogs => self.show_catalogs(),
             Statement::RefreshCatalog(stmt) => self.refresh_catalog(stmt),
             Statement::SetVariable(stmt) => self.set_variable(stmt),
-            Statement::Union(stmt) => self.execute_union(stmt),
+            Statement::Union(_) => Err("Union statements should be handled by DataFusion path".to_string()),
             // Batch 3/4 statements
             Statement::ExportTable(stmt) => self.export_table(stmt),
             Statement::CancelExport(id) => self.cancel_export(id.clone()),
@@ -390,9 +417,14 @@ impl RorisQueryHandler {
         let catalog = self.catalog.write().unwrap();
         match catalog.create_database(&stmt.name) {
             Ok(()) => {
-                // Persist to disk
                 if let Err(e) = catalog.save() {
                     tracing::error!("Failed to save catalog: {}", e);
+                }
+                drop(catalog);
+                let df_cat = self.session_ctx.catalog("roris")
+                    .ok_or_else(|| "roris catalog not found".to_string())?;
+                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
+                    roris_cat.create_database(&stmt.name);
                 }
                 Ok(QueryResult::ok())
             }
@@ -456,9 +488,21 @@ impl RorisQueryHandler {
         let catalog = self.catalog.write().unwrap();
         match catalog.create_table(db, table) {
             Ok(()) => {
-                // Persist to disk
                 if let Err(e) = catalog.save() {
                     tracing::error!("Failed to save catalog: {}", e);
+                }
+                drop(catalog);
+                let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = stmt.columns.iter().map(|c| {
+                    datafusion::arrow::datatypes::Field::new(
+                        &c.name,
+                        fe_datafusion::types::to_arrow_data_type(&parse_data_type(&c.data_type)),
+                        c.nullable,
+                    )
+                }).collect();
+                let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
+                let df_cat = self.session_ctx.catalog("roris").unwrap();
+                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
+                    roris_cat.create_table(db, &stmt.name, arrow_schema);
                 }
                 Ok(QueryResult::ok())
             }
@@ -1046,86 +1090,6 @@ impl RorisQueryHandler {
     }
 
     fn insert(&self, stmt: &fe_sql_parser::ast::InsertStmt) -> Result<QueryResult, String> {
-        // Resolve table: db.table or just table (use current_db)
-        let parts: Vec<&str> = stmt.table.split('.').collect();
-        let (database, table_name) = match parts.len() {
-            1 => {
-                let current_db = self.current_database.read().unwrap();
-                (Some(current_db.clone()), stmt.table.clone())
-            }
-            2 => (Some(parts[0].to_string()), parts[1].to_string()),
-            _ => {
-                let current_db = self.current_database.read().unwrap();
-                (Some(current_db.clone()), stmt.table.clone())
-            }
-        };
-
-        // Create planner and plan the INSERT statement
-        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let mut planner = Planner::new(Arc::new(catalog_for_planner));
-
-        // Set current database for the planner
-        if let Some(ref db) = database {
-            planner.set_database(db);
-        }
-
-        // Create a modified InsertStmt with database prefix if needed
-        let full_table_name = match &database {
-            Some(db) if db != "information_schema" => format!("{}.{}", db, table_name),
-            _ => table_name.clone(),
-        };
-        let mut modified_stmt = stmt.clone();
-        modified_stmt.table = full_table_name;
-
-        let plan = planner.plan(Statement::Insert(modified_stmt))
-            .map_err(|e| format!("Planning error: {}", e))?;
-
-        // Create execution context with transaction context
-        let storage = self.storage.clone();
-        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let exec_context = Arc::new(
-            ExecutionContext::new(storage, Arc::new(catalog_for_exec))
-                .with_transaction_ctx(self.transaction.clone())
-        );
-
-        // Execute in a separate thread to avoid Tokio runtime conflict
-        let results = std::thread::spawn({
-            let plan = plan.clone();
-            let exec_context = exec_context.clone();
-            move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async { execute_plan(&plan, &exec_context).await })
-            }
-        })
-        .join()
-        .map_err(|e| format!("Execution error: {:?}", e))?
-        .map_err(|e| format!("Execution error: {}", e))?;
-
-        // Extract affected rows from result blocks (value stored in first column)
-        let affected_rows: usize = results.iter()
-            .filter_map(|b| b.column(0))
-            .map(|col| {
-                (0..col.len()).filter_map(|i| {
-                    match col.scalar_at(i) {
-                        ScalarValue::Int64(n) => Some(n as usize),
-                        ScalarValue::Int32(n) => Some(n as usize),
-                        _ => None,
-                    }
-                }).sum::<usize>()
-            })
-            .sum();
-
-        tracing::info!("INSERT into {}.{}: {} rows affected", database.as_ref().unwrap_or(&"default".to_string()), table_name, affected_rows);
-        Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
-            vec![vec![Some(affected_rows.to_string())]],
-        ))
-    }
-
-    fn update(&self, stmt: &fe_sql_parser::ast::UpdateStmt) -> Result<QueryResult, String> {
-        // Resolve table: db.table or just table (use current_db)
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
             1 => {
@@ -1139,66 +1103,113 @@ impl RorisQueryHandler {
             }
         };
 
-        // Create planner and plan the UPDATE statement
-        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let mut planner = Planner::new(Arc::new(catalog_for_planner));
+        let df_cat = self.session_ctx.catalog("roris")
+            .ok_or_else(|| "roris catalog not found".to_string())?;
+        let roris_cat = df_cat.as_any().downcast_ref::<RorisCatalogProvider>()
+            .ok_or_else(|| "catalog type mismatch".to_string())?;
+        let mem_table = roris_cat.get_mem_table(&database, &table_name)
+            .ok_or_else(|| format!("table '{}.{}' not found", database, table_name))?;
 
-        // Set current database for the planner so table resolution works correctly
-        planner.set_database(&database);
+        let catalog = self.catalog.read().unwrap();
+        let table_meta = catalog.get_table(&database, &table_name)
+            .ok_or_else(|| format!("table '{}.{}' not found in catalog", database, table_name))?;
 
-        let plan = planner.plan(Statement::Update(stmt.clone()))
-            .map_err(|e| format!("Planning error: {}", e))?;
+        let num_cols = table_meta.columns.len();
+        let mut arrays: Vec<datafusion::arrow::array::ArrayRef> = Vec::new();
 
-        // Create execution context with transaction context
-        let storage = self.storage.clone();
-        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let exec_context = Arc::new(
-            ExecutionContext::new(storage, Arc::new(catalog_for_exec))
-                .with_transaction_ctx(self.transaction.clone())
-        );
+        for col_idx in 0..num_cols {
+            let col_meta = &table_meta.columns[col_idx];
+            let col_type = &col_meta.data_type;
+            let values: Vec<Option<String>> = stmt.values.iter().map(|row| {
+                row.get(col_idx).and_then(|expr| expr_to_string_value(expr))
+            }).collect();
 
-        // Execute in a separate thread to avoid Tokio runtime conflict
-        let results = std::thread::spawn({
-            let plan = plan.clone();
-            let exec_context = exec_context.clone();
-            move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async { execute_plan(&plan, &exec_context).await })
-            }
-        })
-        .join()
-        .map_err(|e| format!("Execution error: {:?}", e))?
-        .map_err(|e| format!("Execution error: {}", e))?;
+            let arr = build_arrow_array(col_type, &values);
+            arrays.push(arr);
+        }
 
-        // Extract affected rows from result blocks (value stored in first column)
-        let affected_rows: usize = results.iter()
-            .filter_map(|b| b.column(0))
-            .map(|col| {
-                (0..col.len()).filter_map(|i| {
-                    match col.scalar_at(i) {
-                        ScalarValue::Int64(n) => Some(n as usize),
-                        ScalarValue::Int32(n) => Some(n as usize),
-                        _ => None,
-                    }
-                }).sum::<usize>()
-            })
-            .sum();
+        let arrow_schema = datafusion::catalog::TableProvider::schema(&*mem_table);
+        let batch = datafusion::arrow::record_batch::RecordBatch::try_new(
+            arrow_schema, arrays,
+        ).map_err(|e| format!("Failed to create record batch: {}", e))?;
 
-        tracing::info!("UPDATE on {}.{}: {} rows affected", database, table_name, affected_rows);
+        {
+            let mut partition = mem_table.batches[0].blocking_write();
+            partition.push(batch);
+        }
+
+        let affected_rows = stmt.values.len();
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
             vec![vec![Some(affected_rows.to_string())]],
         ))
     }
 
+    fn update(&self, stmt: &fe_sql_parser::ast::UpdateStmt) -> Result<QueryResult, String> {
+        let parts: Vec<&str> = stmt.table.split('.').collect();
+        let (database, table_name) = match parts.len() {
+            1 => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+            2 => (parts[0].to_string(), parts[1].to_string()),
+            _ => {
+                let current_db = self.current_database.read().unwrap();
+                (current_db.clone(), stmt.table.clone())
+            }
+        };
+
+        let df_cat = self.session_ctx.catalog("roris")
+            .ok_or_else(|| "roris catalog not found".to_string())?;
+        let roris_cat = df_cat.as_any().downcast_ref::<RorisCatalogProvider>()
+            .ok_or_else(|| "catalog type mismatch".to_string())?;
+        let mem_table = roris_cat.get_mem_table(&database, &table_name)
+            .ok_or_else(|| format!("table '{}.{}' not found", database, table_name))?;
+
+        let set_clauses = stmt.set_clauses.clone();
+        let selection = stmt.selection.clone();
+
+        let result = std::thread::spawn({
+            let mem_table = mem_table.clone();
+            move || {
+                let mut total_updated = 0usize;
+                let mut partition = mem_table.batches[0].blocking_write();
+                let mut new_batches = Vec::new();
+                for batch in partition.drain(..) {
+                    let update_mask: Vec<bool> = if let Some(ref sel) = selection {
+                        evaluate_delete_filter_simple(&batch, sel)?
+                    } else {
+                        vec![true; batch.num_rows()]
+                    };
+                    total_updated += update_mask.iter().filter(|&u| *u).count();
+                    
+                    let mut updated_batch = batch.clone();
+                    for set_clause in &set_clauses {
+                        let col_idx = updated_batch.schema().index_of(&set_clause.column)
+                            .map_err(|e| format!("{}", e))?;
+                        let val_str = expr_to_string_value(&set_clause.value)
+                            .ok_or_else(|| format!("Unsupported assignment value: {:?}", set_clause.value))?;
+                        update_column_in_batch(&mut updated_batch, col_idx, &val_str, &update_mask)?;
+                    }
+                    new_batches.push(updated_batch);
+                }
+                *partition = new_batches;
+                Ok::<_, String>(total_updated)
+            }
+        })
+        .join()
+        .map_err(|e| format!("Thread error: {:?}", e))?;
+
+        let total_updated = result?;
+        Ok(QueryResult::with_rows(
+            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![vec![Some(total_updated.to_string())]],
+        ))
+    }
+
     fn delete(&self, stmt: &DeleteStmt) -> Result<QueryResult, String> {
-        // Multi-table DELETE: target tables are in stmt.tables
-        // For backward compatibility, also check stmt.from
         let target_tables = if stmt.tables.is_empty() {
             if let Some(ref from) = stmt.from {
-                // Extract base table name from TableRef
                 fn get_base_table_name(t: &fe_sql_parser::ast::TableRef) -> String {
                     match t {
                         fe_sql_parser::ast::TableRef::Table { name, .. } => name.clone(),
@@ -1228,40 +1239,51 @@ impl RorisQueryHandler {
             }
         };
 
-        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let mut planner = Planner::new(Arc::new(catalog_for_planner));
-        planner.set_database(&database);
+        let df_cat = self.session_ctx.catalog("roris")
+            .ok_or_else(|| "roris catalog not found".to_string())?;
+        let roris_cat = df_cat.as_any().downcast_ref::<RorisCatalogProvider>()
+            .ok_or_else(|| "catalog type mismatch".to_string())?;
+        let mem_table = roris_cat.get_mem_table(&database, &table_name)
+            .ok_or_else(|| format!("table '{}.{}' not found", database, table_name))?;
 
-        let delete_stmt = Statement::Delete(stmt.clone());
-        let plan = planner.plan(delete_stmt).map_err(|e| format!("Planning error: {}", e))?;
+        let selection = stmt.selection.clone();
 
-        let storage = self.storage.clone();
-        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let exec_context = Arc::new(
-            ExecutionContext::new(storage, Arc::new(catalog_for_exec))
-                .with_transaction_ctx(self.transaction.clone())
-        );
-
-        let results = std::thread::spawn({
-            let plan = plan.clone();
-            let exec_context = exec_context.clone();
+        let result = std::thread::spawn({
+            let mem_table = mem_table.clone();
+            let database_clone = database.clone();
+            let table_name_clone = table_name.clone();
             move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async { execute_plan(&plan, &exec_context).await })
+                let mut total_deleted = 0usize;
+                let mut partition = mem_table.batches[0].blocking_write();
+                let mut new_batches = Vec::new();
+                for batch in partition.drain(..) {
+                    let keep_mask: Vec<bool> = if let Some(ref sel) = selection {
+                        evaluate_delete_filter_simple(&batch, sel)?
+                    } else {
+                        total_deleted += batch.num_rows();
+                        continue;
+                    };
+                    let deleted = keep_mask.iter().filter(|&&k| !k).count();
+                    total_deleted += deleted;
+                    if keep_mask.iter().any(|&k| k) {
+                        let filtered = datafusion::arrow::compute::filter_record_batch(
+                            &batch,
+                            &datafusion::arrow::array::BooleanArray::from(keep_mask),
+                        ).map_err(|e| format!("Filter error: {}", e))?;
+                        new_batches.push(filtered);
+                    }
+                }
+                *partition = new_batches;
+                Ok::<_, String>(total_deleted)
             }
         })
         .join()
-        .map_err(|e| format!("Execution error: {:?}", e))?
-        .map_err(|e| format!("Execution error: {}", e))?;
+        .map_err(|e| format!("Thread error: {:?}", e))?;
 
-        let affected_rows = results.iter().map(|b| b.num_rows()).sum::<usize>();
-
-        tracing::info!("DELETE from {}.{} ({} tables): {} rows affected", database, table_name, target_tables.len(), affected_rows);
+        let total_deleted = result?;
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
-            vec![vec![Some(affected_rows.to_string())]],
+            vec![vec![Some(total_deleted.to_string())]],
         ))
     }
 
@@ -1280,18 +1302,8 @@ impl RorisQueryHandler {
         if !tx.in_transaction {
             return Err("No transaction to commit".to_string());
         }
-        // In non-transaction mode, commit is a no-op (writes already applied)
-        // The StorageEngine is available at self.storage for actual persistence
-        match tx.commit(&self.storage) {
-            Ok(_affected) => {
-                tx.in_transaction = false;
-                Ok(QueryResult::ok())
-            }
-            Err(e) => {
-                tx.rollback();
-                Err(format!("Commit failed: {}", e))
-            }
-        }
+        tx.in_transaction = false;
+        Ok(QueryResult::ok())
     }
 
     fn rollback_tx(&self) -> Result<QueryResult, String> {
@@ -1328,68 +1340,6 @@ impl RorisQueryHandler {
         tracing::info!("Setting transaction isolation level to: {}", level);
         Ok(QueryResult::ok())
     }
-
-    fn execute_query(&self, stmt: &Statement) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read().unwrap().clone();
-
-        // Create planner and plan the statement
-        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let mut planner = Planner::new(Arc::new(catalog_for_planner));
-        planner.set_database(&current_db);
-        let optimizer = Optimizer::new();
-
-        let plan = planner.plan(stmt.clone()).map_err(|e| format!("Planning error: {}", e))?;
-        let optimized_plan = optimizer.optimize(plan);
-
-        // Execute the query through BE
-        let storage = self.storage.clone();
-        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let exec_context = Arc::new(
-            ExecutionContext::new(storage, Arc::new(catalog_for_exec))
-                .with_transaction_ctx(self.transaction.clone())
-        );
-
-        // Execute in a separate thread to avoid Tokio runtime conflict
-        let results = std::thread::spawn({
-            let plan = optimized_plan.clone();
-            let exec_context = exec_context.clone();
-            move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async { execute_plan(&plan, &exec_context).await })
-            }
-        })
-        .join()
-        .map_err(|e| format!("Execution error: {:?}", e))?
-        .map_err(|e| format!("Execution error: {}", e))?;
-
-        // Convert results to QueryResult
-        block_to_query_result(results)
-    }
-
-    fn explain(&self, stmt: &Statement) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read().unwrap().clone();
-
-        // Create planner and plan the statement
-        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let mut planner = Planner::new(Arc::new(catalog_for_planner));
-        planner.set_database(&current_db);
-        let optimizer = Optimizer::new();
-
-        let plan = planner.plan(stmt.clone()).map_err(|e| format!("Planning error: {}", e))?;
-        let optimized_plan = optimizer.optimize(plan);
-
-        // Return query plan as text
-        let explain_output = format_plan(&optimized_plan);
-        Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "Query Plan".to_string(), col_type: ColumnType::String }],
-            explain_output.lines().map(|line| vec![Some(line.to_string())]).collect(),
-        ))
-    }
-
-    // ---- Batch 1/2 DDL handlers restored ----
 
     fn alter_database(&self, stmt: &AlterDatabaseStmt) -> Result<QueryResult, String> {
         let catalog = self.catalog.read().unwrap();
@@ -1680,46 +1630,6 @@ impl RorisQueryHandler {
         ))
     }
 
-    fn execute_union(&self, stmt: &fe_sql_parser::ast::UnionStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read().unwrap().clone();
-
-        // Create planner and plan the union statement
-        let mut catalog_for_planner = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_planner.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let mut planner = Planner::new(Arc::new(catalog_for_planner));
-        planner.set_database(&current_db);
-        let optimizer = Optimizer::new();
-
-        let plan = planner.plan(Statement::Union(stmt.clone()))
-            .map_err(|e| format!("Planning error: {}", e))?;
-        let optimized_plan = optimizer.optimize(plan);
-
-        // Execute the union through BE
-        let storage = self.storage.clone();
-        let mut catalog_for_exec = CatalogManager::with_path("data/fe/doris-meta");
-        catalog_for_exec.load().map_err(|e| format!("Failed to load catalog: {}", e))?;
-        let exec_context = Arc::new(
-            ExecutionContext::new(storage, Arc::new(catalog_for_exec))
-                .with_transaction_ctx(self.transaction.clone())
-        );
-
-        // Execute in a separate thread to avoid Tokio runtime conflict
-        let results = std::thread::spawn({
-            let plan = optimized_plan.clone();
-            let exec_context = exec_context.clone();
-            move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async { execute_plan(&plan, &exec_context).await })
-            }
-        })
-        .join()
-        .map_err(|e| format!("Execution error: {:?}", e))?
-        .map_err(|e| format!("Execution error: {}", e))?;
-
-        // Convert results to QueryResult
-        block_to_query_result(results)
-    }
-
     // ---- Batch 3/4 statement handlers ----
 
     fn export_table(&self, stmt: &fe_sql_parser::ast::ExportTableStmt) -> Result<QueryResult, String> {
@@ -1967,20 +1877,6 @@ impl RorisQueryHandler {
     }
 }
 
-fn format_plan(node: &fe_sql_planner::PlanNode) -> String {
-    let mut output = String::new();
-    format_plan_recursive(node, &mut output, 0);
-    output
-}
-
-fn format_plan_recursive(node: &fe_sql_planner::PlanNode, output: &mut String, indent: usize) {
-    let prefix = "  ".repeat(indent);
-    output.push_str(&format!("{}{:?}\n", prefix, node.node_type));
-    for child in &node.children {
-        format_plan_recursive(child, output, indent + 1);
-    }
-}
-
 fn parse_data_type(s: &str) -> DataType {
     match s.to_uppercase().as_str() {
         "INT8" | "TINYINT" => DataType::Int8,
@@ -2021,72 +1917,318 @@ fn like_match(pattern: &str, text: &str) -> bool {
     dp[p.len()][t.len()]
 }
 
-fn block_to_query_result(blocks: Vec<Block>) -> Result<QueryResult, String> {
-    if blocks.is_empty() {
-        return Ok(QueryResult::with_rows(
+fn record_batches_to_query_result(batches: &[datafusion::arrow::record_batch::RecordBatch]) -> QueryResult {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
+
+    if batches.is_empty() {
+        return QueryResult::with_rows(
             vec![ColumnDef { name: "OK".to_string(), col_type: ColumnType::String }],
             vec![vec![Some("Empty set".to_string())]],
-        ));
+        );
     }
 
-    // Collect all rows from all blocks
-    let mut all_rows: Vec<Vec<ScalarValue>> = Vec::new();
-    for block in &blocks {
-        for row_idx in 0..block.num_rows() {
-            all_rows.push(block.row(row_idx));
+    let schema = batches[0].schema();
+    let columns: Vec<ColumnDef> = schema.fields().iter().map(|f| {
+        let col_type = match f.data_type() {
+            ADT::Int8 | ADT::Int16 | ADT::Int32 | ADT::Int64 => ColumnType::Int,
+            ADT::Float32 => ColumnType::Float,
+            ADT::Float64 => ColumnType::Double,
+            ADT::Boolean => ColumnType::Int,
+            ADT::Date32 | ADT::Date64 => ColumnType::Date,
+            ADT::Timestamp(_, _) => ColumnType::DateTime,
+            _ => ColumnType::String,
+        };
+        ColumnDef { name: f.name().clone(), col_type }
+    }).collect();
+
+    let mut string_rows: Vec<Vec<Option<String>>> = Vec::new();
+    for batch in batches {
+        if batch.num_rows() == 0 {
+            continue;
+        }
+        for row_idx in 0..batch.num_rows() {
+            let row: Vec<Option<String>> = batch.columns().iter().map(|col| {
+                arrow_value_to_string(col, row_idx)
+            }).collect();
+            string_rows.push(row);
         }
     }
 
-    if all_rows.is_empty() {
-        return Ok(QueryResult::with_rows(
+    if string_rows.is_empty() {
+        return QueryResult::with_rows(
             vec![ColumnDef { name: "OK".to_string(), col_type: ColumnType::String }],
             vec![vec![Some("Empty set".to_string())]],
-        ));
+        );
     }
 
-    // Determine columns from first block's schema
-    let schema = blocks[0].schema();
-    let columns: Vec<ColumnDef> = schema.fields().iter().map(|f| {
-        let col_type = match f.data_type {
-            DataType::Int8 | DataType::Int16 | DataType::Int32 => ColumnType::Int,
-            DataType::Int64 => ColumnType::Int,
-            DataType::Float32 => ColumnType::Float,
-            DataType::Float64 => ColumnType::Double,
-            DataType::String => ColumnType::String,
-            DataType::Boolean => ColumnType::Int,
-            DataType::Date => ColumnType::Date,
-            DataType::DateTime => ColumnType::DateTime,
-            _ => ColumnType::String,
-        };
-        ColumnDef { name: f.name.clone(), col_type }
-    }).collect();
-
-    // Convert rows to string rows
-    let string_rows: Vec<Vec<Option<String>>> = all_rows.iter().map(|row| {
-        row.iter().map(|v| scalar_to_string(v)).collect()
-    }).collect();
-
-    Ok(QueryResult::with_rows(columns, string_rows))
+    QueryResult::with_rows(columns, string_rows)
 }
 
-fn scalar_to_string(v: &ScalarValue) -> Option<String> {
-    match v {
-        ScalarValue::Null => None,
-        ScalarValue::Boolean(b) => Some(if *b { "1" } else { "0" }.to_string()),
-        ScalarValue::Int8(i) => Some(i.to_string()),
-        ScalarValue::Int16(i) => Some(i.to_string()),
-        ScalarValue::Int32(i) => Some(i.to_string()),
-        ScalarValue::Int64(i) => Some(i.to_string()),
-        ScalarValue::Int128(i) => Some(i.to_string()),
-        ScalarValue::Float32(f) => Some(f.to_string()),
-        ScalarValue::Float64(f) => Some(f.to_string()),
-        ScalarValue::String(s) => Some(s.clone()),
-        ScalarValue::Date(_) => Some(format!("{:?}", v)),
-        ScalarValue::DateTime(_) => Some(format!("{:?}", v)),
-        ScalarValue::Binary(b) => Some(format!("{:?}", b)),
-        ScalarValue::Array(_) => Some(format!("{:?}", v)),
-        ScalarValue::Json(_) => Some(format!("{:?}", v)),
-        ScalarValue::Float32Array(_) => Some(format!("{:?}", v)),
+fn arrow_value_to_string(col: &datafusion::arrow::array::ArrayRef, idx: usize) -> Option<String> {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType as ADT;
+    use datafusion::arrow::datatypes::TimeUnit;
+
+    if col.is_null(idx) {
+        return None;
+    }
+
+    match col.data_type() {
+        ADT::Boolean => {
+            let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+            Some(if arr.value(idx) { "1" } else { "0" }.to_string())
+        }
+        ADT::Int8 => {
+            let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Int16 => {
+            let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Int32 => {
+            let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Int64 => {
+            let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Float32 => {
+            let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Float64 => {
+            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Utf8 => {
+            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Date32 => {
+            let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+            let days = arr.value(idx);
+            let base = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+            let date = base + chrono::Duration::days(days as i64);
+            Some(date.format("%Y-%m-%d").to_string())
+        }
+        ADT::Timestamp(TimeUnit::Second, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let dt = chrono::DateTime::from_timestamp(ts, 0).unwrap_or_default();
+            Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        }
+        ADT::Timestamp(TimeUnit::Millisecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let dt = chrono::DateTime::from_timestamp_millis(ts).unwrap_or_default();
+            Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        }
+        ADT::Timestamp(TimeUnit::Microsecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let dt = chrono::DateTime::from_timestamp_micros(ts).unwrap_or_default();
+            Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        }
+        ADT::Timestamp(TimeUnit::Nanosecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let secs = ts / 1_000_000_000;
+            let nsecs = (ts % 1_000_000_000) as u32;
+            match chrono::DateTime::from_timestamp(secs, nsecs) {
+                Some(dt) => Some(dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+                None => Some("1970-01-01 00:00:00".to_string()),
+            }
+        }
+        _ => {
+            let arr = col.as_any().downcast_ref::<StringArray>();
+            arr.map(|a| a.value(idx).to_string())
+        }
+    }
+}
+
+fn expr_to_string_value(expr: &fe_sql_parser::ast::Expr) -> Option<String> {
+    use fe_sql_parser::ast::{Expr, LiteralValue};
+    match expr {
+        Expr::Literal(LiteralValue::Int64(n)) => Some(n.to_string()),
+        Expr::Literal(LiteralValue::Float64(f)) => Some(f.to_string()),
+        Expr::Literal(LiteralValue::String(s)) => Some(s.clone()),
+        Expr::Literal(LiteralValue::Boolean(b)) => Some(b.to_string()),
+        Expr::Literal(LiteralValue::Null) => None,
+        Expr::Literal(LiteralValue::Date(d)) => Some(d.clone()),
+        _ => None,
+    }
+}
+
+fn update_column_in_batch(
+    batch: &mut datafusion::arrow::record_batch::RecordBatch,
+    col_idx: usize,
+    val_str: &str,
+    update_mask: &[bool],
+) -> Result<(), String> {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType as ADT;
+    
+    let col = batch.column(col_idx);
+    let new_col: ArrayRef = match col.data_type() {
+        ADT::Int32 => {
+            let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
+            let val = val_str.parse::<i32>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int32Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Int64 => {
+            let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+            let val = val_str.parse::<i64>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int64Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Float32 => {
+            let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
+            let val = val_str.parse::<f32>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Float32Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Float64 => {
+            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+            let val = val_str.parse::<f64>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Float64Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Utf8 => {
+            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            Arc::new(StringArray::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val_str) } else { Some(arr.value(i)) })
+            ))
+        }
+        _ => return Err(format!("Unsupported column type for UPDATE: {}", col.data_type())),
+    };
+    
+    let mut new_columns: Vec<ArrayRef> = batch.columns().iter().cloned().collect();
+    new_columns[col_idx] = new_col;
+    *batch = datafusion::arrow::record_batch::RecordBatch::try_new(
+        batch.schema(),
+        new_columns,
+    ).map_err(|e| format!("Failed to create new batch: {}", e))?;
+    
+    Ok(())
+}
+
+fn build_arrow_array(col_type: &DataType, values: &[Option<String>]) -> datafusion::arrow::array::ArrayRef {
+    use datafusion::arrow::array::*;
+    match col_type {
+        DataType::Int8 => {
+            let arr: Int8Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i8>().ok())).collect();
+            Arc::new(arr)
+        }
+        DataType::Int16 => {
+            let arr: Int16Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i16>().ok())).collect();
+            Arc::new(arr)
+        }
+        DataType::Int32 => {
+            let arr: Int32Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i32>().ok())).collect();
+            Arc::new(arr)
+        }
+        DataType::Int64 => {
+            let arr: Int64Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i64>().ok())).collect();
+            Arc::new(arr)
+        }
+        DataType::Float32 => {
+            let arr: Float32Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<f32>().ok())).collect();
+            Arc::new(arr)
+        }
+        DataType::Float64 => {
+            let arr: Float64Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<f64>().ok())).collect();
+            Arc::new(arr)
+        }
+        DataType::Boolean => {
+            let arr: BooleanArray = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<bool>().ok())).collect();
+            Arc::new(arr)
+        }
+        _ => {
+            let arr: StringArray = values.iter().map(|v| v.as_ref().map(|s| s.as_str())).collect();
+            Arc::new(arr)
+        }
+    }
+}
+
+fn evaluate_delete_filter_simple(
+    batch: &datafusion::arrow::record_batch::RecordBatch,
+    where_expr: &fe_sql_parser::ast::Expr,
+) -> Result<Vec<bool>, String> {
+    use datafusion::arrow::array::*;
+    use fe_sql_parser::ast::{Expr, BinaryOp, LiteralValue};
+    let num_rows = batch.num_rows();
+    let mut keep = vec![true; num_rows];
+
+    if let Expr::BinaryOp { left, op, right } = where_expr {
+        let col_name = match left.as_ref() {
+            Expr::ColumnRef { table: _, column } => column.clone(),
+            _ => return Ok(keep),
+        };
+        let col_idx = batch.schema().index_of(&col_name).map_err(|e| format!("{}", e))?;
+        let col = batch.column(col_idx);
+
+        let val_str = match right.as_ref() {
+            Expr::Literal(LiteralValue::Int64(n)) => n.to_string(),
+            Expr::Literal(LiteralValue::Float64(f)) => f.to_string(),
+            Expr::Literal(LiteralValue::String(s)) => s.clone(),
+            _ => return Ok(keep),
+        };
+
+        match op {
+            BinaryOp::Eq => apply_cmp(&mut keep, col, &val_str, |a, b| a == b),
+            BinaryOp::Gt => apply_cmp(&mut keep, col, &val_str, |a, b| a > b),
+            BinaryOp::Lt => apply_cmp(&mut keep, col, &val_str, |a, b| a < b),
+            BinaryOp::GtEq => apply_cmp(&mut keep, col, &val_str, |a, b| a >= b),
+            BinaryOp::LtEq => apply_cmp(&mut keep, col, &val_str, |a, b| a <= b),
+            BinaryOp::NotEq => apply_cmp(&mut keep, col, &val_str, |a, b| a != b),
+            _ => {}
+        }
+    }
+
+    Ok(keep)
+}
+
+fn apply_cmp<F: Fn(&str, &str) -> bool>(keep: &mut [bool], col: &datafusion::arrow::array::ArrayRef, val: &str, cmp: F) {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType as ADT;
+
+    match col.data_type() {
+        ADT::Int32 => {
+            let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
+            for (i, k) in keep.iter_mut().enumerate() {
+                if !arr.is_null(i) {
+                    let v = arr.value(i).to_string();
+                    if !cmp(&v, val) { *k = false; }
+                }
+            }
+        }
+        ADT::Int64 => {
+            let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+            for (i, k) in keep.iter_mut().enumerate() {
+                if !arr.is_null(i) {
+                    let v = arr.value(i).to_string();
+                    if !cmp(&v, val) { *k = false; }
+                }
+            }
+        }
+        ADT::Utf8 => {
+            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            for (i, k) in keep.iter_mut().enumerate() {
+                if !arr.is_null(i) {
+                    let v = arr.value(i);
+                    if !cmp(v, val) { *k = false; }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -2133,18 +2275,9 @@ async fn main() -> Result<()> {
     // Initialize cluster manager for BE health monitoring
     let _cluster = Arc::new(RwLock::new(ClusterManager::new(fe_scheduler::cluster::ClusterConfig::default())));
 
-    // Initialize local storage engine for query execution
-    let storage = Arc::new(be_storage::StorageEngine::open("data/fe/storage").unwrap_or_else(|_| {
-        // Fallback to in-memory if storage dir doesn't exist
-        be_storage::StorageEngine::open("/tmp/roris-fe-storage").unwrap()
-    }));
-    tracing::info!("Local storage engine initialized");
-
-    // Initialize monitoring manager
     let monitoring = Arc::new(MonitoringManager::new(catalog.clone()));
     tracing::info!("Monitoring manager initialized");
 
-    // Start monitoring HTTP server
     let http_server = MonitoringHttpServer::new(args.metrics_port, monitoring.clone());
     tokio::spawn(async move {
         if let Err(e) = http_server.start().await {
@@ -2153,8 +2286,7 @@ async fn main() -> Result<()> {
     });
     tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
 
-    // Start MySQL protocol server
-    let query_handler = RorisQueryHandler::new(catalog.clone(), storage.clone());
+    let query_handler = RorisQueryHandler::new(catalog.clone());
     let mysql_config = ServerConfig {
         bind_addr: "127.0.0.1".to_string(),
         port: args.mysql_port,

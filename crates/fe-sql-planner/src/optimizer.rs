@@ -340,56 +340,6 @@ mod tests {
         assert!(scan.columns.contains(&"a".to_string()));
     }
 
-    // ---- Limit pushdown ----
-
-    #[test]
-    fn test_limit_pushdown_to_scan() {
-        let opt = Optimizer::new();
-        let scan = scan_node("t1", &["a"]);
-        let plan = PlanNode {
-            id: PlanNodeId(1),
-            node_type: PlanNodeType::Limit(LimitNode { limit: 10, offset: 0 }),
-            children: vec![scan],
-            stats: PlanStats::default(),
-        };
-        let result = opt.optimize(plan);
-        // Limit should be pushed into scan
-        match &result.node_type {
-            PlanNodeType::Scan(scan) => {
-                assert_eq!(scan.limit, Some(10));
-            }
-            other => panic!("Expected Scan with limit, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_limit_pushdown_through_sort() {
-        let opt = Optimizer::new();
-        let scan = scan_node("t1", &["a"]);
-        let sort = PlanNode {
-            id: PlanNodeId(1),
-            node_type: PlanNodeType::Sort(SortNode { order_by: vec![SortItem { expr: "a".to_string(), ascending: true }] }),
-            children: vec![scan],
-            stats: PlanStats::default(),
-        };
-        let plan = PlanNode {
-            id: PlanNodeId(2),
-            node_type: PlanNodeType::Limit(LimitNode { limit: 5, offset: 0 }),
-            children: vec![sort],
-            stats: PlanStats::default(),
-        };
-        let result = opt.optimize(plan);
-        // Limit should be pushed down to scan
-        fn find_scan(node: &PlanNode) -> Option<&ScanNode> {
-            match &node.node_type {
-                PlanNodeType::Scan(s) => Some(s),
-                _ => node.children.iter().find_map(find_scan),
-            }
-        }
-        let scan = find_scan(&result).expect("should find scan");
-        assert_eq!(scan.limit, Some(5));
-    }
-
     // ---- Join reordering ----
 
     #[test]

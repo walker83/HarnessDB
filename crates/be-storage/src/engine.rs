@@ -23,6 +23,7 @@ pub struct StorageEngine {
 
 impl StorageEngine {
     /// Create a new storage engine with the given data directory.
+    /// Recovers existing tablets from disk if any.
     pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)
@@ -36,10 +37,79 @@ impl StorageEngine {
             global_rowset_id: AtomicU64::new(0),
         };
 
+        // Recover existing tablets from disk
+        engine.recover()?;
+
         Ok(engine)
     }
 
+    /// Recover existing tablets from disk.
+    /// Scans the data directory for tablet_* folders and reloads them.
+    fn recover(&self) -> Result<()> {
+        if !self.data_dir.exists() {
+            return Ok(());
+        }
+
+        let entries = std::fs::read_dir(&self.data_dir)
+            .map_err(|e| DrorisError::storage(StorageError::ReadFailed, format!("Read data dir: {}", e)))?;
+
+        let mut recovered_count = 0;
+        for entry in entries {
+            let entry = entry.map_err(|e| DrorisError::storage(StorageError::ReadFailed, format!("Read dir entry: {}", e)))?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name().and_then(|s| s.to_str()) {
+                    if dir_name.starts_with("tablet_") {
+                        if let Ok(tablet_id) = dir_name[7..].parse::<u64>() {
+                            // Try to recover this tablet
+                            match self.recover_tablet(tablet_id) {
+                                Ok(_) => {
+                                    recovered_count += 1;
+                                    tracing::info!("Recovered tablet {}", tablet_id);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to recover tablet {}: {}", tablet_id, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::info!("Recovery complete: {} tablets recovered", recovered_count);
+        Ok(())
+    }
+
+    /// Recover a single tablet from disk.
+    fn recover_tablet(&self, tablet_id: u64) -> Result<()> {
+        // Read tablet schema from metadata file
+        let tablet_dir = self.data_dir.join(format!("tablet_{}", tablet_id));
+        let schema_path = tablet_dir.join("schema.json");
+
+        let schema: TabletSchema = if schema_path.exists() {
+            let json = std::fs::read_to_string(&schema_path)
+                .map_err(|e| DrorisError::storage(StorageError::ReadFailed, format!("Read schema: {}", e)))?;
+            serde_json::from_str(&json)
+                .map_err(|e| DrorisError::storage(StorageError::ReadFailed, format!("Parse schema: {}", e)))?
+        } else {
+            return Err(DrorisError::storage(
+                StorageError::TabletNotFound,
+                format!("Schema file not found for tablet {}", tablet_id),
+            ));
+        };
+
+        // Load tablet from disk
+        let tablet = Tablet::load_from_disk(tablet_id, schema, self.data_dir.clone())
+            .map_err(|e| DrorisError::storage(StorageError::ReadFailed, e))?;
+
+        self.tablets.insert(tablet_id, Arc::new(tablet));
+        Ok(())
+    }
+
     /// Create a new tablet with the given schema.
+    /// Persists schema to disk for recovery.
     pub fn create_tablet(&self, tablet_id: u64, schema: TabletSchema) -> Result<()> {
         if self.tablets.contains_key(&tablet_id) {
             return Err(DrorisError::storage_with_tablet(StorageError::TabletAlreadyExists, tablet_id, format!("tablet {} already exists", tablet_id)));
@@ -47,6 +117,14 @@ impl StorageEngine {
         let tablet_dir = self.data_dir.join(format!("tablet_{}", tablet_id));
         std::fs::create_dir_all(&tablet_dir)
             .map_err(|e| DrorisError::storage(StorageError::WriteFailed, format!("Create tablet dir: {}", e)))?;
+        
+        // Save schema to disk for recovery
+        let schema_path = tablet_dir.join("schema.json");
+        let schema_json = serde_json::to_string_pretty(&schema)
+            .map_err(|e| DrorisError::storage(StorageError::WriteFailed, format!("Serialize schema: {}", e)))?;
+        std::fs::write(&schema_path, schema_json)
+            .map_err(|e| DrorisError::storage(StorageError::WriteFailed, format!("Write schema: {}", e)))?;
+        
         let tablet = Tablet::new(tablet_id, schema, self.data_dir.clone());
         self.tablets.insert(tablet_id, Arc::new(tablet));
         tracing::info!("Created tablet {}", tablet_id);
@@ -149,14 +227,30 @@ impl StorageEngine {
 
         match new_rowset {
             Ok(rowset) => {
+                // Collect old segment file paths before removing rowsets
+                let old_segment_paths: Vec<String> = tablet.committed_rowsets()
+                    .iter()
+                    .flat_map(|r| r.segments.iter().map(|s| s.path.clone()))
+                    .collect();
+                
                 // Remove old rowsets and add the new one
                 let old_ids: Vec<u64> = tablet.committed_rowsets()
                     .iter()
                     .map(|r| r.meta.rowset_id)
                     .collect();
+                
                 tablet.remove_rowsets(&old_ids);
                 tablet.add_rowset(rowset);
-                tracing::info!("Compaction completed for tablet {}", tablet_id);
+                
+                // Delete old segment files from disk
+                for path in &old_segment_paths {
+                    if let Err(e) = std::fs::remove_file(path) {
+                        tracing::warn!("Failed to delete old segment file {}: {}", path, e);
+                    }
+                }
+                
+                tracing::info!("Compaction completed for tablet {}, deleted {} old segment files", 
+                    tablet_id, old_segment_paths.len());
                 Ok(())
             }
             Err(e) => {

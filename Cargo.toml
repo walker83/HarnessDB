@@ -11,6 +11,7 @@ members = [
     "crates/fe-scheduler",
     "crates/fe-common",
     "crates/fe-expression",
+    "crates/fe-datafusion",
     "crates/fe-monitor",
     "crates/mysql-protocol",
 
@@ -128,6 +129,7 @@ rpc = { path = "crates/rpc" }
 types = { path = "crates/types" }
 proto = { path = "crates/proto" }
 fe-expression = { path = "crates/fe-expression" }
+fe-datafusion = { path = "crates/fe-datafusion" }
 fe-monitor = { path = "crates/fe-monitor" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 data-io = { path = "crates/data-io" }

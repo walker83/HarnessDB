@@ -285,7 +285,14 @@ impl MemTable {
             types::ScalarValue::Int64(v) => MemTableKey::from_i64(v),
             types::ScalarValue::Int32(v) => MemTableKey::from_i64(v as i64),
             types::ScalarValue::String(s) => MemTableKey::from_string(&s),
-            other => MemTableKey(other.data_type().to_string().into_bytes()),
+            types::ScalarValue::Int8(v) => MemTableKey::from_i64(v as i64),
+            types::ScalarValue::Int16(v) => MemTableKey::from_i64(v as i64),
+            types::ScalarValue::Int128(v) => MemTableKey::from_i64(v as i64),
+            types::ScalarValue::Float32(f) => MemTableKey::from_i64(f.to_bits() as i64),
+            types::ScalarValue::Float64(f) => MemTableKey::from_i64(f.to_bits() as i64),
+            types::ScalarValue::Date(d) => MemTableKey::from_i64(d as i64),
+            types::ScalarValue::DateTime(d) => MemTableKey::from_i64(d),
+            _ => return Err(format!("Unsupported key type: {}", scalar.data_type())),
         })
     }
 }
@@ -345,6 +352,82 @@ impl Tablet {
             next_segment_id: AtomicU64::new(0),
             next_rowset_id: AtomicU64::new(0),
         }
+    }
+
+    /// Load an existing tablet from disk by reading rowset metadata files.
+    /// Returns the loaded Tablet or an error if the tablet directory doesn't exist.
+    pub fn load_from_disk(tablet_id: u64, schema: TabletSchema, data_dir: PathBuf) -> Result<Self, String> {
+        let tablet = Self::new(tablet_id, schema, data_dir.clone());
+        
+        let tablet_dir = data_dir.join(format!("tablet_{}", tablet_id));
+        if !tablet_dir.exists() {
+            return Err(format!("Tablet directory not found: {:?}", tablet_dir));
+        }
+
+        // Read all rowset metadata files
+        let entries = std::fs::read_dir(&tablet_dir)
+            .map_err(|e| format!("Failed to read tablet directory: {}", e))?;
+
+        let mut max_version: u64 = 0;
+        let mut max_segment_id: u64 = 0;
+        let mut max_rowset_id: u64 = 0;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+            let path = entry.path();
+            
+            // Load rowset metadata files
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                    if file_name.starts_with("rowset_") {
+                        match Rowset::load_meta(&path) {
+                            Ok((meta, segments)) => {
+                                let mut rowset = Rowset::with_segments(meta.clone(), segments);
+                                rowset.commit();
+                                tablet.rowsets.write().push(rowset);
+                                
+                                if meta.version > max_version {
+                                    max_version = meta.version;
+                                }
+                                if meta.rowset_id > max_rowset_id {
+                                    max_rowset_id = meta.rowset_id;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to load rowset meta {:?}: {}", path, e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Track max segment ID
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dat") {
+                if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                    if file_name.starts_with("seg_") {
+                        if let Ok(seg_id) = file_name[4..].parse::<u64>() {
+                            if seg_id > max_segment_id {
+                                max_segment_id = seg_id;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update atomic counters
+        tablet.max_version.store(max_version, Ordering::SeqCst);
+        tablet.next_segment_id.store(max_segment_id + 1, Ordering::SeqCst);
+        tablet.next_rowset_id.store(max_rowset_id + 1, Ordering::SeqCst);
+
+        tracing::info!(
+            "Loaded tablet {} from disk: {} rowsets, max_version={}",
+            tablet_id,
+            tablet.rowsets.read().len(),
+            max_version
+        );
+
+        Ok(tablet)
     }
 
     /// Write a block of rows into the memtable.

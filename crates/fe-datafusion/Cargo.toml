@@ -1,0 +1,17 @@
+[package]
+name = "fe-datafusion"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+datafusion = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+dashmap = { workspace = true }
+chrono = { workspace = true }
+
+fe-catalog = { workspace = true }
+types = { workspace = true }
+common = { workspace = true }
