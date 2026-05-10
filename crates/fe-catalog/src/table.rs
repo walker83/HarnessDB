@@ -5,6 +5,7 @@ use types::DataType;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
     pub id: u64,
+    pub tablet_id: u64,
     pub name: String,
     pub database: String,
     pub columns: Vec<TableColumn>,
@@ -20,6 +21,28 @@ pub struct Table {
     pub stats: Option<crate::stats::TableStats>,
     /// Original view definition query (only for views)
     pub view_definition: Option<String>,
+}
+
+impl Default for Table {
+    fn default() -> Self {
+        Table {
+            id: 0,
+            tablet_id: 0,
+            name: String::new(),
+            database: String::new(),
+            columns: Vec::new(),
+            keys_type: KeysType::Duplicate,
+            unique_keys: Vec::new(),
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

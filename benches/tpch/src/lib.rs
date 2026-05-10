@@ -11,6 +11,7 @@ use types::Block;
 
 use data_gen::TpchData;
 use be_storage::{StorageEngine, tablet::TabletSchema};
+use datafusion::prelude::SessionContext;
 
 /// Result of running a single TPC-H query.
 #[derive(Debug)]
@@ -132,6 +133,24 @@ impl TpchBenchmark {
     /// Get a reference to the storage engine.
     pub fn storage(&self) -> &Arc<StorageEngine> {
         &self.storage
+    }
+
+    /// Create a DataFusion SessionContext wired to RorisDB storage.
+    pub fn datafusion_ctx(&self) -> SessionContext {
+        use datafusion::common::config::ConfigOptions;
+
+        let catalog_provider = fe_datafusion::RorisCatalogProvider::new(
+            self.catalog.clone(),
+            self.storage.clone(),
+        );
+
+        let mut config = ConfigOptions::new();
+        config.catalog.default_catalog = "tpch".to_string();
+        config.catalog.default_schema = "tpch".to_string();
+
+        let ctx = SessionContext::new_with_config(config.into());
+        ctx.register_catalog("tpch", Arc::new(catalog_provider));
+        ctx
     }
 
     /// Run a single TPC-H query by index (1-22).
@@ -307,6 +326,7 @@ fn make_table(id: u64, database: &str, name: &str, block: &Block) -> Table {
         .collect();
 
     Table {
+        tablet_id: id,
         id,
         name: name.to_string(),
         database: database.to_string(),

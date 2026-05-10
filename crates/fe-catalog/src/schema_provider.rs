@@ -200,6 +200,7 @@ mod tests {
     fn create_test_table() -> Table {
         Table {
             id: 1,
+            tablet_id: 0, // TODO: 创建table时分配真实的tablet_id
             name: "test_table".to_string(),
             database: "test_db".to_string(),
             columns: vec![

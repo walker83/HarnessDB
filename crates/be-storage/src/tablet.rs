@@ -62,6 +62,8 @@ pub struct MemTable {
     capacity: u64,
     #[allow(dead_code)]
     schema: TabletSchema,
+    /// Monotonically increasing row counter to ensure unique keys for Duplicate tables.
+    next_row_id: u64,
 }
 
 #[derive(Clone)]
@@ -107,12 +109,18 @@ impl MemTable {
             memory_size: 0,
             capacity,
             schema,
+            next_row_id: 0,
         }
     }
 
     pub fn insert(&mut self, block: &Block, key_column_idx: usize) -> Result<(), String> {
         for row_idx in 0..block.num_rows() {
-            let key = self.extract_key(block, row_idx, key_column_idx)?;
+            let mut key = self.extract_key(block, row_idx, key_column_idx)?;
+            // Append a unique row ID suffix to prevent duplicate key overwrites
+            // for Duplicate-key tables where multiple rows share the same key value.
+            let row_id = self.next_row_id;
+            self.next_row_id += 1;
+            key.0.extend_from_slice(&row_id.to_be_bytes());
             let row_values: Vec<ScalarValue> = (0..block.num_columns())
                 .map(|col_idx| {
                     if let Some(col) = block.column(col_idx) {
@@ -122,7 +130,7 @@ impl MemTable {
                     }
                 })
                 .collect();
-            
+
             let row = ColumnarRow::new(row_values);
             self.memory_size += row.memory_size();
             self.rows.insert(key, row);
@@ -264,15 +272,24 @@ impl MemTable {
     /// Delete rows from memtable matching the given predicates.
     pub fn delete(&mut self, block: &Block, key_column_idx: usize, predicates: &[ColumnPredicate]) -> Result<usize, String> {
         let selection = crate::index::apply_predicates_to_block(block, predicates);
-        let mut deleted_count = 0;
+        let mut keys_to_remove = Vec::new();
 
         for row_idx in 0..block.num_rows() {
             if selection.get(row_idx) {
-                let key = self.extract_key(block, row_idx, key_column_idx)?;
-                if self.rows.remove(&key).is_some() {
-                    deleted_count += 1;
-                }
+                let prefix = self.extract_key(block, row_idx, key_column_idx)?;
+                // Find all entries whose key starts with this prefix (key has row_id suffix)
+                let prefix_len = prefix.0.len();
+                keys_to_remove.extend(
+                    self.rows.keys()
+                        .filter(|k| k.0.len() >= prefix_len && k.0[..prefix_len] == prefix.0[..])
+                        .cloned()
+                );
             }
+        }
+
+        let deleted_count = keys_to_remove.len();
+        for key in keys_to_remove {
+            self.rows.remove(&key);
         }
         Ok(deleted_count)
     }

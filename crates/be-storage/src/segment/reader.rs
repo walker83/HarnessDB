@@ -433,7 +433,7 @@ impl SegmentReader {
                             vec.push(Some(s));
                             offset += str_len;
                         } else {
-                            vec.push(Some(""));
+                        vec.push(None);
                         }
                     } else {
                         // Skip the string entry (read past it)

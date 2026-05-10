@@ -42,7 +42,7 @@ struct Args {
 }
 
 struct RorisQueryHandler {
-    catalog: Arc<StdRwLock<CatalogManager>>,
+    catalog: Arc<CatalogManager>,
     current_database: Arc<StdRwLock<String>>,
     views: Arc<StdRwLock<Vec<ViewInfo>>>,
     transaction: Arc<StdRwLock<TransactionContext>>,
@@ -58,8 +58,9 @@ struct ViewInfo {
 }
 
 impl RorisQueryHandler {
-    fn new(catalog: Arc<StdRwLock<CatalogManager>>) -> Self {
-        let df_catalog = Arc::new(RorisCatalogProvider::new(catalog.clone()));
+    fn new(catalog: Arc<CatalogManager>) -> Self {
+        let storage = Arc::new(be_storage::StorageEngine::open("/tmp/roris_fe_storage").unwrap());
+        let df_catalog = Arc::new(RorisCatalogProvider::new(catalog.clone(), storage));
         let config = SessionConfig::new()
             .with_default_catalog_and_schema("roris", "information_schema")
             .with_create_default_catalog_and_schema(false)
@@ -296,7 +297,7 @@ impl RorisQueryHandler {
     }
 
     fn show_databases(&self) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let databases = catalog.list_databases();
         let rows: Vec<Vec<Option<String>>> = databases
             .iter()
@@ -309,7 +310,7 @@ impl RorisQueryHandler {
     }
 
     fn show_tables(&self, db: Option<String>, like: Option<String>) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = db.as_deref().unwrap_or(&current_db);
 
@@ -335,7 +336,7 @@ impl RorisQueryHandler {
     }
 
     fn describe(&self, db: String, table: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = if db.is_empty() { &current_db } else { &db };
 
@@ -366,7 +367,7 @@ impl RorisQueryHandler {
     }
 
     fn show_columns(&self, db: Option<String>, table: Option<String>) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = db.as_deref().unwrap_or(&current_db);
 
@@ -403,7 +404,7 @@ impl RorisQueryHandler {
     }
 
     fn use_database(&self, db: &str) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         if catalog.get_database(db).is_some() {
             let mut current_db = self.current_database.write().unwrap();
             *current_db = db.to_string();
@@ -414,7 +415,7 @@ impl RorisQueryHandler {
     }
 
     fn create_database(&self, stmt: &CreateDatabaseStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.write().unwrap();
+        let catalog = &self.catalog;
         match catalog.create_database(&stmt.name) {
             Ok(()) => {
                 if let Err(e) = catalog.save() {
@@ -439,7 +440,7 @@ impl RorisQueryHandler {
     }
 
     fn create_table(&self, stmt: &CreateTableStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
 
@@ -461,6 +462,7 @@ impl RorisQueryHandler {
 
         let table = Table {
             id: table_id,
+            tablet_id: 0,
             name: stmt.name.clone(),
             database: db.to_string(),
             columns,
@@ -485,7 +487,7 @@ impl RorisQueryHandler {
         };
 
         drop(catalog);
-        let catalog = self.catalog.write().unwrap();
+        let catalog = &self.catalog;
         match catalog.create_table(db, table) {
             Ok(()) => {
                 if let Err(e) = catalog.save() {
@@ -517,7 +519,7 @@ impl RorisQueryHandler {
     }
 
     fn drop_database(&self, stmt: &DropDatabaseStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.write().unwrap();
+        let catalog = &self.catalog;
         match catalog.drop_database(&stmt.name) {
             Ok(()) => {
                 if let Err(e) = catalog.save() {
@@ -531,13 +533,13 @@ impl RorisQueryHandler {
     }
 
     fn drop_table(&self, stmt: &DropTableStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let table = stmt.name.clone();
 
         drop(catalog);
-        let catalog = self.catalog.write().unwrap();
+        let catalog = &self.catalog;
         match catalog.drop_table(db, &table) {
             Ok(()) => {
                 if let Err(e) = catalog.save() {
@@ -551,7 +553,7 @@ impl RorisQueryHandler {
     }
 
     fn show_create_table(&self, db: String, table: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = if db.is_empty() { &current_db } else { &db };
 
@@ -590,7 +592,7 @@ impl RorisQueryHandler {
     }
 
     fn show_create_database(&self, db: &str) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         match catalog.get_database(db) {
             Some(database) => {
                 let create_sql = database.create_sql.clone()
@@ -608,7 +610,7 @@ impl RorisQueryHandler {
     }
 
     fn show_create_view(&self, db: String, view: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = if db.is_empty() { &current_db } else { &db };
 
@@ -632,7 +634,7 @@ impl RorisQueryHandler {
     }
 
     fn show_partitions(&self, db: String, table: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = if db.is_empty() { &current_db } else { &db };
 
@@ -666,7 +668,7 @@ impl RorisQueryHandler {
     }
 
     fn show_table_status(&self, db: Option<String>) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = db.as_deref().unwrap_or(&current_db);
 
@@ -747,7 +749,7 @@ impl RorisQueryHandler {
     }
 
     fn show_index(&self, db: String, table: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = if db.is_empty() { &current_db } else { &db };
 
@@ -853,7 +855,7 @@ impl RorisQueryHandler {
     }
 
     fn show_table_id(&self) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let mut rows = Vec::new();
 
         for db_name in catalog.list_databases() {
@@ -895,7 +897,7 @@ impl RorisQueryHandler {
     }
 
     fn show_view(&self, db: String, view: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let target_db = if db.is_empty() { &current_db } else { &db };
 
@@ -927,7 +929,7 @@ impl RorisQueryHandler {
     }
 
     fn show_create_materialized_view(&self, name: String) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
 
         if let Some(mv) = catalog.get_materialized_view(&current_db, &name) {
@@ -945,14 +947,14 @@ impl RorisQueryHandler {
     }
 
     fn alter_table(&self, stmt: &AlterTableStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
 
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
                 drop(catalog);
-                let catalog = self.catalog.write().unwrap();
+                let catalog = &self.catalog;
                 for op in &stmt.operations {
                     match op {
                         fe_sql_parser::ast::AlterOperation::RenameColumn { old_name, new_name } => {
@@ -1074,7 +1076,7 @@ impl RorisQueryHandler {
     }
 
     fn truncate_table(&self, database: Option<String>, table: String, if_exists: bool) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let db = database.as_deref().unwrap_or(&current_db);
 
@@ -1110,7 +1112,7 @@ impl RorisQueryHandler {
         let mem_table = roris_cat.get_mem_table(&database, &table_name)
             .ok_or_else(|| format!("table '{}.{}' not found", database, table_name))?;
 
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let table_meta = catalog.get_table(&database, &table_name)
             .ok_or_else(|| format!("table '{}.{}' not found in catalog", database, table_name))?;
 
@@ -1342,13 +1344,13 @@ impl RorisQueryHandler {
     }
 
     fn alter_database(&self, stmt: &AlterDatabaseStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         if catalog.get_database(&stmt.name).is_none() {
             return Err(format!("Unknown database '{}'", stmt.name));
         }
         drop(catalog);
         if !stmt.properties.is_empty() {
-            let catalog = self.catalog.write().unwrap();
+            let catalog = &self.catalog;
             if let Some(mut db) = catalog.get_database(&stmt.name) {
                 for (k, v) in &stmt.properties {
                     db.properties.insert(k.clone(), v.clone());
@@ -1380,13 +1382,13 @@ impl RorisQueryHandler {
     }
 
     fn create_index(&self, stmt: &CreateIndexStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
                 drop(catalog);
-                let catalog = self.catalog.write().unwrap();
+                let catalog = &self.catalog;
                 if let Some(mut table) = catalog.get_table(db, &stmt.table) {
                     table.properties.insert(format!("__index_{}", stmt.index_name), stmt.columns.join(","));
                     if let Some(ref itype) = stmt.index_type {
@@ -1401,13 +1403,13 @@ impl RorisQueryHandler {
     }
 
     fn drop_index(&self, stmt: &DropIndexStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
                 drop(catalog);
-                let catalog = self.catalog.write().unwrap();
+                let catalog = &self.catalog;
                 if let Some(mut table) = catalog.get_table(db, &stmt.table) {
                     let key = format!("__index_{}", stmt.index_name);
                     if !table.properties.contains_key(&key) && !stmt.if_exists {
@@ -1424,7 +1426,7 @@ impl RorisQueryHandler {
     }
 
     fn cancel_alter_table(&self, stmt: &CancelAlterTableStmt) -> Result<QueryResult, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
@@ -1439,10 +1441,10 @@ impl RorisQueryHandler {
             ColocateGroupOperation::AddTable { database, table } => {
                 let current_db = self.current_database.read().unwrap();
                 let db = database.as_deref().unwrap_or(&current_db);
-                let catalog = self.catalog.read().unwrap();
+                let catalog = &self.catalog;
                 if catalog.get_table(db, table).is_none() { return Err(format!("Unknown table '{}.{}'", db, table)); }
                 drop(catalog);
-                let catalog = self.catalog.write().unwrap();
+                let catalog = &self.catalog;
                 if let Some(mut tbl) = catalog.get_table(db, table) {
                     let key = "__colocate_groups".to_string();
                     let mut groups = tbl.properties.get(&key).cloned().unwrap_or_default();
@@ -1456,7 +1458,7 @@ impl RorisQueryHandler {
             ColocateGroupOperation::RemoveTable { database, table } => {
                 let current_db = self.current_database.read().unwrap();
                 let db = database.as_deref().unwrap_or(&current_db);
-                let catalog = self.catalog.write().unwrap();
+                let catalog = &self.catalog;
                 if let Some(mut tbl) = catalog.get_table(db, table) {
                     let key = "__colocate_groups".to_string();
                     if let Some(groups) = tbl.properties.get(&key).cloned() {
@@ -1493,17 +1495,17 @@ impl RorisQueryHandler {
     fn create_materialized_view(&self, stmt: &fe_sql_parser::ast::CreateMaterializedViewStmt) -> Result<QueryResult, String> {
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         if catalog.get_table(db, &stmt.name).is_some() && !stmt.if_not_exists {
             return Err(format!("Table '{}.{}' already exists", db, stmt.name));
         }
         drop(catalog);
-        let catalog = self.catalog.write().unwrap();
+        let catalog = &self.catalog;
         let columns: Vec<TableColumn> = stmt.columns.iter().map(|c| TableColumn {
             name: c.clone(), data_type: DataType::String, nullable: true, default_value: None, agg_type: None, comment: String::new(),
         }).collect();
         let table = Table {
-            id: 0, name: stmt.name.clone(), database: db.to_string(), columns,
+            id: 0, tablet_id: 0, name: stmt.name.clone(), database: db.to_string(), columns,
             keys_type: KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
             replication_num: 1, properties: std::collections::HashMap::new(), row_count: 0, data_size: 0, stats: None,
             view_definition: None,
@@ -1517,7 +1519,7 @@ impl RorisQueryHandler {
     fn drop_materialized_view(&self, stmt: &fe_sql_parser::ast::DropMaterializedViewStmt) -> Result<QueryResult, String> {
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
-        let catalog = self.catalog.write().unwrap();
+        let catalog = &self.catalog;
         match catalog.drop_table(db, &stmt.name) {
             Ok(()) => Ok(QueryResult::ok()),
             Err(_) if stmt.if_exists => Ok(QueryResult::ok()),
@@ -2245,12 +2247,11 @@ async fn main() -> Result<()> {
     tracing::info!("MySQL port: {}", args.mysql_port);
 
     // Initialize catalog manager with persistence path
-    let catalog = Arc::new(StdRwLock::new(CatalogManager::with_path(&args.meta_dir)));
+    let catalog = Arc::new(CatalogManager::with_path(&args.meta_dir));
 
     // Load catalog from disk if it exists
     {
-        let mut catalog_guard = catalog.write().unwrap();
-        catalog_guard.load()?;
+        catalog.load()?;
         tracing::info!("Catalog loaded from disk");
     }
 
@@ -2266,9 +2267,8 @@ async fn main() -> Result<()> {
 
     // Apply edit log entries to catalog
     {
-        let mut catalog_guard = catalog.write().unwrap();
         let log = edit_log.read().await;
-        catalog_guard.replay_edit_log(&log)?;
+        catalog.replay_edit_log(&log)?;
         tracing::info!("Edit log applied to catalog");
     }
 
@@ -2328,7 +2328,7 @@ async fn main() -> Result<()> {
         let mut ticker = interval(Duration::from_secs(30));
         loop {
             ticker.tick().await;
-            if let Err(e) = catalog_clone.read().unwrap().save() {
+            if let Err(e) = catalog_clone.save() {
                 tracing::error!("Catalog save failed: {}", e);
             }
         }
@@ -2342,7 +2342,7 @@ async fn main() -> Result<()> {
     tracing::info!("Audit logs flushed");
 
     // Final save on shutdown
-    catalog.read().unwrap().save()?;
+    catalog.save()?;
     tracing::info!("Catalog saved on shutdown");
 
     Ok(())

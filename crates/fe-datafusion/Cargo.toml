@@ -12,6 +12,14 @@ tracing = { workspace = true }
 dashmap = { workspace = true }
 chrono = { workspace = true }
 
+# Arrow sub-crates (needed because workspace uses default-features = false)
+arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
+arrow-data = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-cast = { workspace = true }
+
 fe-catalog = { workspace = true }
 types = { workspace = true }
 common = { workspace = true }
+be-storage = { workspace = true }

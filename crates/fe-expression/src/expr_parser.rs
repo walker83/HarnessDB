@@ -47,8 +47,16 @@ impl ExprStringParser {
             return Some(expr);
         }
 
+        // Handle DATE 'YYYY-MM-DD' and INTERVAL 'N' UNIT literals
+        let upper_trimmed = trimmed.to_uppercase();
+        if upper_trimmed.starts_with("DATE ") || upper_trimmed.starts_with("INTERVAL ") {
+            return self.parse_literal(trimmed).map(Expr::Literal);
+        }
+
         // Handle column references
-        if self.is_identifier(trimmed) && !self.is_literal(trimmed) {
+        // But skip SQL keywords like DATE, INTERVAL, etc.
+        let sql_keywords = ["DATE", "INTERVAL", "TIMESTAMP", "TIME"];
+        if self.is_identifier(trimmed) && !self.is_literal(trimmed) && !sql_keywords.iter().any(|k| trimmed.eq_ignore_ascii_case(k)) {
             return Some(Expr::ColumnRef(ColumnRef {
                 index: 0,
                 name: trimmed.to_string(),
@@ -346,6 +354,24 @@ impl ExprStringParser {
             _ => {}
         }
 
+        // DATE 'YYYY-MM-DD' → convert to days since epoch (Int64)
+        if upper.starts_with("DATE ") {
+            let rest = s[5..].trim();
+            let date_str = rest.trim_start_matches('\'').trim_end_matches('\'');
+            if let Some(days) = parse_date_to_days(date_str) {
+                return Some(ScalarValue::Int64(days as i64));
+            }
+        }
+
+        // INTERVAL 'N' DAY → just return the numeric value as Int64 (negative if subtracted)
+        if upper.starts_with("INTERVAL ") {
+            let rest = &s[9..];
+            // Extract the number from 'N' DAY
+            if let Some(val) = parse_interval_value(rest) {
+                return Some(ScalarValue::Int64(val));
+            }
+        }
+
         if let Ok(n) = s.parse::<i64>() {
             return Some(ScalarValue::Int64(n));
         }
@@ -366,6 +392,36 @@ impl ExprStringParser {
         let expr = self.parse(expr_str)?;
         Some(self.evaluator.evaluate(&expr, block))
     }
+}
+
+/// Parse a date string (YYYY-MM-DD) to days since Unix epoch.
+fn parse_date_to_days(s: &str) -> Option<i32> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 { return None; }
+    let year: i32 = parts[0].parse().ok()?;
+    let month: i32 = parts[1].parse().ok()?;
+    let day: i32 = parts[2].parse().ok()?;
+    // Days from 1970-01-01 to given date (simplified, no leap year correction)
+    let days = (year - 1970) * 365 + (year - 1969) / 4 + match month {
+        1 => 0, 2 => 31, 3 => 59, 4 => 90, 5 => 120, 6 => 151,
+        7 => 181, 8 => 212, 9 => 243, 10 => 273, 11 => 304, 12 => 334,
+        _ => return None,
+    } + day - 1;
+    Some(days)
+}
+
+/// Parse an INTERVAL literal like '90' DAY → returns 90.
+fn parse_interval_value(s: &str) -> Option<i64> {
+    let s = s.trim();
+    // Expect format: 'N' UNIT or just N UNIT
+    let val_str = if s.starts_with('\'') {
+        let end = s[1..].find('\'')?;
+        &s[1..=end]
+    } else {
+        let space = s.find(' ')?;
+        &s[..space]
+    };
+    val_str.trim().parse().ok()
 }
 
 impl Default for ExprStringParser {

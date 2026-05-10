@@ -150,7 +150,7 @@ impl CatalogManager {
     }
 
     /// Load catalog state from JSON file
-    pub fn load(&mut self) -> common::Result<()> {
+    pub fn load(&self) -> common::Result<()> {
         use std::fs;
 
         let path = format!("{}/catalog.json", self.catalog_path);
@@ -166,12 +166,12 @@ impl CatalogManager {
         for (key, value) in state.materialized_views {
             self.materialized_views.insert(key, value);
         }
-        self.next_id = AtomicU64::new(state.next_id);
+        self.next_id.store(state.next_id, Ordering::SeqCst);
         Ok(())
     }
 
     /// Replay edit log entries into the catalog
-    pub fn replay_edit_log(&mut self, log: &fe_common::edit_log::EditLog) -> common::Result<()> {
+    pub fn replay_edit_log(&self, log: &fe_common::edit_log::EditLog) -> common::Result<()> {
         use fe_common::edit_log::OpType;
 
         for entry in log.entries() {
@@ -271,6 +271,7 @@ mod tests {
     fn make_table(id: u64, name: &str) -> Table {
         Table {
             id,
+            tablet_id: 0, // TODO: 创建table时分配真实的tablet_id
             name: name.to_string(),
             database: "testdb".to_string(),
             columns: vec![

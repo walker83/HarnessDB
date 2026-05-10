@@ -9,21 +9,21 @@ pub use metrics::{MetricsCollector, FeMetrics, BeMetrics};
 pub use audit_log::AuditLogger;
 pub use query_profile::QueryProfiler;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use fe_catalog::CatalogManager;
 
 /// Monitoring manager that integrates all monitoring components
 pub struct MonitoringManager {
-    pub information_schema: Arc<RwLock<InformationSchema>>,
+    pub information_schema: Arc<InformationSchema>,
     pub metrics: Arc<MetricsCollector>,
     pub audit_log: Arc<AuditLogger>,
     pub query_profiler: Arc<QueryProfiler>,
 }
 
 impl MonitoringManager {
-    pub fn new(catalog: Arc<RwLock<CatalogManager>>) -> Self {
+    pub fn new(catalog: Arc<CatalogManager>) -> Self {
         Self {
-            information_schema: Arc::new(RwLock::new(InformationSchema::new(catalog))),
+            information_schema: Arc::new(InformationSchema::new(catalog)),
             metrics: Arc::new(MetricsCollector::new()),
             audit_log: Arc::new(AuditLogger::new()),
             query_profiler: Arc::new(QueryProfiler::new()),
@@ -33,6 +33,6 @@ impl MonitoringManager {
 
 impl Default for MonitoringManager {
     fn default() -> Self {
-        Self::new(Arc::new(RwLock::new(CatalogManager::new())))
+        Self::new(Arc::new(CatalogManager::new()))
     }
 }

@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 tpch-bench = { path = "../../benches/tpch" }
+datafusion = { workspace = true }
+tokio = { workspace = true }

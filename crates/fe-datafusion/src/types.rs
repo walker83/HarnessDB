@@ -1,6 +1,6 @@
 use types::DataType as RorisDataType;
 
-use datafusion::arrow::datatypes as arrow_dt;
+use arrow_schema as arrow_dt;
 
 pub fn to_arrow_data_type(dt: &RorisDataType) -> arrow_dt::DataType {
     match dt {

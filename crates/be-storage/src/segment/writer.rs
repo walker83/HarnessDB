@@ -8,7 +8,7 @@ use crate::codec::{self, EncodingType};
 use crate::index::{BitmapIndex, InvertedIndex, ZoneMap};
 
 const DEFAULT_PAGE_SIZE: usize = 64 * 1024;
-const MAGIC: &[u8; 8] = b"ROVSSEG\0";
+const MAGIC: &[u8; 8] = b"RORISSEG";
 const VERSION: u32 = 1;
 
 /// Column page on disk.

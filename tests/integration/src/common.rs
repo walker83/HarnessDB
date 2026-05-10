@@ -20,6 +20,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
 
     // Employees table
     let employees = Table {
+        tablet_id: 0,
         id: 1,
         name: "employees".to_string(),
         database: "test_db".to_string(),
@@ -72,7 +73,7 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
 
     // Departments table
     let departments = Table {
-        id: 2,
+        tablet_id: 0, id: 2,
         name: "departments".to_string(),
         database: "test_db".to_string(),
         columns: vec![
@@ -218,7 +219,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
 
     // date_dim
     catalog.create_table("ssb", Table {
-        id: 100, name: "date_dim".into(), database: "ssb".into(),
+        tablet_id: 0, id: 100, name: "date_dim".into(), database: "ssb".into(),
         columns: vec![
             TableColumn { name: "d_datekey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "d_date".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
@@ -230,7 +231,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
 
     // supplier
     catalog.create_table("ssb", Table {
-        id: 101, name: "supplier".into(), database: "ssb".into(),
+        tablet_id: 0, id: 101, name: "supplier".into(), database: "ssb".into(),
         columns: vec![
             TableColumn { name: "s_suppkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "s_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
@@ -242,7 +243,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
 
     // customer
     catalog.create_table("ssb", Table {
-        id: 102, name: "customer".into(), database: "ssb".into(),
+        tablet_id: 0, id: 102, name: "customer".into(), database: "ssb".into(),
         columns: vec![
             TableColumn { name: "c_custkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "c_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
@@ -254,7 +255,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
 
     // part
     catalog.create_table("ssb", Table {
-        id: 103, name: "part".into(), database: "ssb".into(),
+        tablet_id: 0, id: 103, name: "part".into(), database: "ssb".into(),
         columns: vec![
             TableColumn { name: "p_partkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "p_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
@@ -266,7 +267,7 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
 
     // lineorder (fact table)
     catalog.create_table("ssb", Table {
-        id: 104, name: "lineorder".into(), database: "ssb".into(),
+        tablet_id: 0, id: 104, name: "lineorder".into(), database: "ssb".into(),
         columns: vec![
             TableColumn { name: "lo_orderkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
             TableColumn { name: "lo_custkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },

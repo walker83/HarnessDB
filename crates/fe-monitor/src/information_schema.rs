@@ -1,14 +1,14 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use fe_catalog::{CatalogManager, Table, table::TableColumn};
 use types::{DataType, ScalarValue, Schema, Field, Vector, Block};
 
 /// Information Schema provider for system metadata views
 pub struct InformationSchema {
-    catalog: Arc<RwLock<CatalogManager>>,
+    catalog: Arc<CatalogManager>,
 }
 
 impl InformationSchema {
-    pub fn new(catalog: Arc<RwLock<CatalogManager>>) -> Self {
+    pub fn new(catalog: Arc<CatalogManager>) -> Self {
         Self { catalog }
     }
 
@@ -25,7 +25,7 @@ impl InformationSchema {
 
     /// Query all tables metadata
     async fn query_tables(&self) -> Result<Block, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let mut rows = Vec::new();
 
         for db_entry in catalog.list_databases() {
@@ -43,7 +43,7 @@ impl InformationSchema {
 
     /// Query all columns metadata
     async fn query_columns(&self) -> Result<Block, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let mut rows = Vec::new();
 
         for db_entry in catalog.list_databases() {
@@ -63,7 +63,7 @@ impl InformationSchema {
 
     /// Query all databases
     async fn query_databases(&self) -> Result<Block, String> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = &self.catalog;
         let mut rows = Vec::new();
 
         for db_name in catalog.list_databases() {
@@ -351,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_information_schema_query_tables() {
-        let catalog = Arc::new(RwLock::new(CatalogManager::new()));
+        let catalog = Arc::new(CatalogManager::new());
         let info_schema = InformationSchema::new(catalog);
 
         let result = info_schema.query_table("tables").await;
@@ -363,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_information_schema_query_databases() {
-        let catalog = Arc::new(RwLock::new(CatalogManager::new()));
+        let catalog = Arc::new(CatalogManager::new());
         let info_schema = InformationSchema::new(catalog);
 
         let result = info_schema.query_table("databases").await;
@@ -376,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_information_schema_query_columns() {
-        let catalog = Arc::new(RwLock::new(CatalogManager::new()));
+        let catalog = Arc::new(CatalogManager::new());
         let info_schema = InformationSchema::new(catalog);
 
         let result = info_schema.query_table("columns").await;
@@ -388,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_information_schema_query_unknown_table() {
-        let catalog = Arc::new(RwLock::new(CatalogManager::new()));
+        let catalog = Arc::new(CatalogManager::new());
         let info_schema = InformationSchema::new(catalog);
 
         let result = info_schema.query_table("unknown_table").await;
@@ -397,13 +397,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_information_schema_with_actual_data() {
-        let catalog = Arc::new(RwLock::new(CatalogManager::new()));
-        {
-            let mut catalog_guard = catalog.write().unwrap();
-            catalog_guard.create_database("test_db").unwrap();
+        let catalog = Arc::new(CatalogManager::new());
+        catalog.create_database("test_db").unwrap();
 
-            let table = Table {
+        let table = Table {
                 id: 1,
+                tablet_id: 0, // TODO: 创建table时分配真实的tablet_id
                 name: "test_table".to_string(),
                 database: "test_db".to_string(),
                 columns: vec![
@@ -436,8 +435,7 @@ mod tests {
                 view_definition: None,
             };
 
-            catalog_guard.create_table("test_db", table).unwrap();
-        }
+            catalog.create_table("test_db", table).unwrap();
 
         let info_schema = InformationSchema::new(catalog);
 

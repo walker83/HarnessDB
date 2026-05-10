@@ -1,90 +1,139 @@
 use std::time::Instant;
-use tpch_bench::{TpchBenchmark, queries};
 
 fn main() {
-    println!("=== RorisDB TPC-H Performance Test (Execution Time) ===\n");
+    println!("========================================");
+    println!("  TPC-H via DataFusion Integration");
+    println!("========================================\n");
 
-    let iterations = 5;
-    println!("Running {} iterations for stable timing...\n", iterations);
+    let _ = std::fs::remove_dir_all("/tmp/tpch_storage");
+    let bench = tpch_bench::TpchBenchmark::new_tiny();
 
-    let all_queries = queries::all_queries();
+    // -------------------------------------------------------
+    // Storage verification
+    // -------------------------------------------------------
+    println!("--- Storage Verification ---\n");
 
-    // Warm up
-    let bench = TpchBenchmark::new_tiny();
-    for idx in 1..=all_queries.len() {
-        let _ = bench.execute_query(idx);
+    let table_specs = [
+        (1, "nation", 15),
+        (2, "region", 5),
+        (3, "supplier", 10),
+        (4, "part", 20),
+        (5, "partsupp", 80),
+        (6, "customer", 15),
+        (7, "orders", 150),
+        (8, "lineitem", 600),
+    ];
+
+    let storage = bench.storage();
+    let mut all_ok = true;
+    for (tablet_id, name, expected) in &table_specs {
+        let tablet_ok = storage.get_tablet(*tablet_id);
+        let read_rows = storage.read_tablet(*tablet_id, None, &[])
+            .map(|b| b.num_rows())
+            .unwrap_or(0);
+        let read_status = if read_rows == *expected { "OK" } else { "MISMATCH" };
+        if !tablet_ok || read_rows != *expected {
+            all_ok = false;
+        }
+        println!("  {} tablet={} rows={}/{} tablet_exists={}", read_status, name, read_rows, expected, tablet_ok);
     }
 
-    // Header
-    println!("| Q# | Query Name          | Status  | Avg (μs) | Min (μs) | Max (μs) | Rows |");
-    println!("|----|---------------------|---------|----------|----------|----------|------|");
+    if !all_ok {
+        println!("\nStorage issues detected!\n");
+    }
 
-    let mut total_ok = 0;
-    let mut total_err = 0;
-    let mut total_min = u64::MAX;
-    let mut total_max = 0u64;
-    let mut total_avg = 0u64;
+    // -------------------------------------------------------
+    // DataFusion execution: all 22 queries
+    // -------------------------------------------------------
+    println!("\n--- DataFusion Execution: All 22 TPC-H Queries ---\n");
 
-    for (idx, (name, _sql)) in all_queries.iter().enumerate() {
-        let mut times: Vec<u64> = Vec::with_capacity(iterations);
-        let mut total_rows = 0;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let ctx = bench.datafusion_ctx();
 
-        for _ in 0..iterations {
-            let bench = TpchBenchmark::new_tiny();
-            let start = Instant::now();
-            let result = bench.execute_query(idx + 1);
-            let elapsed = start.elapsed().as_micros() as u64;
-
-            if result.blocks.is_empty() {
-                times.push(u64::MAX);
-            } else {
-                times.push(elapsed);
-                total_rows += result.rows_produced;
+        // Verify table resolution
+        println!("  Registered schemas: {:?}", ctx.catalog_names());
+        for name in &["nation", "region", "supplier", "part", "partsupp", "customer", "orders", "lineitem"] {
+            match ctx.table(*name).await {
+                Ok(t) => println!("  Table '{}' resolved: {} columns", name, t.schema().fields().len()),
+                Err(e) => println!("  Table '{}' NOT FOUND: {}", name, e),
             }
         }
+        println!();
 
-        let q_min = times.iter().filter(|&&t| t != u64::MAX).min().unwrap_or(&0);
-        let q_max = times.iter().filter(|&&t| t != u64::MAX).max().unwrap_or(&0);
-        let q_avg = if times.iter().any(|&t| t != u64::MAX) {
-            times.iter().filter(|&&t| t != u64::MAX).sum::<u64>() / times.iter().filter(|&&t| t != u64::MAX).count() as u64
-        } else {
-            0
-        };
+        // Quick sanity queries
+        exec_df(&ctx, "SELECT * FROM nation", "Simple scan (nation)").await;
+        exec_df(&ctx, "SELECT * FROM lineitem LIMIT 10", "Scan with LIMIT").await;
+        exec_df(&ctx, "SELECT l_returnflag, COUNT(*) FROM lineitem GROUP BY l_returnflag", "Simple GROUP BY").await;
+        exec_df(&ctx, "SELECT COUNT(*) FROM lineitem WHERE l_returnflag = 'R'", "WHERE + COUNT").await;
 
-        let status = if times.iter().any(|&t| t == u64::MAX) { "FAIL" } else { "OK" };
-        if times.iter().any(|&t| t == u64::MAX) {
-            total_err += 1;
-        } else {
-            total_ok += 1;
-            total_min = total_min.min(*q_min);
-            total_max = total_max.max(*q_max);
-            total_avg += q_avg;
+        // Q1 with date expression — DataFusion handles DATE/INTERVAL natively
+        exec_df(&ctx,
+            "SELECT l_returnflag, l_linestatus, COUNT(*) FROM lineitem WHERE l_shipdate <= DATE '1998-12-01' - INTERVAL '90' DAY GROUP BY l_returnflag, l_linestatus",
+            "Q1 with DATE/INTERVAL").await;
+
+        // Run all 22 TPC-H queries
+        println!("\n  --- All 22 TPC-H Queries via DataFusion ---\n");
+        println!("{:<5} {:<10} {:<15} {}", "Q", "Rows", "Time(ms)", "Status");
+        println!("{}", "-".repeat(60));
+
+        let queries = tpch_bench::queries::all_queries();
+        let mut passed = 0;
+        for (i, (name, sql)) in queries.iter().enumerate() {
+            let start = Instant::now();
+            match ctx.sql(sql).await {
+                Ok(df) => {
+                    match df.collect().await {
+                        Ok(batches) => {
+                            let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                            let elapsed = start.elapsed().as_millis();
+                            println!("{:<5} {:<10} {:<15} {} ({})", i + 1, rows, elapsed, "OK", name);
+                            passed += 1;
+                        }
+                        Err(e) => {
+                            let elapsed = start.elapsed().as_millis();
+                            println!("{:<5} {:<10} {:<15} {} ({}) - collect error: {:.80}", i + 1, 0, elapsed, "FAIL", name, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let elapsed = start.elapsed().as_millis();
+                    println!("{:<5} {:<10} {:<15} {} ({}) - plan error: {:.80}", i + 1, 0, elapsed, "FAIL", name, e);
+                }
+            }
         }
+        println!("  => {}/22 passed\n", passed);
+    });
 
-        let short_name = name.replace("q", "Q");
-        let avg_rows = if total_rows > 0 { total_rows / iterations } else { 0 };
-        
-        if status == "OK" {
-            println!("| {:2} | {:18} | {:7} | {:8} | {:8} | {:8} | {:4} |",
-                     idx + 1, short_name, status, q_avg, q_min, q_max, avg_rows);
-        } else {
-            println!("| {:2} | {:18} | {:7} | {:8} | {:8} | {:8} | {:4} |",
-                     idx + 1, short_name, status, "-", "-", "-", "-");
+    println!("========================================");
+    println!("  Done");
+    println!("========================================");
+}
+
+async fn exec_df(ctx: &datafusion::prelude::SessionContext, sql: &str, label: &str) {
+    let start = Instant::now();
+    match ctx.sql(sql).await {
+        Ok(df) => {
+            match df.collect().await {
+                Ok(batches) => {
+                    let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                    let elapsed = start.elapsed().as_millis();
+                    if rows > 0 {
+                        println!("  OK  {} => {} rows ({} ms)", label, rows, elapsed);
+                        if let Some(b) = batches.first() {
+                            let cols: Vec<String> = b.schema().fields().iter()
+                                .take(5)
+                                .map(|f| format!("{}", f.name()))
+                                .collect();
+                            println!("       columns: [{}]", cols.join(", "));
+                        }
+                    } else {
+                        println!("  EMPTY  {} => 0 rows ({} ms)", label, elapsed);
+                    }
+                }
+                Err(e) => println!("  FAIL  {} => collect error: {:.60}", label, e),
+            }
         }
+        Err(e) => println!("  FAIL  {} => plan error: {:.60}", label, e),
     }
-
-    println!("\n=== Summary ===");
-    println!("Total queries: {}", all_queries.len());
-    println!("Passed: {}", total_ok);
-    println!("Failed: {}", total_err);
-    
-    if total_ok > 0 {
-        println!("\nOverall execution time (avg of all queries): {} μs", total_avg / total_ok);
-        println!("Overall min time: {} μs", total_min);
-        println!("Overall max time: {} μs", total_max);
-    }
-    
-    println!("\n=== Note ===");
-    println!("This benchmark measures TOTAL execution time (parsing + planning + execution).");
-    println!("Use this for fair comparison with other databases like DuckDB.");
 }

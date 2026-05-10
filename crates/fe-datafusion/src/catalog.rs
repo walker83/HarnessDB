@@ -3,19 +3,24 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
+use datafusion::arrow::datatypes::Schema as ArrowSchema;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
 use datafusion::datasource::MemTable;
-use datafusion::error::{DataFusionError, Result as DFResult};
-use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
+use datafusion::error::Result as DFResult;
 
 use fe_catalog::CatalogManager;
+use be_storage::StorageEngine;
 
-use crate::types::to_arrow_data_type;
+use crate::table_provider::RorisTableProvider;
 
-struct RorisSchemaProvider {
+// ---------------------------------------------------------------------------
+// RorisSchemaProvider — per-database schema, backed by StorageEngine
+// ---------------------------------------------------------------------------
+
+pub struct RorisSchemaProvider {
     db_name: String,
-    catalog: Arc<std::sync::RwLock<CatalogManager>>,
-    tables: DashMap<String, Arc<MemTable>>,
+    catalog: Arc<CatalogManager>,
+    storage: Arc<StorageEngine>,
 }
 
 impl std::fmt::Debug for RorisSchemaProvider {
@@ -27,44 +32,33 @@ impl std::fmt::Debug for RorisSchemaProvider {
 }
 
 impl RorisSchemaProvider {
-    fn new(db_name: String, catalog: Arc<std::sync::RwLock<CatalogManager>>) -> Self {
-        Self {
-            db_name,
-            catalog,
-            tables: DashMap::new(),
-        }
+    pub fn new(
+        db_name: String,
+        catalog: Arc<CatalogManager>,
+        storage: Arc<StorageEngine>,
+    ) -> Self {
+        Self { db_name, catalog, storage }
     }
 
-    fn ensure_table(&self, table_name: &str) {
-        if self.tables.contains_key(table_name) {
-            return;
-        }
-        let catalog = self.catalog.read().unwrap();
-        if let Some(table) = catalog.get_table(&self.db_name, table_name) {
-            let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = table
-                .columns
-                .iter()
-                .map(|c| datafusion::arrow::datatypes::Field::new(
+    fn get_table_schema(&self, table_name: &str) -> Option<arrow_schema::SchemaRef> {
+        let table = self.catalog.get_table(&self.db_name, table_name)?;
+        let fields: Vec<arrow_schema::Field> = table
+            .columns
+            .iter()
+            .map(|c| {
+                arrow_schema::Field::new(
                     &c.name,
-                    to_arrow_data_type(&c.data_type),
+                    crate::types::to_arrow_data_type(&c.data_type),
                     c.nullable,
-                ))
-                .collect();
-            let schema = Arc::new(ArrowSchema::new(arrow_fields));
-            if let Ok(mem_table) = MemTable::try_new(schema, vec![vec![]]) {
-                self.tables.insert(table_name.to_string(), Arc::new(mem_table));
-            }
-        }
+                )
+            })
+            .collect();
+        Some(Arc::new(arrow_schema::Schema::new(fields)))
     }
 
-    fn create_mem_table(&self, table_name: &str, schema: SchemaRef) {
-        if let Ok(mem_table) = MemTable::try_new(schema, vec![vec![]]) {
-            self.tables.insert(table_name.to_string(), Arc::new(mem_table));
-        }
-    }
-
-    fn drop_table(&self, table_name: &str) {
-        self.tables.remove(table_name);
+    fn get_tablet_id(&self, table_name: &str) -> Option<u64> {
+        let table = self.catalog.get_table(&self.db_name, table_name)?;
+        Some(table.tablet_id)
     }
 }
 
@@ -75,30 +69,46 @@ impl SchemaProvider for RorisSchemaProvider {
     }
 
     fn table_names(&self) -> Vec<String> {
-        self.tables.iter().map(|r| r.key().clone()).collect()
+        self.catalog
+            .get_database(&self.db_name)
+            .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default()
     }
 
     async fn table(
         &self,
         name: &str,
     ) -> DFResult<Option<Arc<dyn TableProvider>>> {
-        self.ensure_table(name);
-        if let Some(mem_table) = self.tables.get(name) {
-            Ok(Some(mem_table.value().clone() as Arc<dyn TableProvider>))
-        } else {
-            Ok(None)
+        let schema_ref = self.get_table_schema(name);
+        let tablet_id = self.get_tablet_id(name);
+
+        match (schema_ref, tablet_id) {
+            (Some(schema), Some(tid)) => {
+                let provider = RorisTableProvider::new(
+                    self.storage.clone(),
+                    tid,
+                    schema,
+                );
+                Ok(Some(Arc::new(provider)))
+            }
+            _ => Ok(None),
         }
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        self.ensure_table(name);
-        self.tables.contains_key(name)
+        self.catalog.get_table(&self.db_name, name).is_some()
     }
 }
 
+// ---------------------------------------------------------------------------
+// RorisCatalogProvider — top-level catalog
+// ---------------------------------------------------------------------------
+
 pub struct RorisCatalogProvider {
-    catalog: Arc<std::sync::RwLock<CatalogManager>>,
-    schemas: DashMap<String, Arc<RorisSchemaProvider>>,
+    pub catalog: Arc<CatalogManager>,
+    pub storage: Arc<StorageEngine>,
+    pub schemas: DashMap<String, Arc<RorisSchemaProvider>>,
+    mem_tables: DashMap<String, Arc<MemTable>>,
 }
 
 impl std::fmt::Debug for RorisCatalogProvider {
@@ -108,22 +118,28 @@ impl std::fmt::Debug for RorisCatalogProvider {
 }
 
 impl RorisCatalogProvider {
-    pub fn new(catalog: Arc<std::sync::RwLock<CatalogManager>>) -> Self {
+    pub fn new(
+        catalog: Arc<CatalogManager>,
+        storage: Arc<StorageEngine>,
+    ) -> Self {
         let schemas = DashMap::new();
-        let db_names = {
-            let cat = catalog.read().unwrap();
-            cat.list_databases()
-        };
+        let db_names = catalog.list_databases();
         for name in &db_names {
             schemas.insert(
                 name.clone(),
                 Arc::new(RorisSchemaProvider::new(
                     name.clone(),
                     catalog.clone(),
+                    storage.clone(),
                 )),
             );
         }
-        Self { catalog, schemas }
+        Self {
+            catalog,
+            storage,
+            schemas,
+            mem_tables: DashMap::new(),
+        }
     }
 
     pub fn create_database(&self, name: &str) {
@@ -132,6 +148,7 @@ impl RorisCatalogProvider {
             Arc::new(RorisSchemaProvider::new(
                 name.to_string(),
                 self.catalog.clone(),
+                self.storage.clone(),
             )),
         );
     }
@@ -140,30 +157,19 @@ impl RorisCatalogProvider {
         self.schemas.remove(name);
     }
 
-    pub fn create_table(&self, db_name: &str, table_name: &str, schema: SchemaRef) {
-        if let Some(provider) = self.schemas.get(db_name) {
-            provider.create_mem_table(table_name, schema);
-        }
+    pub fn create_table(&self, db: &str, name: &str, schema: Arc<ArrowSchema>) {
+        let key = format!("{}.{}", db, name);
+        let mem_table = MemTable::try_new(schema, vec![vec![]]).unwrap();
+        self.mem_tables.insert(key, Arc::new(mem_table));
     }
 
-    pub fn drop_table(&self, db_name: &str, table_name: &str) {
-        if let Some(provider) = self.schemas.get(db_name) {
-            provider.drop_table(table_name);
-        }
-    }
-
-    pub fn get_mem_table(
-        &self,
-        db_name: &str,
-        table_name: &str,
-    ) -> Option<Arc<MemTable>> {
-        self.schemas.get(db_name).and_then(|provider| {
-            provider.ensure_table(table_name);
-            provider.tables.get(table_name).map(|r| r.value().clone())
-        })
+    pub fn get_mem_table(&self, db: &str, name: &str) -> Option<Arc<MemTable>> {
+        let key = format!("{}.{}", db, name);
+        self.mem_tables.get(&key).map(|r| r.value().clone())
     }
 }
 
+#[async_trait]
 impl CatalogProvider for RorisCatalogProvider {
     fn as_any(&self) -> &dyn Any {
         self
@@ -174,6 +180,8 @@ impl CatalogProvider for RorisCatalogProvider {
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        self.schemas.get(name).map(|r| Arc::clone(r.value()) as Arc<dyn SchemaProvider>)
+        self.schemas
+            .get(name)
+            .map(|r| r.value().clone() as Arc<dyn SchemaProvider>)
     }
 }

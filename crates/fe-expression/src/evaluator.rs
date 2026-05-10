@@ -198,6 +198,12 @@ fn arith(left: &Vector, right: &Vector, ff: fn(f64, f64) -> f64, fi: fn(i64, i64
         (Vector::Float64(l), Vector::Float64(r)) => float64_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| ff(a, b)).collect()),
         (Vector::Int64(l), Vector::Int64(r)) => int64_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| fi(a, b)).collect()),
         (Vector::Int32(l), Vector::Int32(r)) => Vector::Int32(types::vector::Int32Vector::from_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| fi(a as i64, b as i64) as i32).collect())),
+        // Cross-type: Int32 op Int64 or Int64 op Int32 → promote to Int64
+        (Vector::Int32(l), Vector::Int64(r)) => int64_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| fi(a as i64, b)).collect()),
+        (Vector::Int64(l), Vector::Int32(r)) => int64_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| fi(a, b as i64)).collect()),
+        // Float64 op Int64 → promote to Float64
+        (Vector::Float64(l), Vector::Int64(r)) => float64_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| ff(a, b as f64)).collect()),
+        (Vector::Int64(l), Vector::Float64(r)) => float64_vec(l.data().iter().zip(r.data()).map(|(&a, &b)| ff(a as f64, b)).collect()),
         _ => float64_vec(vec![0.0; left.len()]),
     }
 }
@@ -213,11 +219,74 @@ where F: Fn(i64, i64) -> bool, G: Fn(f64, f64) -> bool {
                 fi(lv_scalar, rv_scalar)
             }).collect())
         }
+        (Vector::Int32(l), Vector::Int64(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0) as i64 } else { l.get(i).unwrap_or(0) as i64 };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0) } else { r.get(i).unwrap_or(0) };
+                fi(lv, rv)
+            }).collect())
+        }
+        (Vector::Int64(l), Vector::Int32(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0) } else { l.get(i).unwrap_or(0) };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0) as i64 } else { r.get(i).unwrap_or(0) as i64 };
+                fi(lv, rv)
+            }).collect())
+        }
+        (Vector::Int32(l), Vector::Int32(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0) as i64 } else { l.get(i).unwrap_or(0) as i64 };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0) as i64 } else { r.get(i).unwrap_or(0) as i64 };
+                fi(lv, rv)
+            }).collect())
+        }
+        (Vector::Int16(l), Vector::Int64(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0) as i64 } else { l.get(i).unwrap_or(0) as i64 };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0) } else { r.get(i).unwrap_or(0) };
+                fi(lv, rv)
+            }).collect())
+        }
+        (Vector::Int64(l), Vector::Int16(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0) } else { l.get(i).unwrap_or(0) };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0) as i64 } else { r.get(i).unwrap_or(0) as i64 };
+                fi(lv, rv)
+            }).collect())
+        }
+        (Vector::Int8(l), Vector::Int64(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0) as i64 } else { l.get(i).unwrap_or(0) as i64 };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0) } else { r.get(i).unwrap_or(0) };
+                fi(lv, rv)
+            }).collect())
+        }
+        (Vector::Int64(l), Vector::Int8(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0) } else { l.get(i).unwrap_or(0) };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0) as i64 } else { r.get(i).unwrap_or(0) as i64 };
+                fi(lv, rv)
+            }).collect())
+        }
         (Vector::Float64(l), Vector::Float64(r)) => {
             bool_vec((0..len).map(|i| {
                 let lv_scalar = if l.len() == 1 { l.get(0).unwrap_or(0.0) } else { l.get(i).unwrap_or(0.0) };
                 let rv_scalar = if r.len() == 1 { r.get(0).unwrap_or(0.0) } else { r.get(i).unwrap_or(0.0) };
                 ff(lv_scalar, rv_scalar)
+            }).collect())
+        }
+        (Vector::Float32(l), Vector::Float64(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0.0) as f64 } else { l.get(i).unwrap_or(0.0) as f64 };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0.0) } else { r.get(i).unwrap_or(0.0) };
+                ff(lv, rv)
+            }).collect())
+        }
+        (Vector::Float64(l), Vector::Float32(r)) => {
+            bool_vec((0..len).map(|i| {
+                let lv = if l.len() == 1 { l.get(0).unwrap_or(0.0) } else { l.get(i).unwrap_or(0.0) };
+                let rv = if r.len() == 1 { r.get(0).unwrap_or(0.0) as f64 } else { r.get(i).unwrap_or(0.0) as f64 };
+                ff(lv, rv)
             }).collect())
         }
         (Vector::String(l), Vector::String(r)) => {

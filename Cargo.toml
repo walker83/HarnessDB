@@ -88,9 +88,14 @@ chrono = "0.4"
 sqlparser = "0.53"
 
 # Query engine
-datafusion = { version = "47", default-features = false }
-arrow = { version = "54", default-features = false, features = ["prettyprint"] }
-arrow-schema = { version = "54", default-features = false }
+datafusion = { version = "47" }
+arrow = { version = "55", default-features = false, features = ["prettyprint"] }
+arrow-schema = { version = "55", default-features = false }
+# Arrow sub-crates (match version that datafusion depends on)
+arrow-array = { version = "55" }
+arrow-buffer = { version = "55" }
+arrow-data = { version = "55" }
+arrow-cast = { version = "55" }
 
 # Storage
 rocksdb = "0.23"

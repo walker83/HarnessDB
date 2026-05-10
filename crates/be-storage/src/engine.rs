@@ -328,6 +328,6 @@ impl StorageEngine {
 
 impl Default for StorageEngine {
     fn default() -> Self {
-        Self::open("/tmp/rovisdb/storage").expect("Failed to create default storage engine")
+        Self::open("/tmp/rorisdb/storage").expect("Failed to create default storage engine")
     }
 }

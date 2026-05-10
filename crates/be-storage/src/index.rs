@@ -674,6 +674,29 @@ pub fn compare_scalars(a: &ScalarValue, b: &ScalarValue) -> std::cmp::Ordering {
         (ScalarValue::Date(a), ScalarValue::Date(b)) => a.cmp(b),
         (ScalarValue::DateTime(a), ScalarValue::DateTime(b)) => a.cmp(b),
         (ScalarValue::String(a), ScalarValue::String(b)) => a.cmp(b),
+        // Cross-type integer comparisons: promote to i64
+        (ScalarValue::Int8(a), ScalarValue::Int64(b)) => (*a as i64).cmp(b),
+        (ScalarValue::Int64(a), ScalarValue::Int8(b)) => a.cmp(&(*b as i64)),
+        (ScalarValue::Int16(a), ScalarValue::Int64(b)) => (*a as i64).cmp(b),
+        (ScalarValue::Int64(a), ScalarValue::Int16(b)) => a.cmp(&(*b as i64)),
+        (ScalarValue::Int32(a), ScalarValue::Int64(b)) => (*a as i64).cmp(b),
+        (ScalarValue::Int64(a), ScalarValue::Int32(b)) => a.cmp(&(*b as i64)),
+        (ScalarValue::Int8(a), ScalarValue::Int32(b)) => (*a as i32).cmp(b),
+        (ScalarValue::Int32(a), ScalarValue::Int8(b)) => a.cmp(&(*b as i32)),
+        (ScalarValue::Int16(a), ScalarValue::Int32(b)) => (*a as i32).cmp(b),
+        (ScalarValue::Int32(a), ScalarValue::Int16(b)) => a.cmp(&(*b as i32)),
+        (ScalarValue::Int8(a), ScalarValue::Int16(b)) => (*a as i16).cmp(b),
+        (ScalarValue::Int16(a), ScalarValue::Int8(b)) => a.cmp(&(*b as i16)),
+        // Int vs Float comparisons
+        (ScalarValue::Int64(a), ScalarValue::Float64(b)) => (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal),
+        (ScalarValue::Float64(a), ScalarValue::Int64(b)) => a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal),
+        (ScalarValue::Int32(a), ScalarValue::Float64(b)) => (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal),
+        (ScalarValue::Float64(a), ScalarValue::Int32(b)) => a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal),
+        // Date vs Int comparisons
+        (ScalarValue::Date(a), ScalarValue::Int64(b)) => (*a as i64).cmp(b),
+        (ScalarValue::Int64(a), ScalarValue::Date(b)) => a.cmp(&(*b as i64)),
+        (ScalarValue::Date(a), ScalarValue::Int32(b)) => a.cmp(b),
+        (ScalarValue::Int32(a), ScalarValue::Date(b)) => a.cmp(b),
         _ => Ordering::Equal,
     }
 }
