@@ -10,6 +10,7 @@ use crate::meta_store::{MetaStore, CF_TABLET, KEY_TABLET_SCHEMA, KEY_ROWSET, KEY
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use tracing::debug;
 use types::DataType;
+use std::sync::Arc;
 
 /// Tablet column definition (mirrors be-storage::TabletColumn).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,12 +57,12 @@ pub struct SegmentRef {
 
 /// Tablet store for managing tablet metadata in RocksDB.
 pub struct TabletStore {
-    store: MetaStore,
+    store: Arc<MetaStore>,
 }
 
 impl TabletStore {
     /// Create a new TabletStore.
-    pub fn new(store: MetaStore) -> Self {
+    pub fn new(store: Arc<MetaStore>) -> Self {
         Self { store }
     }
 

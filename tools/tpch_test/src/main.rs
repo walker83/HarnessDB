@@ -28,7 +28,8 @@ fn main() {
     let mut all_ok = true;
     for (tablet_id, name, expected) in &table_specs {
         let tablet_ok = storage.get_tablet(*tablet_id);
-        let read_rows = storage.read_tablet(*tablet_id, None, &[])
+        // Use Arrow interface to read data (supports both memtable and Parquet)
+        let read_rows = storage.read_tablet_arrow(*tablet_id, None, &[], None)
             .map(|b| b.num_rows())
             .unwrap_or(0);
         let read_status = if read_rows == *expected { "OK" } else { "MISMATCH" };

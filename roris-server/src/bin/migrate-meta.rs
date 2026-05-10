@@ -6,6 +6,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::collections::HashMap;
+use std::sync::Arc;
 use serde::Deserialize;
 use types::DataType;
 
@@ -52,7 +53,7 @@ fn main() -> anyhow::Result<()> {
 
     // Open RocksDB
     let store = if !args.dry_run {
-        Some(be_rocks::MetaStore::open(&args.rocks_dir)?)
+        Some(Arc::new(be_rocks::MetaStore::open(&args.rocks_dir)?))
     } else {
         None
     };
@@ -60,18 +61,18 @@ fn main() -> anyhow::Result<()> {
     // 1. Migrate catalog metadata
     println!("Migrating catalog metadata...");
     let catalog_path = args.fe_meta_dir.join("catalog.json");
-    let catalog_stats = migrate_catalog(&catalog_path, store.as_ref(), args.dry_run)?;
+    let catalog_stats = migrate_catalog(&catalog_path, store.clone(), args.dry_run)?;
     println!("  - Databases: {}", catalog_stats.databases);
     println!("  - Tables: {}", catalog_stats.tables);
 
     // 2. Migrate edit log
     println!("Migrating edit log...");
-    let edit_log_stats = migrate_edit_log(&args.fe_meta_dir, store.as_ref(), args.dry_run)?;
+    let edit_log_stats = migrate_edit_log(&args.fe_meta_dir, store.clone(), args.dry_run)?;
     println!("  - Entries: {}", edit_log_stats.entries);
 
     // 3. Migrate tablet metadata
     println!("Migrating tablet metadata...");
-    let tablet_stats = migrate_tablets(&args.be_storage_dir, store.as_ref(), args.dry_run)?;
+    let tablet_stats = migrate_tablets(&args.be_storage_dir, store.clone(), args.dry_run)?;
     println!("  - Tablets: {}", tablet_stats.tablets);
     println!("  - Rowsets: {}", tablet_stats.rowsets);
 
@@ -82,8 +83,10 @@ fn main() -> anyhow::Result<()> {
     if args.verify && !args.dry_run {
         println!();
         println!("Verifying consistency...");
-        verify_consistency(&args.fe_meta_dir, &args.be_storage_dir, store.as_ref())?;
-        println!("Verification passed!");
+        if let Some(store_ref) = store.as_ref() {
+            verify_consistency(&args.fe_meta_dir, &args.be_storage_dir, store_ref.as_ref())?;
+            println!("Verification passed!");
+        }
     }
 
     Ok(())
@@ -103,7 +106,7 @@ struct TabletStats {
     rowsets: usize,
 }
 
-fn migrate_catalog(catalog_path: &PathBuf, store: Option<&be_rocks::MetaStore>, dry_run: bool) -> anyhow::Result<CatalogStats> {
+fn migrate_catalog(catalog_path: &PathBuf, store: Option<Arc<be_rocks::MetaStore>>, dry_run: bool) -> anyhow::Result<CatalogStats> {
     if !catalog_path.exists() {
         println!("  Catalog file not found, skipping...");
         return Ok(CatalogStats { databases: 0, tables: 0 });
@@ -139,7 +142,7 @@ fn migrate_catalog(catalog_path: &PathBuf, store: Option<&be_rocks::MetaStore>, 
     Ok(stats)
 }
 
-fn migrate_edit_log(fe_meta_dir: &PathBuf, store: Option<&be_rocks::MetaStore>, dry_run: bool) -> anyhow::Result<EditLogStats> {
+fn migrate_edit_log(fe_meta_dir: &PathBuf, store: Option<Arc<be_rocks::MetaStore>>, dry_run: bool) -> anyhow::Result<EditLogStats> {
     let mut stats = EditLogStats { entries: 0 };
 
     // Find all edit_log_*.json files
@@ -198,7 +201,7 @@ fn migrate_edit_log(fe_meta_dir: &PathBuf, store: Option<&be_rocks::MetaStore>, 
     Ok(stats)
 }
 
-fn migrate_tablets(be_storage_dir: &PathBuf, store: Option<&be_rocks::MetaStore>, dry_run: bool) -> anyhow::Result<TabletStats> {
+fn migrate_tablets(be_storage_dir: &PathBuf, store: Option<Arc<be_rocks::MetaStore>>, dry_run: bool) -> anyhow::Result<TabletStats> {
     let mut stats = TabletStats { tablets: 0, rowsets: 0 };
 
     // Find all tablet directories
@@ -269,7 +272,7 @@ fn verify_consistency(fe_meta_dir: &PathBuf, be_storage_dir: &PathBuf, store: &b
         let json = std::fs::read_to_string(&catalog_path)?;
         let state: CatalogStateJson = serde_json::from_str(&json)?;
 
-        let catalog_store = be_rocks::CatalogStore::new(store.clone());
+        let catalog_store = be_rocks::CatalogStore::new(store);
         let rocks_dbs = catalog_store.list_databases()?;
 
         // Compare counts
@@ -373,7 +376,7 @@ fn convert_column_stats(cs: &fe_catalog::stats::ColumnStats) -> be_rocks::Column
         min_value: cs.min_value.clone(),
         max_value: cs.max_value.clone(),
         null_count: cs.null_count,
-        distinct_count: cs.distinct_count,
+        distinct_count: cs.ndv,
     }
 }
 

@@ -9,7 +9,8 @@ use datafusion::datasource::MemTable;
 use datafusion::error::Result as DFResult;
 
 use fe_catalog::CatalogManager;
-use be_storage::StorageEngine;
+use be_storage::{StorageEngine, tablet::{TabletSchema, TabletColumn}};
+use types::DataType;
 
 use crate::table_provider::RorisTableProvider;
 
@@ -21,6 +22,7 @@ pub struct RorisSchemaProvider {
     db_name: String,
     catalog: Arc<CatalogManager>,
     storage: Arc<StorageEngine>,
+    mem_tables: Arc<DashMap<String, Arc<MemTable>>>,
 }
 
 impl std::fmt::Debug for RorisSchemaProvider {
@@ -36,8 +38,9 @@ impl RorisSchemaProvider {
         db_name: String,
         catalog: Arc<CatalogManager>,
         storage: Arc<StorageEngine>,
+        mem_tables: Arc<DashMap<String, Arc<MemTable>>>,
     ) -> Self {
-        Self { db_name, catalog, storage }
+        Self { db_name, catalog, storage, mem_tables }
     }
 
     fn get_table_schema(&self, table_name: &str) -> Option<arrow_schema::SchemaRef> {
@@ -79,6 +82,12 @@ impl SchemaProvider for RorisSchemaProvider {
         &self,
         name: &str,
     ) -> DFResult<Option<Arc<dyn TableProvider>>> {
+        // First check if there's a MemTable (for INSERT data)
+        let mem_table_key = format!("{}.{}", self.db_name, name);
+        if let Some(mem_table) = self.mem_tables.get(&mem_table_key) {
+            return Ok(Some(mem_table.value().clone() as Arc<dyn TableProvider>));
+        }
+
         let schema_ref = self.get_table_schema(name);
         let tablet_id = self.get_tablet_id(name);
 
@@ -108,7 +117,7 @@ pub struct RorisCatalogProvider {
     pub catalog: Arc<CatalogManager>,
     pub storage: Arc<StorageEngine>,
     pub schemas: DashMap<String, Arc<RorisSchemaProvider>>,
-    mem_tables: DashMap<String, Arc<MemTable>>,
+    pub mem_tables: Arc<DashMap<String, Arc<MemTable>>>,
 }
 
 impl std::fmt::Debug for RorisCatalogProvider {
@@ -123,6 +132,7 @@ impl RorisCatalogProvider {
         storage: Arc<StorageEngine>,
     ) -> Self {
         let schemas = DashMap::new();
+        let mem_tables = Arc::new(DashMap::new());
         let db_names = catalog.list_databases();
         for name in &db_names {
             schemas.insert(
@@ -131,6 +141,7 @@ impl RorisCatalogProvider {
                     name.clone(),
                     catalog.clone(),
                     storage.clone(),
+                    mem_tables.clone(),
                 )),
             );
         }
@@ -138,7 +149,7 @@ impl RorisCatalogProvider {
             catalog,
             storage,
             schemas,
-            mem_tables: DashMap::new(),
+            mem_tables,
         }
     }
 
@@ -149,6 +160,7 @@ impl RorisCatalogProvider {
                 name.to_string(),
                 self.catalog.clone(),
                 self.storage.clone(),
+                self.mem_tables.clone(),
             )),
         );
     }
@@ -161,6 +173,21 @@ impl RorisCatalogProvider {
         let key = format!("{}.{}", db, name);
         let mem_table = MemTable::try_new(schema, vec![vec![]]).unwrap();
         self.mem_tables.insert(key, Arc::new(mem_table));
+    }
+
+    pub fn create_table_with_id(&self, tablet_id: u64, tablet_schema: TabletSchema) -> Result<(), String> {
+        self.storage.create_tablet(tablet_id, tablet_schema)
+            .map_err(|e| format!("Failed to create tablet: {}", e))
+    }
+
+    pub fn drop_table(&self, db: &str, name: &str) {
+        let key = format!("{}.{}", db, name);
+        self.mem_tables.remove(&key);
+    }
+
+    pub fn get_table_schema(&self, db: &str, name: &str) -> Option<Arc<ArrowSchema>> {
+        let key = format!("{}.{}", db, name);
+        self.mem_tables.get(&key).map(|r| r.value().schema())
     }
 
     pub fn get_mem_table(&self, db: &str, name: &str) -> Option<Arc<MemTable>> {

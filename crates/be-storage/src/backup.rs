@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::rowset::Rowset;
 use crate::segment::{SegmentReader, SegmentWriter};
-use crate::tablet::{Tablet, TabletSchema as TabletSchemaType};
+use crate::tablet::{Tablet, TabletSchema as TabletSchemaType, TabletConfig};
 
 #[derive(Debug, Clone)]
 pub struct TabletExporter;
@@ -64,7 +64,7 @@ impl TabletExporter {
             return Err(format!("Data file not found: {:?}", data_path));
         }
 
-        let tablet = Tablet::new(tablet_id, schema.clone(), data_dir);
+        let tablet = Tablet::new(tablet_id, schema.clone(), TabletConfig::new(data_dir));
 
         let block = SegmentReader::scan_segment(&data_path, None, &[])
             .map_err(|e| format!("Read segment error: {}", e))?;

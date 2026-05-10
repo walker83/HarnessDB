@@ -127,6 +127,7 @@ fn test_create_table_with_range_partition() {
 
     let table = Table {
         id: 10,
+        tablet_id: 10,
         name: "orders".into(),
         database: "test_db".into(),
         columns: vec![
@@ -175,6 +176,7 @@ fn test_create_table_with_hash_distribution() {
 
     let table = Table {
         id: 11,
+        tablet_id: 11,
         name: "events".into(),
         database: "test_db".into(),
         columns: vec![
@@ -224,6 +226,7 @@ fn test_create_table_aggregate_key() {
 
     let table = Table {
         id: 20,
+        tablet_id: 20,
         name: "agg_table".into(),
         database: "test_db".into(),
         columns: vec![
@@ -257,6 +260,7 @@ fn test_create_table_unique_key() {
 
     let table = Table {
         id: 21,
+        tablet_id: 21,
         name: "unique_table".into(),
         database: "test_db".into(),
         columns: vec![
@@ -287,6 +291,7 @@ fn test_create_table_primary_key() {
 
     let table = Table {
         id: 22,
+        tablet_id: 22,
         name: "pk_table".into(),
         database: "test_db".into(),
         columns: vec![
@@ -380,6 +385,7 @@ fn test_ddl_full_lifecycle() {
     // Create table via catalog
     let table = Table {
         id: 100,
+        tablet_id: 100,
         name: "t1".into(),
         database: "lifecycle_test".into(),
         columns: vec![

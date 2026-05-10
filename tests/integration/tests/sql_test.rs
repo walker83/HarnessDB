@@ -73,6 +73,7 @@ fn test_create_table_multiple_types() {
 
     let table = fe_catalog::Table {
         id: 100,
+        tablet_id: 100,
         name: "all_types".to_string(),
         database: "typed_db".to_string(),
         stats: None,

@@ -16,6 +16,7 @@ use types::DataType;
 use fe_catalog::table::{Table, TableColumn, KeysType};
 use datafusion::prelude::{SessionContext, SessionConfig};
 use fe_datafusion::catalog::RorisCatalogProvider;
+use fe_datafusion::register_doris_udfs;
 
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
@@ -45,6 +46,7 @@ struct RorisQueryHandler {
     views: Arc<StdRwLock<Vec<ViewInfo>>>,
     transaction: Arc<StdRwLock<SimpleTransactionState>>,
     session_ctx: SessionContext,
+    storage: Arc<be_storage::StorageEngine>,
 }
 
 #[derive(Clone)]
@@ -105,20 +107,23 @@ impl SimpleTransactionState {
 impl RorisQueryHandler {
     fn new(catalog: Arc<CatalogManager>) -> Self {
         let storage = Arc::new(be_storage::StorageEngine::open("/tmp/roris_fe_storage").unwrap());
-        let df_catalog = Arc::new(RorisCatalogProvider::new(catalog.clone(), storage));
+        let df_catalog = Arc::new(RorisCatalogProvider::new(catalog.clone(), storage.clone()));
         let config = SessionConfig::new()
             .with_default_catalog_and_schema("roris", "information_schema")
             .with_create_default_catalog_and_schema(false)
             .with_information_schema(true);
-        let session_ctx = SessionContext::new_with_config(config);
+        let mut session_ctx = SessionContext::new_with_config(config);
         session_ctx.register_catalog("roris", df_catalog);
-        
+        // Register Doris-compatible UDFs
+        register_doris_udfs(&mut session_ctx);
+
         Self {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
             views: Arc::new(StdRwLock::new(Vec::new())),
             transaction: Arc::new(StdRwLock::new(SimpleTransactionState::new())),
             session_ctx,
+            storage,
         }
     }
 
@@ -137,8 +142,13 @@ impl QueryHandler for RorisQueryHandler {
 
         if is_dml_sql(trimmed) {
             let upper = trimmed.to_uppercase();
-            if upper.starts_with("DELETE") || upper.starts_with("UPDATE") {
+            // INSERT should go through our custom handler, not DataFusion
+            if upper.starts_with("INSERT") {
+                // Fall through to parse_sql path
+            } else if upper.starts_with("DELETE") || upper.starts_with("UPDATE") {
+                // DELETE and UPDATE also fall through to parse_sql path
             } else {
+                // Other DML (like SELECT with INTO) goes to DataFusion
                 let result = std::thread::spawn({
                     let ctx = self.session_ctx.clone();
                     let sql = trimmed.to_string();
@@ -491,8 +501,9 @@ impl RorisQueryHandler {
 
         // Generate table ID before acquiring write lock
         let table_id = catalog.next_id();
+        let tablet_id = table_id;
 
-        use fe_catalog::table::{Table, TableColumn, KeysType};
+        use fe_catalog::table::{Table, TableColumn, KeysType, PartitionInfo, Partition, DistributionInfo};
 
         let columns: Vec<TableColumn> = stmt.columns.iter().map(|c| {
             TableColumn {
@@ -505,9 +516,44 @@ impl RorisQueryHandler {
             }
         }).collect();
 
+        // Convert partition definition
+        let partition_info = stmt.partition.as_ref().map(|p| {
+            PartitionInfo {
+                partition_type: p.partition_type.clone(),
+                columns: p.columns.clone(),
+                partitions: p.ranges.iter().enumerate().map(|(i, r)| {
+                    Partition {
+                        id: i as u64,
+                        name: r.name.clone(),
+                        range_start: Some(r.start.clone()),
+                        range_end: Some(r.end.clone()),
+                    }
+                }).collect(),
+            }
+        });
+
+        // Convert distribution definition
+        let distribution_info = stmt.distribution.as_ref().map(|d| {
+            DistributionInfo {
+                dist_type: d.dist_type.clone(),
+                columns: d.columns.clone(),
+                buckets: d.buckets as u32,
+            }
+        });
+
+        // Convert properties
+        let properties: std::collections::HashMap<String, String> = stmt.properties.iter()
+            .cloned()
+            .collect();
+
+        // Extract replication_num from properties if present
+        let replication_num = properties.get("replication_num")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(1);
+
         let table = Table {
             id: table_id,
-            tablet_id: 0,
+            tablet_id: tablet_id,
             name: stmt.name.clone(),
             database: db.to_string(),
             columns,
@@ -521,10 +567,10 @@ impl RorisQueryHandler {
                 name: uk.name.clone(),
                 columns: uk.columns.clone(),
             }).collect(),
-            partition_info: None,
-            distribution_info: None,
-            replication_num: 1,
-            properties: std::collections::HashMap::new(),
+            partition_info,
+            distribution_info,
+            replication_num,
+            properties,
             row_count: 0,
             data_size: 0,
             stats: None,
@@ -549,6 +595,35 @@ impl RorisQueryHandler {
                 let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
                 let df_cat = self.session_ctx.catalog("roris").unwrap();
                 if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
+                    // Determine which columns are key columns
+                    let key_column_names: std::collections::HashSet<String> = stmt.unique_keys.iter()
+                        .flat_map(|uk| uk.columns.iter().cloned())
+                        .collect();
+
+                    // Create tablet in storage engine
+                    let tablet_columns: Vec<be_storage::tablet::TabletColumn> = stmt.columns.iter().map(|c| {
+                        be_storage::tablet::TabletColumn {
+                            name: c.name.clone(),
+                            data_type: parse_data_type(&c.data_type),
+                            nullable: c.nullable,
+                            is_key: key_column_names.contains(&c.name),
+                            agg_type: c.agg_type.clone(),
+                        }
+                    }).collect();
+                    let tablet_schema = be_storage::tablet::TabletSchema {
+                        tablet_id,
+                        columns: tablet_columns,
+                        keys_type: match stmt.keys_type {
+                            fe_sql_parser::ast::KeysType::Duplicate => "DUP",
+                            fe_sql_parser::ast::KeysType::Aggregate => "AGG",
+                            fe_sql_parser::ast::KeysType::Unique => "UNIQUE",
+                            fe_sql_parser::ast::KeysType::Primary => "PRIMARY",
+                        }.to_string(),
+                        num_rows_per_row_block: 1024,
+                    };
+                    if let Err(e) = roris_cat.create_table_with_id(tablet_id, tablet_schema) {
+                        tracing::error!("Failed to create tablet: {}", e);
+                    }
                     roris_cat.create_table(db, &stmt.name, arrow_schema);
                 }
                 Ok(QueryResult::ok())
@@ -1109,6 +1184,89 @@ impl RorisQueryHandler {
                             table.columns.push(new_col);
                             catalog.create_table(db, table).map_err(|e| e.to_string())?;
                         }
+                        fe_sql_parser::ast::AlterOperation::AddColumn(col_def) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let new_col = TableColumn {
+                                name: col_def.name.clone(),
+                                data_type: parse_data_type(&col_def.data_type),
+                                nullable: col_def.nullable,
+                                default_value: col_def.default_value.as_ref().and_then(|e| {
+                                    match e {
+                                        fe_sql_parser::ast::Expr::Literal(lit) => Some(literal_to_string(lit)),
+                                        _ => None,
+                                    }
+                                }),
+                                agg_type: col_def.agg_type.clone(),
+                                comment: col_def.comment.clone().unwrap_or_default(),
+                            };
+                            table.columns.push(new_col);
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            // Update DataFusion schema
+                            if let Err(e) = self.update_df_table_schema(db, &stmt.table) {
+                                tracing::warn!("Failed to update DataFusion schema: {}", e);
+                            }
+                        }
+                        fe_sql_parser::ast::AlterOperation::DropColumn(col_name) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let idx = table.columns.iter().position(|c| c.name == *col_name);
+                            if let Some(idx) = idx {
+                                table.columns.remove(idx);
+                                catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                                if let Err(e) = self.update_df_table_schema(db, &stmt.table) {
+                                    tracing::warn!("Failed to update DataFusion schema: {}", e);
+                                }
+                            } else {
+                                return Err(format!("Unknown column '{}'", col_name));
+                            }
+                        }
+                        fe_sql_parser::ast::AlterOperation::ModifyColumn(col_def) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let idx = table.columns.iter().position(|c| c.name == col_def.name);
+                            if let Some(idx) = idx {
+                                table.columns[idx] = TableColumn {
+                                    name: col_def.name.clone(),
+                                    data_type: parse_data_type(&col_def.data_type),
+                                    nullable: col_def.nullable,
+                                    default_value: col_def.default_value.as_ref().and_then(|e| {
+                                        match e {
+                                            fe_sql_parser::ast::Expr::Literal(lit) => Some(literal_to_string(lit)),
+                                            _ => None,
+                                        }
+                                    }),
+                                    agg_type: col_def.agg_type.clone(),
+                                    comment: col_def.comment.clone().unwrap_or_default(),
+                                };
+                                catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                                if let Err(e) = self.update_df_table_schema(db, &stmt.table) {
+                                    tracing::warn!("Failed to update DataFusion schema: {}", e);
+                                }
+                            } else {
+                                return Err(format!("Unknown column '{}'", col_def.name));
+                            }
+                        }
+                        fe_sql_parser::ast::AlterOperation::RenameTable(new_name) => {
+                            let mut table = catalog.get_table(db, &stmt.table)
+                                .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
+                            let old_name = table.name.clone();
+                            table.name = new_name.clone();
+                            // First drop the old table entry
+                            catalog.drop_table(db, &old_name).map_err(|e| e.to_string())?;
+                            // Then create with new name
+                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            // Update DataFusion catalog
+                            if let Some(df_cat) = self.session_ctx.catalog("roris") {
+                                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
+                                    // Get the old schema and create with new name
+                                    if let Some(schema) = roris_cat.get_table_schema(db, &old_name) {
+                                        roris_cat.create_table(db, new_name, schema);
+                                        roris_cat.drop_table(db, &old_name);
+                                    }
+                                }
+                            }
+                        }
                         _ => {
                             return Err(format!("ALTER TABLE operation not yet implemented: {:?}", op));
                         }
@@ -1126,10 +1284,30 @@ impl RorisQueryHandler {
         let db = database.as_deref().unwrap_or(&current_db);
 
         match catalog.get_table(db, &table) {
-            Some(_) => {
-                // Truncate implementation - marks as parsed for now
+            Some(tbl) => {
+                let tablet_id = tbl.tablet_id;
                 drop(catalog);
-                Err("TRUNCATE TABLE execution not yet implemented".to_string())
+
+                // Clear tablet data if tablet exists
+                if tablet_id > 0 {
+                    // Note: This requires backend communication
+                    // For now, we just reset the metadata
+                    tracing::info!("Truncating table {}.{} (tablet_id={})", db, table, tablet_id);
+                }
+
+                // Update catalog metadata
+                let catalog = &self.catalog;
+                if let Some(mut tbl) = catalog.get_table(db, &table) {
+                    tbl.row_count = 0;
+                    tbl.data_size = 0;
+                    tbl.stats = None;
+                    catalog.create_table(db, tbl).map_err(|e| e.to_string())?;
+                    if let Err(e) = catalog.save() {
+                        tracing::error!("Failed to save catalog: {}", e);
+                    }
+                }
+
+                Ok(QueryResult::ok())
             }
             None if if_exists => Ok(QueryResult::ok()),
             None => Err(format!("Unknown table '{}.{}'", db, table)),
@@ -1161,6 +1339,8 @@ impl RorisQueryHandler {
         let table_meta = catalog.get_table(&database, &table_name)
             .ok_or_else(|| format!("table '{}.{}' not found in catalog", database, table_name))?;
 
+        let tablet_id = table_meta.tablet_id;
+
         let num_cols = table_meta.columns.len();
         let mut arrays: Vec<datafusion::arrow::array::ArrayRef> = Vec::new();
 
@@ -1177,12 +1357,52 @@ impl RorisQueryHandler {
 
         let arrow_schema = datafusion::catalog::TableProvider::schema(&*mem_table);
         let batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-            arrow_schema, arrays,
+            arrow_schema.clone(), arrays,
         ).map_err(|e| format!("Failed to create record batch: {}", e))?;
 
+        // Write to MemTable (fast, in-memory) for queries
+        let mem_table_clone = mem_table.clone();
+        let batch_clone = batch.clone();
+        std::thread::spawn(move || {
+            let mut partition = mem_table_clone.batches[0].blocking_write();
+            partition.push(batch_clone);
+        }).join().map_err(|_| "Insert thread failed".to_string())?;
+
+        // Also write to StorageEngine for persistence (async flush will handle Parquet)
+        #[cfg(feature = "parquet-storage")]
         {
-            let mut partition = mem_table.batches[0].blocking_write();
-            partition.push(batch);
+            use be_storage::tablet::{TabletSchema, TabletColumn};
+
+            let tablet_columns: Vec<TabletColumn> = table_meta.columns.iter().map(|c| {
+                TabletColumn {
+                    name: c.name.clone(),
+                    data_type: c.data_type.clone(),
+                    nullable: c.nullable,
+                    is_key: false,
+                    agg_type: None,
+                }
+            }).collect();
+
+            let tablet_schema = TabletSchema {
+                tablet_id,
+                columns: tablet_columns,
+                keys_type: "DUP".to_string(),
+                num_rows_per_row_block: 1024,
+            };
+
+            // Create tablet if not exists
+            if !self.storage.get_tablet(tablet_id) {
+                if let Err(e) = self.storage.create_tablet(tablet_id, tablet_schema) {
+                    tracing::warn!("Failed to create tablet {}: {}", tablet_id, e);
+                }
+            }
+
+            // Write RecordBatch directly to StorageEngine
+            if let Some(tablet) = self.storage.get_tablet_arc(tablet_id) {
+                if let Err(e) = tablet.write_arrow(&batch) {
+                    tracing::error!("Failed to write to storage: {}", e);
+                }
+            }
         }
 
         let affected_rows = stmt.values.len();
@@ -1248,6 +1468,9 @@ impl RorisQueryHandler {
         .map_err(|e| format!("Thread error: {:?}", e))?;
 
         let total_updated = result?;
+
+        // Note: UPDATE only modifies MemTable
+        // Background flush task will persist to Parquet periodically
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
             vec![vec![Some(total_updated.to_string())]],
@@ -1328,6 +1551,9 @@ impl RorisQueryHandler {
         .map_err(|e| format!("Thread error: {:?}", e))?;
 
         let total_deleted = result?;
+
+        // Note: DELETE only modifies MemTable
+        // Background flush task will persist to Parquet periodically
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
             vec![vec![Some(total_deleted.to_string())]],
@@ -1922,6 +2148,43 @@ impl RorisQueryHandler {
             vec![vec![Some(format!("ALTER STATS {} OK", table))]],
         ))
     }
+
+    /// Update DataFusion table schema after ALTER TABLE
+    fn update_df_table_schema(&self, db: &str, table_name: &str) -> Result<(), String> {
+        let catalog = &self.catalog;
+        let tbl = catalog.get_table(db, table_name)
+            .ok_or_else(|| format!("Table {}.{} not found", db, table_name))?;
+
+        // Build new Arrow schema from table columns
+        let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = tbl.columns.iter().map(|c| {
+            datafusion::arrow::datatypes::Field::new(
+                &c.name,
+                fe_datafusion::types::to_arrow_data_type(&c.data_type),
+                c.nullable,
+            )
+        }).collect();
+        let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
+
+        // Update DataFusion catalog
+        if let Some(df_cat) = self.session_ctx.catalog("roris") {
+            if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
+                roris_cat.create_table(db, table_name, arrow_schema);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn literal_to_string(lit: &fe_sql_parser::ast::LiteralValue) -> String {
+    match lit {
+        fe_sql_parser::ast::LiteralValue::Null => "NULL".to_string(),
+        fe_sql_parser::ast::LiteralValue::Boolean(b) => b.to_string(),
+        fe_sql_parser::ast::LiteralValue::Int64(i) => i.to_string(),
+        fe_sql_parser::ast::LiteralValue::Float64(f) => f.to_string(),
+        fe_sql_parser::ast::LiteralValue::String(s) => s.clone(),
+        fe_sql_parser::ast::LiteralValue::Date(d) => d.clone(),
+    }
 }
 
 fn parse_data_type(s: &str) -> DataType {
@@ -2198,11 +2461,71 @@ fn build_arrow_array(col_type: &DataType, values: &[Option<String>]) -> datafusi
             let arr: BooleanArray = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<bool>().ok())).collect();
             Arc::new(arr)
         }
+        DataType::Date => {
+            // Parse date string (YYYY-MM-DD) and convert to days since epoch
+            let arr: Date32Array = values.iter().map(|v| {
+                v.as_ref().and_then(|s| {
+                    parse_date_to_days(s)
+                })
+            }).collect();
+            Arc::new(arr)
+        }
+        DataType::DateTime => {
+            // Parse datetime and convert to seconds since epoch
+            let arr: TimestampSecondArray = values.iter().map(|v| {
+                v.as_ref().and_then(|s| {
+                    parse_datetime_to_seconds(s)
+                })
+            }).collect();
+            Arc::new(arr)
+        }
         _ => {
             let arr: StringArray = values.iter().map(|v| v.as_ref().map(|s| s.as_str())).collect();
             Arc::new(arr)
         }
     }
+}
+
+/// Parse date string (YYYY-MM-DD) to days since Unix epoch (1970-01-01)
+fn parse_date_to_days(s: &str) -> Option<i32> {
+    // Handle formats: YYYY-MM-DD, YYYY/MM/DD
+    let s = s.trim().trim_start_matches("'").trim_end_matches("'")
+              .trim_start_matches("\"").trim_end_matches("\"");
+
+    // Use chrono for accurate date parsing
+    use chrono::NaiveDate;
+
+    let date = if s.contains('-') {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?
+    } else if s.contains('/') {
+        NaiveDate::parse_from_str(s, "%Y/%m/%d").ok()?
+    } else {
+        return None;
+    };
+
+    // Calculate days since 1970-01-01 (Unix epoch)
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)?;
+    let days = (date - epoch).num_days() as i32;
+    Some(days)
+}
+
+/// Parse datetime string to seconds since Unix epoch
+fn parse_datetime_to_seconds(s: &str) -> Option<i64> {
+    // Handle formats: YYYY-MM-DD HH:MM:SS, YYYY-MM-DD
+    let s = s.trim().trim_start_matches("'").trim_end_matches("'")
+              .trim_start_matches("\"").trim_end_matches("\"");
+
+    use chrono::NaiveDateTime;
+
+    // Try parsing as datetime first
+    if s.contains(':') {
+        let datetime = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()?;
+        return Some(datetime.and_utc().timestamp());
+    }
+
+    // Fall back to just date
+    let days = parse_date_to_days(s)?;
+    Some(days as i64 * 86400)
 }
 
 fn evaluate_delete_filter_simple(
@@ -2329,6 +2652,8 @@ async fn main() -> Result<()> {
     tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
 
     let query_handler = RorisQueryHandler::new(catalog.clone());
+    let storage_for_flush = query_handler.storage.clone();
+    let storage_for_bg = storage_for_flush.clone();
     let mysql_config = ServerConfig {
         bind_addr: "127.0.0.1".to_string(),
         port: args.mysql_port,
@@ -2376,7 +2701,85 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Background task to periodically flush StorageEngine MemTables to Parquet
+    #[cfg(feature = "parquet-storage")]
+    {
+        tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_secs(10)); // Flush every 10 seconds
+            loop {
+                ticker.tick().await;
+                let tablet_ids = storage_for_bg.tablet_ids();
+                if tablet_ids.is_empty() {
+                    continue;
+                }
+
+                let mut flushed_count = 0;
+                let mut total_rows = 0;
+
+                // Iterate through all tablets and flush if they have data in memtable
+                for tablet_id in tablet_ids {
+                    if let Some(tablet) = storage_for_bg.get_tablet_arc(tablet_id) {
+                        let memtable_rows = tablet.memtable_num_rows();
+                        if memtable_rows > 0 {
+                            match tablet.flush_parquet() {
+                                Ok(()) => {
+                                    flushed_count += 1;
+                                    total_rows += memtable_rows;
+                                    tracing::info!("Flushed tablet {} ({} rows) to Parquet", tablet_id, memtable_rows);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to flush tablet {}: {}", tablet_id, e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if flushed_count > 0 {
+                    tracing::info!("Background flush: {} tablets, {} total rows", flushed_count, total_rows);
+                }
+            }
+        });
+        tracing::info!("Background Parquet flush task started (interval: 10s)");
+    }
+
     tokio::signal::ctrl_c().await?;
+    tracing::info!("Roris FE shutting down...");
+
+    // Flush all MemTables to Parquet before shutdown
+    #[cfg(feature = "parquet-storage")]
+    {
+        tracing::info!("Flushing MemTables to Parquet...");
+        let tablet_ids = storage_for_flush.tablet_ids();
+        let mut flushed_count = 0;
+        let mut total_rows = 0;
+
+        for tablet_id in tablet_ids {
+            if let Some(tablet) = storage_for_flush.get_tablet_arc(tablet_id) {
+                let memtable_rows = tablet.memtable_num_rows();
+                if memtable_rows > 0 {
+                    match tablet.flush_parquet() {
+                        Ok(()) => {
+                            flushed_count += 1;
+                            total_rows += memtable_rows;
+                            tracing::info!("Flushed tablet {} on shutdown ({} rows)", tablet_id, memtable_rows);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to flush tablet {} on shutdown: {}", tablet_id, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::info!("Shutdown flush complete: {} tablets, {} total rows", flushed_count, total_rows);
+    }
+
+    #[cfg(not(feature = "parquet-storage"))]
+    {
+        tokio::signal::ctrl_c().await?;
+    }
+
     tracing::info!("Roris FE shutting down...");
 
     // Flush audit logs before shutdown

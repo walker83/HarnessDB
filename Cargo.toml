@@ -92,6 +92,7 @@ arrow-array = { version = "55" }
 arrow-buffer = { version = "55" }
 arrow-data = { version = "55" }
 arrow-cast = { version = "55" }
+arrow-select = { version = "55" }
 
 # Storage
 rocksdb = "0.23"
@@ -133,4 +134,4 @@ mysql-protocol = { path = "crates/mysql-protocol" }
 data-io = { path = "crates/data-io" }
 
 # Parquet support
-parquet = "58"
+parquet = "55"

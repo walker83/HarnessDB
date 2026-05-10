@@ -141,6 +141,11 @@ impl StorageEngine {
         self.tablets.contains_key(&tablet_id)
     }
 
+    /// Get a tablet reference.
+    pub fn get_tablet_arc(&self, tablet_id: u64) -> Option<Arc<Tablet>> {
+        self.tablets.get(&tablet_id).map(|v| v.clone())
+    }
+
     /// Drop a tablet, removing its data directory.
     pub fn drop_tablet(&self, tablet_id: u64) -> Result<()> {
         let _tablet = self.tablets
@@ -303,6 +308,11 @@ impl StorageEngine {
 
     pub fn tablet_count(&self) -> usize {
         self.tablets.len()
+    }
+
+    /// Get all tablet IDs.
+    pub fn tablet_ids(&self) -> Vec<u64> {
+        self.tablets.iter().map(|r| *r.key()).collect()
     }
 
     /// Get the key column index for a tablet (first column marked as key).

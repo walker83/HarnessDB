@@ -8,6 +8,7 @@
 use crate::meta_store::{MetaStore, CF_EDIT_LOG, KEY_LOG, KEY_LAST_APPLIED, KEY_CURRENT_TERM, Result, RocksStoreError};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use tracing::debug;
+use std::sync::Arc;
 
 /// Operation type for edit log entries (mirrors fe-common::edit_log::OpType).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,12 +42,12 @@ pub struct EditLogEntry {
 
 /// Edit log store for managing WAL entries in RocksDB.
 pub struct EditLogStore {
-    store: MetaStore,
+    store: Arc<MetaStore>,
 }
 
 impl EditLogStore {
     /// Create a new EditLogStore.
-    pub fn new(store: MetaStore) -> Self {
+    pub fn new(store: Arc<MetaStore>) -> Self {
         Self { store }
     }
 

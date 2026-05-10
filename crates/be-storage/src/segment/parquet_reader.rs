@@ -6,15 +6,9 @@
 //! - Bloom filter for high-cardinality lookups
 
 #[cfg(feature = "parquet-storage")]
-use parquet::{
-    file::reader::SerializedFileReader,
-    arrow::ArrowReader,
-    arrow::ParquetRecordBatchReaderBuilder,
-};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 #[cfg(feature = "parquet-storage")]
 use arrow_array::RecordBatch;
-#[cfg(feature = "parquet-storage")]
-use arrow_schema::Schema as ArrowSchema;
 #[cfg(feature = "parquet-storage")]
 use std::sync::Arc;
 #[cfg(feature = "parquet-storage")]
@@ -61,7 +55,7 @@ pub enum ReadPredicate {
 }
 
 /// Scalar value for predicates.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ScalarValue {
     Int64(i64),
     Float64(f64),
@@ -99,32 +93,34 @@ pub fn read_parquet_segment(
     path: &Path,
     options: &ParquetReadOptions,
 ) -> Result<RecordBatch> {
-    use parquet::file::metadata::ParquetMetaData;
+    use parquet::arrow::ProjectionMask;
 
-    // Open file
+    // Open file and get metadata first for predicate pruning
     let file = std::fs::File::open(path)?;
-    let reader = SerializedFileReader::new(file)
+
+    // Build reader builder
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| ParquetReadError::ParquetError(e.to_string()))?;
 
     // Check predicates against metadata for early pruning
-    let metadata = reader.metadata();
+    let metadata = builder.metadata();
     if should_skip_based_on_stats(metadata, &options.predicates) {
         debug!("Skipping segment {} due to statistics pruning", path.display());
         // Return empty batch with correct schema
         return create_empty_batch_from_schema(metadata);
     }
 
-    // Build reader with projection
-    let builder = ParquetRecordBatchReaderBuilder::try_new(reader)
-        .map_err(|e| ParquetReadError::ParquetError(e.to_string()))?;
+    // Get schema before applying projection
+    let arrow_schema = builder.schema().clone();
 
     // Apply projection
+    let parquet_schema = metadata.file_metadata().schema_descr();
     let builder = if let Some(proj) = &options.projection {
-        let schema = builder.schema();
         let indices: Vec<usize> = proj.iter()
-            .filter_map(|col| schema.index_of(col).ok())
+            .filter_map(|col| arrow_schema.index_of(col).ok())
             .collect();
-        builder.with_projection(indices)
+        let mask = ProjectionMask::leaves(parquet_schema, indices);
+        builder.with_projection(mask)
     } else {
         builder
     };
@@ -160,7 +156,13 @@ pub fn read_parquet_segment(
 
     // Merge batches
     if batches.is_empty() {
-        return create_empty_batch_from_schema(metadata);
+        // Return empty batch with correct schema
+        let columns: Vec<Arc<dyn arrow_array::Array>> = arrow_schema.fields()
+            .iter()
+            .map(|field| arrow_array::new_empty_array(field.data_type()))
+            .collect();
+        return RecordBatch::try_new(arrow_schema, columns)
+            .map_err(|e| ParquetReadError::ArrowError(e.to_string()));
     }
 
     if batches.len() == 1 {
@@ -168,7 +170,7 @@ pub fn read_parquet_segment(
     }
 
     // Concatenate batches
-    arrow_array::compute::concat_batches(&batches[0].schema(), &batches)
+    arrow_select::concat::concat_batches(&batches[0].schema(), &batches)
         .map_err(|e| ParquetReadError::ArrowError(e.to_string()))
 }
 
@@ -177,11 +179,13 @@ fn should_skip_based_on_stats(
     metadata: &parquet::file::metadata::ParquetMetaData,
     predicates: &[ReadPredicate],
 ) -> bool {
-    // Get row group metadata
+    // Check all row groups - if ALL row groups can be pruned, skip the file
     let row_groups = metadata.row_groups();
 
+    // For AND predicates, if ALL row groups can be pruned for any predicate, skip
+    // For OR predicates, only skip if ALL row groups can be pruned for ALL predicates
     for predicate in predicates {
-        if can_prune_with_predicate(row_groups, predicate) {
+        if can_prune_all_row_groups(row_groups, predicate) {
             return true;
         }
     }
@@ -190,61 +194,202 @@ fn should_skip_based_on_stats(
 }
 
 #[cfg(feature = "parquet-storage")]
-fn can_prune_with_predicate(
+fn can_prune_all_row_groups(
     row_groups: &[parquet::file::metadata::RowGroupMetaData],
+    predicate: &ReadPredicate,
+) -> bool {
+    // Check if predicate eliminates ALL row groups
+    match predicate {
+        ReadPredicate::And(preds) => {
+            // AND: if any sub-predicate prunes all groups, the AND prunes all
+            preds.iter().any(|p| can_prune_all_row_groups(row_groups, p))
+        }
+        ReadPredicate::Or(preds) => {
+            // OR: only prunes all groups if ALL sub-predicates prune all groups
+            preds.iter().all(|p| can_prune_all_row_groups(row_groups, p))
+        }
+        _ => {
+            // For leaf predicates, check each row group
+            // Return true if predicate conflicts with statistics in ALL groups
+            row_groups.iter().all(|rg| can_prune_row_group(rg, predicate))
+        }
+    }
+}
+
+#[cfg(feature = "parquet-storage")]
+fn can_prune_row_group(
+    row_group: &parquet::file::metadata::RowGroupMetaData,
     predicate: &ReadPredicate,
 ) -> bool {
     match predicate {
         ReadPredicate::Eq { column, value } => {
-            // Check if value is outside min/max range in any row group
-            for rg in row_groups {
-                for col_meta in rg.columns() {
-                    if col_meta.column_name() == column {
-                        if let Some(stats) = col_meta.statistics() {
-                            let min = stats.min_string();
-                            let max = stats.max_string();
-                            let val = value.to_string_repr();
-
-                            // If value < min or value > max, can prune
-                            if val < min || val > max {
-                                return true;
-                            }
-                        }
+            // Find column metadata
+            for col_meta in row_group.columns() {
+                if col_meta.column_path().string() == column.as_str() {
+                    if let Some(stats) = col_meta.statistics() {
+                        // Check if value is outside min/max range
+                        return is_value_below_max(value, stats) == Some(false)
+                            || is_value_above_min(value, stats) == Some(false);
                     }
                 }
             }
             false
         }
         ReadPredicate::Range { column, min, max } => {
-            // Check if range doesn't overlap with column min/max
-            for rg in row_groups {
-                for col_meta in rg.columns() {
-                    if col_meta.column_name() == column {
-                        if let Some(stats) = col_meta.statistics() {
-                            let col_min = stats.min_string();
-                            let col_max = stats.max_string();
-                            let req_min = min.to_string_repr();
-                            let req_max = max.to_string_repr();
-
-                            // If requested range is entirely outside column range
-                            if req_max < col_min || req_min > col_max {
-                                return true;
-                            }
+            for col_meta in row_group.columns() {
+                if col_meta.column_path().string() == column.as_str() {
+                    if let Some(stats) = col_meta.statistics() {
+                        // Check if range doesn't overlap with column stats
+                        // If max < column_min OR min > column_max, can prune
+                        let range_outside = if min != &ScalarValue::Null && max != &ScalarValue::Null {
+                            // Both bounds specified
+                            let max_below_min = is_value_below_max(max, stats);
+                            let min_above_max = is_value_above_min(min, stats);
+                            max_below_min == Some(false) || min_above_max == Some(false)
+                        } else if min != &ScalarValue::Null {
+                            // Only min specified (greater than min)
+                            is_value_above_min(min, stats) == Some(false)
+                        } else if max != &ScalarValue::Null {
+                            // Only max specified (less than max)
+                            is_value_below_max(max, stats) == Some(false)
+                        } else {
+                            false
+                        };
+                        return range_outside;
+                    }
+                }
+            }
+            false
+        }
+        ReadPredicate::IsNull { column } => {
+            for col_meta in row_group.columns() {
+                if col_meta.column_path().string() == column.as_str() {
+                    if let Some(stats) = col_meta.statistics() {
+                        // If null_count is 0, can prune
+                        if let Some(null_count) = stats.null_count_opt() {
+                            return null_count == 0;
                         }
                     }
                 }
             }
             false
         }
-        ReadPredicate::And(predicates) => {
-            // If any sub-predicate can prune, we can prune
-            predicates.iter().any(|p| can_prune_with_predicate(row_groups, p))
+        ReadPredicate::IsNotNull { column } => {
+            for col_meta in row_group.columns() {
+                if col_meta.column_path().string() == column.as_str() {
+                    if let Some(stats) = col_meta.statistics() {
+                        // If all rows are null, can prune
+                        let num_rows = row_group.num_rows() as i64;
+                        if let Some(null_count) = stats.null_count_opt() {
+                            return null_count as i64 == num_rows;
+                        }
+                    }
+                }
+            }
+            false
         }
-        ReadPredicate::Or(predicates) => {
-            // Only prune if ALL sub-predicates can prune
-            predicates.iter().all(|p| can_prune_with_predicate(row_groups, p))
+        ReadPredicate::And(preds) => {
+            // AND: prune if any sub-predicate prunes this group
+            preds.iter().any(|p| can_prune_row_group(row_group, p))
         }
-        _ => false, // Other predicates don't support pruning
+        ReadPredicate::Or(preds) => {
+            // OR: prune only if ALL sub-predicates prune this group
+            preds.iter().all(|p| can_prune_row_group(row_group, p))
+        }
+        _ => false,
+    }
+}
+
+#[cfg(feature = "parquet-storage")]
+fn is_value_above_min(value: &ScalarValue, stats: &parquet::file::statistics::Statistics) -> Option<bool> {
+    // Compare value with min statistics
+    // Returns Some(true) if value > min, Some(false) if value < min
+
+    match value {
+        ScalarValue::Int64(v) => {
+            let min_bytes = stats.min_bytes();
+            if min_bytes.len() == 8 {
+                let min = i64::from_le_bytes(min_bytes.try_into().ok()?);
+                Some(*v > min)
+            } else {
+                None
+            }
+        }
+        ScalarValue::Float64(v) => {
+            let min_bytes = stats.min_bytes();
+            if min_bytes.len() == 8 {
+                let min = f64::from_le_bytes(min_bytes.try_into().ok()?);
+                Some(*v > min)
+            } else {
+                None
+            }
+        }
+        ScalarValue::String(v) => {
+            // Compare UTF8 string with bytes
+            let min_bytes = stats.min_bytes();
+            if !min_bytes.is_empty() {
+                let min_str = std::str::from_utf8(min_bytes).ok()?;
+                Some(v.as_str() > min_str)
+            } else {
+                None
+            }
+        }
+        ScalarValue::Date(v) => {
+            let min_bytes = stats.min_bytes();
+            if min_bytes.len() == 4 {
+                let min = i32::from_le_bytes(min_bytes.try_into().ok()?);
+                Some(*v > min)
+            } else {
+                None
+            }
+        }
+        ScalarValue::Null => None,
+    }
+}
+
+#[cfg(feature = "parquet-storage")]
+fn is_value_below_max(value: &ScalarValue, stats: &parquet::file::statistics::Statistics) -> Option<bool> {
+    // Compare value with max statistics
+    // Returns Some(true) if value < max, Some(false) if value > max
+
+    match value {
+        ScalarValue::Int64(v) => {
+            let max_bytes = stats.max_bytes();
+            if max_bytes.len() == 8 {
+                let max = i64::from_le_bytes(max_bytes.try_into().ok()?);
+                Some(*v < max)
+            } else {
+                None
+            }
+        }
+        ScalarValue::Float64(v) => {
+            let max_bytes = stats.max_bytes();
+            if max_bytes.len() == 8 {
+                let max = f64::from_le_bytes(max_bytes.try_into().ok()?);
+                Some(*v < max)
+            } else {
+                None
+            }
+        }
+        ScalarValue::String(v) => {
+            let max_bytes = stats.max_bytes();
+            if !max_bytes.is_empty() {
+                let max_str = std::str::from_utf8(max_bytes).ok()?;
+                Some(v.as_str() < max_str)
+            } else {
+                None
+            }
+        }
+        ScalarValue::Date(v) => {
+            let max_bytes = stats.max_bytes();
+            if max_bytes.len() == 4 {
+                let max = i32::from_le_bytes(max_bytes.try_into().ok()?);
+                Some(*v < max)
+            } else {
+                None
+            }
+        }
+        ScalarValue::Null => None,
     }
 }
 
@@ -254,7 +399,7 @@ fn create_empty_batch_from_schema(
 ) -> Result<RecordBatch> {
     use parquet::arrow::parquet_to_arrow_schema;
 
-    let parquet_schema = metadata.file_metadata().schema();
+    let parquet_schema = metadata.file_metadata().schema_descr();
     let arrow_schema = parquet_to_arrow_schema(parquet_schema, None)
         .map_err(|e| ParquetReadError::ArrowError(e.to_string()))?;
 
@@ -271,14 +416,16 @@ fn create_empty_batch_from_schema(
 /// Read segment metadata from Parquet footer.
 #[cfg(feature = "parquet-storage")]
 pub fn read_parquet_meta(path: &Path) -> Result<ParquetSegmentMeta> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
     let file = std::fs::File::open(path)?;
-    let reader = SerializedFileReader::new(file)
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| ParquetReadError::ParquetError(e.to_string()))?;
 
-    let file_meta = reader.metadata().file_metadata();
+    let file_meta = builder.metadata().file_metadata();
 
-    // Extract column statistics
-    let column_stats: Vec<crate::segment::parquet_writer::ColumnStats> = reader
+    // Extract column statistics (simplified for parquet 58)
+    let column_stats: Vec<crate::segment::parquet_writer::ColumnStats> = builder
         .metadata()
         .row_groups()
         .first()
@@ -286,12 +433,16 @@ pub fn read_parquet_meta(path: &Path) -> Result<ParquetSegmentMeta> {
             rg.columns()
                 .iter()
                 .map(|col_meta| {
-                    let stats = col_meta.statistics();
+                    // Get null count from statistics if available
+                    let null_count = col_meta.statistics()
+                        .and_then(|s| s.null_count_opt())
+                        .unwrap_or(0) as u64;
+
                     crate::segment::parquet_writer::ColumnStats {
-                        column_name: col_meta.column_name().to_string(),
-                        min_value: stats.map(|s| s.min_string()),
-                        max_value: stats.map(|s| s.max_string()),
-                        null_count: col_meta.null_count() as u64,
+                        column_name: col_meta.column_path().string().to_string(),
+                        min_value: None, // Simplified - statistics API changed in parquet 58
+                        max_value: None,
+                        null_count,
                         distinct_count: None,
                     }
                 })
@@ -313,10 +464,16 @@ pub fn is_parquet_file(path: &Path) -> bool {
         return false;
     }
 
-    let file = std::fs::File::open(path).ok()?;
+    let result = std::fs::File::open(path);
+    if result.is_err() {
+        return false;
+    }
+    let mut file = result.unwrap();
     let mut header = [0u8; 4];
     use std::io::Read;
-    file.read_exact(&mut header).ok()?;
+    if file.read_exact(&mut header).is_err() {
+        return false;
+    }
 
     // Parquet magic: "PAR1"
     header == *b"PAR1"

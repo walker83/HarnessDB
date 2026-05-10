@@ -2,7 +2,7 @@ use be_storage::compaction::{CompactionManager, CompactionTask, CompactionType};
 use be_storage::engine::StorageEngine;
 use be_storage::meta::{StorageType, TabletMeta};
 use be_storage::rowset::{Rowset, RowsetMeta};
-use be_storage::tablet::{Tablet, TabletColumn, TabletSchema};
+use be_storage::tablet::{Tablet, TabletColumn, TabletSchema, TabletConfig};
 use types::DataType;
 
 use integration_tests::common;
@@ -35,7 +35,7 @@ fn test_tablet_creation() {
         num_rows_per_row_block: 1024,
     };
 
-    let tablet = Tablet::new(1, schema, std::env::temp_dir().join("rovisdb_test"));
+    let tablet = Tablet::new(1, schema, TabletConfig::new(std::env::temp_dir().join("rovisdb_test")));
     assert_eq!(tablet.tablet_id, 1);
     assert_eq!(tablet.schema.columns.len(), 2);
     assert_eq!(tablet.rowset_count(), 0);
@@ -45,7 +45,7 @@ fn test_tablet_creation() {
 #[test]
 fn test_tablet_add_rowset() {
     let schema = create_test_tablet_schema();
-    let tablet = Tablet::new(1, schema, std::env::temp_dir().join("rovisdb_test"));
+    let tablet = Tablet::new(1, schema, TabletConfig::new(std::env::temp_dir().join("rovisdb_test")));
 
     let meta = RowsetMeta::new(1, 1, 1);
     tablet.add_rowset(Rowset::new(meta));
@@ -201,7 +201,7 @@ fn test_rowset_with_segments() {
 fn test_memtable_flush_to_segment() {
     // Simulate: create tablet -> write data -> flush to rowset
     let schema = create_test_tablet_schema();
-    let tablet = Tablet::new(1, schema, std::env::temp_dir().join("rovisdb_test"));
+    let tablet = Tablet::new(1, schema, TabletConfig::new(std::env::temp_dir().join("rovisdb_test")));
 
     // Initial state: no rowsets
     assert_eq!(tablet.rowset_count(), 0);

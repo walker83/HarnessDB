@@ -8,13 +8,9 @@
 #[cfg(feature = "parquet-storage")]
 use parquet::{
     file::properties::WriterProperties,
-    file::writer::SerializedFileWriter,
-    schema::types::Schema as ParquetSchema,
 };
 #[cfg(feature = "parquet-storage")]
 use arrow_array::RecordBatch;
-#[cfg(feature = "parquet-storage")]
-use arrow_schema::Schema as ArrowSchema;
 #[cfg(feature = "parquet-storage")]
 use std::sync::Arc;
 #[cfg(feature = "parquet-storage")]
@@ -98,9 +94,9 @@ impl From<Compression> for parquet::basic::Compression {
         match c {
             Compression::Uncompressed => parquet::basic::Compression::UNCOMPRESSED,
             Compression::SNAPPY => parquet::basic::Compression::SNAPPY,
-            Compression::GZIP => parquet::basic::Compression::GZIP,
+            Compression::GZIP => parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default()),
             Compression::LZ4 => parquet::basic::Compression::LZ4_RAW,
-            Compression::ZSTD => parquet::basic::Compression::ZSTD,
+            Compression::ZSTD => parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
         }
     }
 }
@@ -117,8 +113,11 @@ pub fn write_parquet_segment(
 
     // Configure writer properties
     let mut props_builder = WriterProperties::builder()
-        .set_compression(ParquetCompression::from(config.compression))
-        .set_statistics_enabled(parquet::file::properties::StatisticsEnabled::ENABLED);
+        .set_compression(ParquetCompression::from(config.compression));
+
+    // Enable statistics - use the correct API
+    use parquet::file::properties::EnabledStatistics;
+    props_builder = props_builder.set_statistics_enabled(EnabledStatistics::Page);
 
     if config.enable_bloom_filter {
         props_builder = props_builder.set_bloom_filter_enabled(true);
@@ -172,7 +171,7 @@ fn collect_column_stats(batch: &RecordBatch) -> Vec<ColumnStats> {
 }
 
 #[cfg(feature = "parquet-storage")]
-fn get_min_value(array: &arrow_array::Array, field: &arrow_schema::Field) -> Option<String> {
+fn get_min_value(array: &dyn arrow_array::Array, field: &arrow_schema::Field) -> Option<String> {
     use arrow_array::{Int64Array, Float64Array, StringArray, Date32Array};
 
     if array.is_empty() || array.null_count() == array.len() {
@@ -187,7 +186,16 @@ fn get_min_value(array: &arrow_array::Array, field: &arrow_schema::Field) -> Opt
         }
         arrow_schema::DataType::Float64 => {
             let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            arr.iter().filter_map(|v| v).min().map(|v| v.to_string())
+            // Float64 doesn't implement Ord, use partial_cmp
+            arr.iter()
+                .filter_map(|v| v)
+                .fold(None, |min: Option<f64>, v| {
+                    match min {
+                        None => Some(v),
+                        Some(m) => if v < m { Some(v) } else { Some(m) }
+                    }
+                })
+                .map(|v| v.to_string())
         }
         arrow_schema::DataType::Utf8 => {
             let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
@@ -202,7 +210,7 @@ fn get_min_value(array: &arrow_array::Array, field: &arrow_schema::Field) -> Opt
 }
 
 #[cfg(feature = "parquet-storage")]
-fn get_max_value(array: &arrow_array::Array, field: &arrow_schema::Field) -> Option<String> {
+fn get_max_value(array: &dyn arrow_array::Array, field: &arrow_schema::Field) -> Option<String> {
     use arrow_array::{Int64Array, Float64Array, StringArray, Date32Array};
 
     if array.is_empty() || array.null_count() == array.len() {
@@ -216,7 +224,16 @@ fn get_max_value(array: &arrow_array::Array, field: &arrow_schema::Field) -> Opt
         }
         arrow_schema::DataType::Float64 => {
             let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            arr.iter().filter_map(|v| v).max().map(|v| v.to_string())
+            // Float64 doesn't implement Ord, use partial_cmp
+            arr.iter()
+                .filter_map(|v| v)
+                .fold(None, |max: Option<f64>, v| {
+                    match max {
+                        None => Some(v),
+                        Some(m) => if v > m { Some(v) } else { Some(m) }
+                    }
+                })
+                .map(|v| v.to_string())
         }
         arrow_schema::DataType::Utf8 => {
             let arr = array.as_any().downcast_ref::<StringArray>().unwrap();

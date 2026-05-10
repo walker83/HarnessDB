@@ -2,7 +2,7 @@ use be_storage::compaction::{CompactionManager, CompactionTask, CompactionType};
 use be_storage::engine::StorageEngine;
 use be_storage::meta::{StorageType, TabletMeta};
 use be_storage::rowset::{Rowset, RowsetMeta, SegmentRef};
-use be_storage::tablet::{Tablet, TabletColumn, TabletSchema};
+use be_storage::tablet::{Tablet, TabletColumn, TabletSchema, TabletConfig};
 use types::DataType;
 use types::vector::{Float64Vector, Int64Vector, StringVector};
 use types::{Block, Field, Schema, ScalarValue, Vector};
@@ -57,7 +57,7 @@ fn test_tablet_write_read_lifecycle() {
     let dir = std::env::temp_dir().join("rorisdb_test_write_read");
     let _ = std::fs::remove_dir_all(&dir);
     let schema = test_tablet_schema();
-    let tablet = Tablet::new(1, schema, dir);
+    let tablet = Tablet::new(1, schema, TabletConfig::new(dir));
 
     assert_eq!(tablet.tablet_id, 1);
     assert_eq!(tablet.rowset_count(), 0);
@@ -74,7 +74,7 @@ fn test_multiple_rowsets() {
     let dir = std::env::temp_dir().join("rorisdb_test_multi_rowset");
     let _ = std::fs::remove_dir_all(&dir);
     let schema = test_tablet_schema();
-    let tablet = Tablet::new(1, schema, dir);
+    let tablet = Tablet::new(1, schema, TabletConfig::new(dir));
 
     for i in 1..=5 {
         let meta = RowsetMeta::new(i, 1, i as u64);

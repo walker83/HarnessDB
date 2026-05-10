@@ -22,4 +22,4 @@ arrow-cast = { workspace = true }
 fe-catalog = { workspace = true }
 types = { workspace = true }
 common = { workspace = true }
-be-storage = { workspace = true }
+be-storage = { workspace = true, features = ["parquet-storage"] }

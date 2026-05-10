@@ -9,6 +9,7 @@ use crate::meta_store::{MetaStore, CF_CATALOG, KEY_DB, KEY_TABLE, KEY_NEXT_ID, R
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use tracing::debug;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Database metadata (mirrors fe-catalog::Database).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,12 +146,12 @@ pub struct ColumnStats {
 
 /// Catalog store for managing database and table metadata in RocksDB.
 pub struct CatalogStore {
-    store: MetaStore,
+    store: Arc<MetaStore>,
 }
 
 impl CatalogStore {
     /// Create a new CatalogStore.
-    pub fn new(store: MetaStore) -> Self {
+    pub fn new(store: Arc<MetaStore>) -> Self {
         Self { store }
     }
 

@@ -894,13 +894,83 @@ impl Tablet {
                     }
                 }
 
-                // Track max segment ID
+                // Track max segment ID for .dat files
                 if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dat") {
                     if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
                         if file_name.starts_with("seg_") {
                             if let Ok(seg_id) = file_name[4..].parse::<u64>() {
                                 if seg_id > max_segment_id {
                                     max_segment_id = seg_id;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If no rowsets found from JSON files, scan for Parquet files directly
+            #[cfg(feature = "parquet-storage")]
+            if tablet.rowsets.read().is_empty() {
+                use crate::segment::is_parquet_file;
+                let entries = std::fs::read_dir(&tablet_dir)
+                    .map_err(|e| format!("Failed to read tablet directory for Parquet scan: {}", e))?;
+
+                for entry in entries {
+                    let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+                    let path = entry.path();
+
+                    if path.is_file() && is_parquet_file(&path) {
+                        if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                            if file_name.starts_with("seg_") {
+                                if let Ok(seg_id) = file_name[4..].parse::<u64>() {
+                                    // Get file size
+                                    let size = std::fs::metadata(&path)
+                                        .map(|m| m.len())
+                                        .unwrap_or(0);
+
+                                    // Read Parquet metadata to get row count
+                                    let num_rows = crate::segment::read_parquet_meta(&path)
+                                        .map(|m| m.num_rows)
+                                        .unwrap_or(0);
+
+                                    // Create a rowset for this Parquet file
+                                    let rowset_id = max_rowset_id + 1;
+                                    max_rowset_id = rowset_id;
+
+                                    if seg_id > max_segment_id {
+                                        max_segment_id = seg_id;
+                                    }
+
+                                    let rowset_meta = RowsetMeta {
+                                        rowset_id,
+                                        tablet_id,
+                                        txn_id: 0,
+                                        version: max_version + 1,
+                                        num_rows,
+                                        data_size: size,
+                                        num_segments: 1,
+                                        empty: false,
+                                        packed_data_size: size,
+                                        index_size: 0,
+                                    };
+
+                                    let seg_ref = SegmentRef {
+                                        segment_id: seg_id,
+                                        path: path.to_string_lossy().to_string(),
+                                        num_rows,
+                                        size,
+                                    };
+
+                                    let mut rowset = Rowset::with_segments(rowset_meta, vec![seg_ref]);
+                                    rowset.commit();
+                                    tablet.rowsets.write().push(rowset);
+
+                                    max_version += 1;
+
+                                    tracing::debug!(
+                                        "Recovered Parquet segment {} for tablet {}: {} rows, {} bytes",
+                                        seg_id, tablet_id, num_rows, size
+                                    );
                                 }
                             }
                         }
@@ -1189,6 +1259,28 @@ impl Tablet {
         self.memtable.read().to_block(schema)
     }
 
+    /// Get next segment ID (atomically increment and return).
+    fn next_segment_id(&self) -> u64 {
+        if let Some(backend) = &self.meta_backend {
+            backend.next_segment_id(self.tablet_id).unwrap_or_else(|_| {
+                self.next_segment_id.fetch_add(1, Ordering::SeqCst)
+            })
+        } else {
+            self.next_segment_id.fetch_add(1, Ordering::SeqCst)
+        }
+    }
+
+    /// Get next rowset ID (atomically increment and return).
+    fn next_rowset_id(&self) -> u64 {
+        if let Some(backend) = &self.meta_backend {
+            backend.next_rowset_id(self.tablet_id).unwrap_or_else(|_| {
+                self.next_rowset_id.fetch_add(1, Ordering::SeqCst)
+            })
+        } else {
+            self.next_rowset_id.fetch_add(1, Ordering::SeqCst)
+        }
+    }
+
     // =========================================================================
     // Arrow/Parquet interfaces (when parquet-storage feature is enabled)
     // =========================================================================
@@ -1300,7 +1392,7 @@ impl Tablet {
         }
 
         // Concatenate all batches
-        let merged = arrow_array::compute::concat_batches(&arrow_schema, &batches)
+        let merged = arrow_select::concat::concat_batches(&arrow_schema, &batches)
             .map_err(|e| e.to_string())?;
 
         // Apply projection
@@ -1335,22 +1427,28 @@ impl Tablet {
     pub fn flush_parquet(&self) -> Result<(), String> {
         use crate::segment::{write_parquet_segment, ParquetWriterConfig};
 
-        let memtable = self.memtable.read();
-        if memtable.is_empty() {
-            return Ok(());
-        }
+        // First check if memtable is empty and get the data
+        let (block, batch) = {
+            let memtable = self.memtable.read();
+            if memtable.is_empty() {
+                return Ok(());
+            }
 
-        let schema = self.schema.to_schema();
-        let block = memtable.to_block(&schema);
+            let schema = self.schema.to_schema();
+            let block = memtable.to_block(&schema);
 
-        // Convert to RecordBatch
-        let batch = block_to_record_batch(&block)?;
+            // Convert to RecordBatch
+            let batch = block_to_record_batch(&block)?;
+            (block, batch)
+        };
 
         // Get next segment ID
         let seg_id = self.next_segment_id();
 
         // Write Parquet file
         let tablet_dir = self.data_dir.join(format!("tablet_{}", self.tablet_id));
+        std::fs::create_dir_all(&tablet_dir)
+            .map_err(|e| format!("Create tablet dir: {}", e))?;
         let seg_path = tablet_dir.join(format!("seg_{}.parquet", seg_id));
 
         let config = ParquetWriterConfig::default();
@@ -1388,7 +1486,9 @@ impl Tablet {
         }
 
         self.rowsets.write().push(rowset);
-        memtable.clear();
+
+        // Now clear the memtable with a write lock
+        self.memtable.write().clear();
 
         tracing::info!(
             "Flushed tablet {} to Parquet: {} rows, {} bytes",
@@ -1411,7 +1511,7 @@ fn to_arrow_data_type(dt: &types::DataType) -> arrow_schema::DataType {
         types::DataType::Int16 => ArrowDT::Int16,
         types::DataType::Int32 => ArrowDT::Int32,
         types::DataType::Int64 => ArrowDT::Int64,
-        types::DataType::Int128 => ArrowDT::Int128,
+        types::DataType::Int128 => ArrowDT::Decimal128(38, 0),
         types::DataType::Float32 => ArrowDT::Float32,
         types::DataType::Float64 => ArrowDT::Float64,
         types::DataType::String => ArrowDT::Utf8,
@@ -1424,7 +1524,7 @@ fn to_arrow_data_type(dt: &types::DataType) -> arrow_schema::DataType {
 /// Convert Block to Arrow RecordBatch.
 #[cfg(feature = "parquet-storage")]
 fn block_to_record_batch(block: &Block) -> Result<arrow_array::RecordBatch, String> {
-    use arrow_array::{Array, Int64Array, Float64Array, StringArray, Date32Array, BooleanArray};
+    use arrow_array::{Array, Int8Array, Int16Array, Int32Array, Int64Array, Float32Array, Float64Array, StringArray, Date32Array, TimestampSecondArray, BooleanArray, RecordBatch};
     use arrow_schema::{Schema as ArrowSchema, Field};
 
     // Build Arrow schema
@@ -1437,10 +1537,26 @@ fn block_to_record_batch(block: &Block) -> Result<arrow_array::RecordBatch, Stri
     let columns: Vec<Arc<dyn Array>> = (0..block.num_columns())
         .map(|col_idx| {
             let col = block.column(col_idx).unwrap();
-            match col {
+            let arr: Arc<dyn Array> = match col {
+                types::Vector::Int8(v) => {
+                    let data: Vec<Option<i8>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(Int8Array::from(data))
+                }
+                types::Vector::Int16(v) => {
+                    let data: Vec<Option<i16>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(Int16Array::from(data))
+                }
+                types::Vector::Int32(v) => {
+                    let data: Vec<Option<i32>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(Int32Array::from(data))
+                }
                 types::Vector::Int64(v) => {
                     let data: Vec<Option<i64>> = (0..v.len()).map(|i| v.get(i)).collect();
                     Arc::new(Int64Array::from(data))
+                }
+                types::Vector::Float32(v) => {
+                    let data: Vec<Option<f32>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(Float32Array::from(data))
                 }
                 types::Vector::Float64(v) => {
                     let data: Vec<Option<f64>> = (0..v.len()).map(|i| v.get(i)).collect();
@@ -1456,12 +1572,23 @@ fn block_to_record_batch(block: &Block) -> Result<arrow_array::RecordBatch, Stri
                     let data: Vec<Option<i32>> = (0..v.len()).map(|i| v.get(i)).collect();
                     Arc::new(Date32Array::from(data))
                 }
+                types::Vector::DateTime(v) => {
+                    let data: Vec<Option<i64>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(TimestampSecondArray::from(data))
+                }
                 types::Vector::Boolean(v) => {
                     let data: Vec<Option<bool>> = (0..v.len()).map(|i| v.get(i)).collect();
                     Arc::new(BooleanArray::from(data))
                 }
-                _ => arrow_array::new_null_array(&to_arrow_data_type(&col.data_type()), col.len()),
-            }
+                types::Vector::Null(v) => {
+                    arrow_array::new_null_array(&to_arrow_data_type(&col.data_type()), col.len())
+                }
+                _ => {
+                    tracing::warn!("Unsupported vector type for Arrow conversion: {:?}", col);
+                    arrow_array::new_null_array(&to_arrow_data_type(&col.data_type()), col.len())
+                }
+            };
+            arr
         })
         .collect();
 

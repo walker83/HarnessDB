@@ -107,6 +107,15 @@ impl TpchBenchmark {
             }
         }
 
+        // Flush all tablets to Parquet for persistence
+        tracing::info!("Flushing tablets to Parquet...");
+        for (id, _name, _block) in table_specs {
+            if let Err(e) = storage.flush_to_parquet(id) {
+                tracing::warn!("Failed to flush tablet {} to Parquet: {}", id, e);
+            }
+        }
+        tracing::info!("Flush complete");
+
         tracing::info!("TPC-H tables setup complete");
     }
 

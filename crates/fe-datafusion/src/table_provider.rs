@@ -13,8 +13,8 @@ use be_storage::StorageEngine;
 
 /// A DataFusion `TableProvider` backed by RorisDB's storage engine.
 ///
-/// On each `scan()`, reads all data from the storage tablet, converts to Arrow
-/// `RecordBatch`, and delegates execution to `MemTable`.
+/// On each `scan()`, reads all data from the storage tablet using Arrow interface,
+/// and delegates execution to `MemTable`.
 pub struct RorisTableProvider {
     schema: Arc<ArrowSchema>,
     storage: Arc<StorageEngine>,
@@ -83,13 +83,22 @@ impl TableProvider for RorisTableProvider {
         filters: &[datafusion::prelude::Expr],
         limit: Option<usize>,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
-        // Read all data from storage
-        let block = self.storage
-            .read_tablet(self.tablet_id, None, &[])
-            .map_err(|e| DataFusionError::Execution(format!("Failed to read tablet {}: {}", self.tablet_id, e)))?;
+        // Convert DataFusion filters to storage predicates (basic support)
+        let predicates: Vec<be_storage::segment::ReadPredicate> = filters
+            .iter()
+            .filter_map(|expr| crate::types::expr_to_predicate(expr, &self.schema))
+            .collect();
 
-        let rb = crate::block_convert::block_to_record_batch(&block)
-            .map_err(DataFusionError::Execution)?;
+        // Read all columns from storage - let MemTable handle projection
+        // This ensures the RecordBatch schema matches the table schema
+        let rb = self.storage
+            .read_tablet_arrow(
+                self.tablet_id,
+                None, // Read all columns
+                &predicates,
+                limit,
+            )
+            .map_err(|e| DataFusionError::Execution(format!("Failed to read tablet {}: {}", self.tablet_id, e)))?;
 
         // Wrap in MemTable and delegate scan to it — this handles projection,
         // filter pushdown, and creates the proper MemoryExec internally.

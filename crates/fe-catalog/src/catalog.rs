@@ -10,11 +10,504 @@ use crate::materialized_view::MaterializedView;
 use crate::table::Table;
 use common::{DrorisError, Result, CatalogError};
 
+/// Configuration for CatalogManager backend selection.
+#[derive(Debug, Clone)]
+pub struct CatalogConfig {
+    /// Path for metadata storage (JSON file or RocksDB directory)
+    pub catalog_path: String,
+    /// Use RocksDB backend instead of JSON
+    pub use_rocks_meta: bool,
+    /// Enable dual-write mode (write to both backends during transition)
+    pub dual_write: bool,
+}
+
+impl Default for CatalogConfig {
+    fn default() -> Self {
+        Self {
+            catalog_path: "data/fe/doris-meta".to_string(),
+            use_rocks_meta: false,
+            dual_write: false,
+        }
+    }
+}
+
+/// Trait for metadata backend implementations.
+/// Allows switching between JSON files and RocksDB storage.
+pub trait MetaBackend: Send + Sync {
+    /// Store a database
+    fn put_database(&self, name: &str, db: &Database) -> Result<()>;
+
+    /// Retrieve a database by name
+    fn get_database(&self, name: &str) -> Result<Option<Database>>;
+
+    /// Delete a database by name
+    fn delete_database(&self, name: &str) -> Result<()>;
+
+    /// List all database names
+    fn list_databases(&self) -> Result<Vec<String>>;
+
+    /// Store a table
+    fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()>;
+
+    /// Retrieve a table by database and name
+    fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>>;
+
+    /// Delete a table by database and name
+    fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()>;
+
+    /// List all table names in a database
+    fn list_tables(&self, db_name: &str) -> Result<Vec<String>>;
+
+    /// Get the next unique ID atomically
+    fn next_id(&self) -> Result<u64>;
+
+    /// Set the ID counter (for recovery/migration)
+    fn set_next_id(&self, value: u64) -> Result<()>;
+
+    /// Get current ID counter value
+    fn get_next_id(&self) -> Result<u64>;
+
+    /// Store a materialized view
+    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()>;
+
+    /// Get a materialized view
+    fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>>;
+
+    /// Delete a materialized view
+    fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()>;
+
+    /// List all materialized views in a database
+    fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>>;
+
+    /// Flush data to persistent storage
+    fn flush(&self) -> Result<()>;
+
+    /// Load data from persistent storage
+    fn load(&self) -> Result<()>;
+}
+
+/// JSON-based metadata backend (legacy).
+/// Stores metadata in a single JSON file.
+pub struct JsonMetaBackend {
+    catalog_path: String,
+    databases: DashMap<String, Database>,
+    materialized_views: DashMap<String, MaterializedView>,
+    next_id: AtomicU64,
+}
+
+impl JsonMetaBackend {
+    pub fn new(catalog_path: impl Into<String>) -> Self {
+        Self {
+            catalog_path: catalog_path.into(),
+            databases: DashMap::new(),
+            materialized_views: DashMap::new(),
+            next_id: AtomicU64::new(1),
+        }
+    }
+
+    fn catalog_file(&self) -> String {
+        format!("{}/catalog.json", self.catalog_path)
+    }
+}
+
+impl MetaBackend for JsonMetaBackend {
+    fn put_database(&self, name: &str, db: &Database) -> Result<()> {
+        self.databases.insert(name.to_string(), db.clone());
+        Ok(())
+    }
+
+    fn get_database(&self, name: &str) -> Result<Option<Database>> {
+        Ok(self.databases.get(name).map(|r| r.value().clone()))
+    }
+
+    fn delete_database(&self, name: &str) -> Result<()> {
+        self.databases.remove(name);
+        Ok(())
+    }
+
+    fn list_databases(&self) -> Result<Vec<String>> {
+        Ok(self.databases.iter().map(|r| r.key().clone()).collect())
+    }
+
+    fn put_table(&self, db_name: &str, _table_name: &str, table: &Table) -> Result<()> {
+        if let Some(mut db) = self.databases.get_mut(db_name) {
+            db.add_table(table.clone());
+        }
+        Ok(())
+    }
+
+    fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
+        Ok(self.databases.get(db_name)
+            .and_then(|db| db.get_table(table_name).cloned()))
+    }
+
+    fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
+        if let Some(mut db) = self.databases.get_mut(db_name) {
+            db.drop_table(table_name);
+        }
+        Ok(())
+    }
+
+    fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
+        Ok(self.databases.get(db_name)
+            .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default())
+    }
+
+    fn next_id(&self) -> Result<u64> {
+        Ok(self.next_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn set_next_id(&self, value: u64) -> Result<()> {
+        self.next_id.store(value, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn get_next_id(&self) -> Result<u64> {
+        Ok(self.next_id.load(Ordering::SeqCst))
+    }
+
+    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+        let key = format!("{}.{}", db_name, name);
+        self.materialized_views.insert(key, mv.clone());
+        Ok(())
+    }
+
+    fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
+        let key = format!("{}.{}", db_name, name);
+        Ok(self.materialized_views.get(&key).map(|r| r.value().clone()))
+    }
+
+    fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
+        let key = format!("{}.{}", db_name, name);
+        self.materialized_views.remove(&key);
+        Ok(())
+    }
+
+    fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
+        let prefix = format!("{}.", db_name);
+        Ok(self.materialized_views.iter()
+            .filter(|r| r.key().starts_with(&prefix))
+            .map(|r| r.value().clone())
+            .collect())
+    }
+
+    fn flush(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn load(&self) -> Result<()> {
+        use std::fs;
+
+        let path = self.catalog_file();
+        if !std::path::Path::new(&path).exists() {
+            return Ok(());
+        }
+        let contents = fs::read_to_string(&path)?;
+        let state: CatalogState = serde_json::from_str(&contents)
+            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        for (key, value) in state.databases {
+            self.databases.insert(key, value);
+        }
+        for (key, value) in state.materialized_views {
+            self.materialized_views.insert(key, value);
+        }
+        self.next_id.store(state.next_id, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+impl JsonMetaBackend {
+    /// Save catalog state to JSON file
+    pub fn save(&self) -> Result<()> {
+        use std::fs;
+
+        let catalog_state = CatalogState {
+            databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+            materialized_views: self.materialized_views.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+            next_id: self.next_id.load(Ordering::Relaxed),
+        };
+        let json = serde_json::to_string(&catalog_state)
+            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let path = self.catalog_file();
+        fs::create_dir_all(&self.catalog_path)?;
+        fs::write(&path, json.as_bytes())?;
+        Ok(())
+    }
+
+    /// Load catalog state from JSON file
+    pub fn load(&self) -> Result<()> {
+        use std::fs;
+
+        let path = self.catalog_file();
+        if !std::path::Path::new(&path).exists() {
+            return Ok(());
+        }
+        let contents = fs::read_to_string(&path)?;
+        let state: CatalogState = serde_json::from_str(&contents)
+            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        for (key, value) in state.databases {
+            self.databases.insert(key, value);
+        }
+        for (key, value) in state.materialized_views {
+            self.materialized_views.insert(key, value);
+        }
+        self.next_id.store(state.next_id, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// RocksDB-based metadata backend.
+/// Uses be-rocks::CatalogStore for persistent storage.
+pub struct RocksMetaBackend {
+    catalog_store: be_rocks::CatalogStore,
+}
+
+impl RocksMetaBackend {
+    pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let meta_store = be_rocks::MetaStore::open(path)
+            .map_err(|e| DrorisError::Internal(format!("Failed to open RocksDB: {}", e)))?;
+        let catalog_store = be_rocks::CatalogStore::new(Arc::new(meta_store));
+        Ok(Self { catalog_store })
+    }
+}
+
+impl MetaBackend for RocksMetaBackend {
+    fn put_database(&self, name: &str, db: &Database) -> Result<()> {
+        // Serialize fe_catalog::Database to JSON bytes and store raw
+        let data = serde_json::to_vec(db)
+            .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
+        self.catalog_store.put_database_raw(name, &data)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn get_database(&self, name: &str) -> Result<Option<Database>> {
+        // Get raw bytes and deserialize into fe_catalog::Database
+        let data = self.catalog_store.get_database_raw(name)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+        data.map(|d| serde_json::from_slice(&d))
+            .transpose()
+            .map_err(|e| DrorisError::Internal(format!("Deserialization error: {}", e)))
+    }
+
+    fn delete_database(&self, name: &str) -> Result<()> {
+        self.catalog_store.delete_database(name)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn list_databases(&self) -> Result<Vec<String>> {
+        self.catalog_store.list_databases()
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()> {
+        // Serialize fe_catalog::Table to JSON bytes and store raw
+        let data = serde_json::to_vec(table)
+            .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
+        self.catalog_store.put_table_raw(db_name, table_name, &data)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
+        // Get raw bytes and deserialize into fe_catalog::Table
+        let data = self.catalog_store.get_table_raw(db_name, table_name)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+        data.map(|d| serde_json::from_slice(&d))
+            .transpose()
+            .map_err(|e| DrorisError::Internal(format!("Deserialization error: {}", e)))
+    }
+
+    fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
+        self.catalog_store.delete_table(db_name, table_name)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
+        self.catalog_store.list_tables(db_name)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn next_id(&self) -> Result<u64> {
+        self.catalog_store.next_id()
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn set_next_id(&self, value: u64) -> Result<()> {
+        self.catalog_store.set_next_id(value)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn get_next_id(&self) -> Result<u64> {
+        self.catalog_store.get_next_id()
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+        // Store materialized views with a special prefix
+        let key = format!("mv:{}.{}", db_name, name);
+        let value = serde_json::to_vec(mv)
+            .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
+        self.catalog_store.put_raw(&key, &value)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
+        let key = format!("mv:{}.{}", db_name, name);
+        let data = self.catalog_store.get_raw(&key)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+        data.map(|d| serde_json::from_slice(&d))
+            .transpose()
+            .map_err(|e| DrorisError::Internal(format!("Deserialization error: {}", e)))
+    }
+
+    fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
+        let key = format!("mv:{}.{}", db_name, name);
+        self.catalog_store.delete_raw(&key)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
+        let prefix = format!("mv:{}.", db_name);
+        let keys = self.catalog_store.list_keys_with_prefix_str(&prefix)
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+        let mut mvs = Vec::new();
+        for key in keys {
+            if let Some(data) = self.catalog_store.get_raw(&key)
+                .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))? {
+                if let Ok(mv) = serde_json::from_slice::<MaterializedView>(&data) {
+                    mvs.push(mv);
+                }
+            }
+        }
+        Ok(mvs)
+    }
+
+    fn flush(&self) -> Result<()> {
+        self.catalog_store.flush()
+            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn load(&self) -> Result<()> {
+        // RocksDB data is already persisted, no explicit load needed
+        Ok(())
+    }
+}
+
+/// Dual-write backend that writes to both backends simultaneously.
+/// Used during transition from JSON to RocksDB.
+pub struct DualWriteBackend {
+    primary: Arc<dyn MetaBackend>,
+    secondary: Arc<dyn MetaBackend>,
+}
+
+impl DualWriteBackend {
+    pub fn new(primary: Arc<dyn MetaBackend>, secondary: Arc<dyn MetaBackend>) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+impl MetaBackend for DualWriteBackend {
+    fn put_database(&self, name: &str, db: &Database) -> Result<()> {
+        self.primary.put_database(name, db)?;
+        // Ignore secondary errors in dual-write mode
+        let _ = self.secondary.put_database(name, db);
+        Ok(())
+    }
+
+    fn get_database(&self, name: &str) -> Result<Option<Database>> {
+        self.primary.get_database(name)
+    }
+
+    fn delete_database(&self, name: &str) -> Result<()> {
+        self.primary.delete_database(name)?;
+        let _ = self.secondary.delete_database(name);
+        Ok(())
+    }
+
+    fn list_databases(&self) -> Result<Vec<String>> {
+        self.primary.list_databases()
+    }
+
+    fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()> {
+        self.primary.put_table(db_name, table_name, table)?;
+        let _ = self.secondary.put_table(db_name, table_name, table);
+        Ok(())
+    }
+
+    fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
+        self.primary.get_table(db_name, table_name)
+    }
+
+    fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
+        self.primary.delete_table(db_name, table_name)?;
+        let _ = self.secondary.delete_table(db_name, table_name);
+        Ok(())
+    }
+
+    fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
+        self.primary.list_tables(db_name)
+    }
+
+    fn next_id(&self) -> Result<u64> {
+        // Synchronize IDs between backends
+        let id = self.primary.next_id()?;
+        let _ = self.secondary.set_next_id(id + 1);
+        Ok(id)
+    }
+
+    fn set_next_id(&self, value: u64) -> Result<()> {
+        self.primary.set_next_id(value)?;
+        let _ = self.secondary.set_next_id(value);
+        Ok(())
+    }
+
+    fn get_next_id(&self) -> Result<u64> {
+        self.primary.get_next_id()
+    }
+
+    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+        self.primary.put_materialized_view(db_name, name, mv)?;
+        let _ = self.secondary.put_materialized_view(db_name, name, mv);
+        Ok(())
+    }
+
+    fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
+        self.primary.get_materialized_view(db_name, name)
+    }
+
+    fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
+        self.primary.delete_materialized_view(db_name, name)?;
+        let _ = self.secondary.delete_materialized_view(db_name, name);
+        Ok(())
+    }
+
+    fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
+        self.primary.list_materialized_views(db_name)
+    }
+
+    fn flush(&self) -> Result<()> {
+        self.primary.flush()?;
+        let _ = self.secondary.flush();
+        Ok(())
+    }
+
+    fn load(&self) -> Result<()> {
+        self.primary.load()?;
+        let _ = self.secondary.load();
+        Ok(())
+    }
+}
+
+/// Catalog manager with pluggable backend.
+/// Supports JSON files, RocksDB, and dual-write mode.
 pub struct CatalogManager {
     databases: DashMap<String, Database>,
     materialized_views: DashMap<String, MaterializedView>,
     next_id: AtomicU64,
     catalog_path: String,
+    backend: Arc<dyn MetaBackend>,
+    /// Optional secondary backend for dual-write mode
+    secondary_backend: Option<Arc<dyn MetaBackend>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -34,11 +527,30 @@ pub struct CatalogWriter {
 }
 
 impl CatalogManager {
+    /// Create a new CatalogManager with default JSON backend.
     pub fn new() -> Self {
-        Self::with_path("data/fe/doris-meta")
+        Self::with_config(CatalogConfig::default())
     }
 
+    /// Create a CatalogManager with a specific path (JSON backend).
     pub fn with_path(path: impl Into<String>) -> Self {
+        Self::with_config(CatalogConfig {
+            catalog_path: path.into(),
+            use_rocks_meta: false,
+            dual_write: false,
+        })
+    }
+
+    /// Create a CatalogManager with the specified configuration.
+    pub fn with_config(config: CatalogConfig) -> Self {
+        let backend: Arc<dyn MetaBackend> = if config.use_rocks_meta {
+            let rocks_path = format!("{}/rocksdb", config.catalog_path);
+            Arc::new(RocksMetaBackend::new(&rocks_path)
+                .expect("Failed to initialize RocksDB backend"))
+        } else {
+            Arc::new(JsonMetaBackend::new(&config.catalog_path))
+        };
+
         let dbs = DashMap::new();
         dbs.insert("information_schema".into(), Database::new(0, "information_schema"));
 
@@ -46,7 +558,48 @@ impl CatalogManager {
             databases: dbs,
             materialized_views: DashMap::new(),
             next_id: AtomicU64::new(1),
-            catalog_path: path.into(),
+            catalog_path: config.catalog_path,
+            backend,
+            secondary_backend: None,
+        }
+    }
+
+    /// Create a CatalogManager with dual-write mode.
+    /// Writes go to both JSON and RocksDB backends.
+    pub fn with_dual_write(path: impl Into<String>) -> Self {
+        let path = path.into();
+        let json_backend = Arc::new(JsonMetaBackend::new(&path));
+        let rocks_path = format!("{}/rocksdb", path);
+        let rocks_backend = Arc::new(RocksMetaBackend::new(&rocks_path)
+            .expect("Failed to initialize RocksDB backend"));
+
+        let dual_backend = Arc::new(DualWriteBackend::new(json_backend.clone(), rocks_backend.clone()));
+
+        let dbs = DashMap::new();
+        dbs.insert("information_schema".into(), Database::new(0, "information_schema"));
+
+        Self {
+            databases: dbs,
+            materialized_views: DashMap::new(),
+            next_id: AtomicU64::new(1),
+            catalog_path: path,
+            backend: dual_backend,
+            secondary_backend: None,
+        }
+    }
+
+    /// Get the backend type name for logging/debugging.
+    pub fn backend_type(&self) -> &'static str {
+        if self.secondary_backend.is_some() {
+            "dual-write"
+        } else if self.backend.as_any().downcast_ref::<RocksMetaBackend>().is_some() {
+            "rocksdb"
+        } else if self.backend.as_any().downcast_ref::<JsonMetaBackend>().is_some() {
+            "json"
+        } else if self.backend.as_any().downcast_ref::<DualWriteBackend>().is_some() {
+            "dual-write"
+        } else {
+            "unknown"
         }
     }
 
@@ -55,13 +608,16 @@ impl CatalogManager {
             return Err(DrorisError::catalog(CatalogError::DatabaseAlreadyExists, format!("database '{}' already exists", name)));
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.databases.insert(name.to_string(), Database::new(id, name));
+        let db = Database::new(id, name);
+        self.backend.put_database(name, &db)?;
+        self.databases.insert(name.to_string(), db);
         Ok(())
     }
 
     pub fn drop_database(&self, name: &str) -> Result<()> {
         self.databases.remove(name)
             .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", name)))?;
+        self.backend.delete_database(name)?;
         Ok(())
     }
 
@@ -80,6 +636,7 @@ impl CatalogManager {
     pub fn create_table(&self, db_name: &str, table: Table) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name)
             .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
+        self.backend.put_table(db_name, &table.name, &table)?;
         db_ref.add_table(table);
         Ok(())
     }
@@ -89,6 +646,7 @@ impl CatalogManager {
             .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
         db_ref.drop_table(table_name)
             .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound, format!("table '{}' not found", table_name)))?;
+        self.backend.delete_table(db_name, table_name)?;
         Ok(())
     }
 
@@ -104,6 +662,7 @@ impl CatalogManager {
 
     pub fn create_materialized_view(&self, mv: MaterializedView) -> common::Result<()> {
         let key = format!("{}.{}", mv.database, mv.name);
+        self.backend.put_materialized_view(&mv.database, &mv.name, &mv)?;
         self.materialized_views.insert(key, mv);
         Ok(())
     }
@@ -112,6 +671,7 @@ impl CatalogManager {
         let key = format!("{}.{}", db_name, name);
         self.materialized_views.remove(&key)
             .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound, format!("materialized view '{}' not found", name)))?;
+        self.backend.delete_materialized_view(db_name, name)?;
         Ok(())
     }
 
@@ -132,7 +692,7 @@ impl CatalogManager {
         self.materialized_views.iter().map(|r| r.value().clone()).collect()
     }
 
-    /// Serialize catalog state to JSON file
+    /// Serialize catalog state to JSON file (for backward compatibility)
     pub fn save(&self) -> common::Result<()> {
         use std::fs;
 
@@ -146,27 +706,54 @@ impl CatalogManager {
         let path = format!("{}/catalog.json", self.catalog_path);
         fs::create_dir_all(&self.catalog_path)?;
         fs::write(&path, json.as_bytes())?;
+
+        // Also flush the backend
+        self.backend.flush()?;
         Ok(())
     }
 
-    /// Load catalog state from JSON file
+    /// Load catalog state from backend
     pub fn load(&self) -> common::Result<()> {
-        use std::fs;
+        // First, load the backend's internal state (e.g., from JSON file for JsonMetaBackend)
+        self.backend.load()?;
 
-        let path = format!("{}/catalog.json", self.catalog_path);
-        if !std::path::Path::new(&path).exists() {
-            return Ok(());
+        // Then populate CatalogManager's DashMaps from backend
+        let databases = self.backend.list_databases()?;
+        for db_name in databases {
+            if let Some(db) = self.backend.get_database(&db_name)? {
+                self.databases.insert(db_name, db);
+            }
         }
-        let contents = fs::read_to_string(&path)?;
-        let state: CatalogState = serde_json::from_str(&contents)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
-        for (key, value) in state.databases {
-            self.databases.insert(key, value);
+
+        // Load tables for each database - collect updates first to avoid DashMap deadlock
+        let updates: Vec<(String, Database)> = self.databases.iter()
+            .filter_map(|entry| {
+                let db_name = entry.key();
+                let db = entry.value();
+                if let Ok(tables) = self.backend.list_tables(db_name) {
+                    let mut updated_db = db.clone();
+                    for table_name in tables {
+                        if let Ok(Some(table)) = self.backend.get_table(db_name, &table_name) {
+                            updated_db.add_table(table);
+                        }
+                    }
+                    Some((db_name.clone(), updated_db))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Apply updates after iteration completes
+        for (db_name, db) in updates {
+            self.databases.insert(db_name, db);
         }
-        for (key, value) in state.materialized_views {
-            self.materialized_views.insert(key, value);
+
+        // Load next_id from backend
+        if let Ok(id) = self.backend.get_next_id() {
+            self.next_id.store(id, Ordering::SeqCst);
         }
-        self.next_id.store(state.next_id, Ordering::SeqCst);
+
         Ok(())
     }
 
@@ -253,12 +840,77 @@ impl CatalogWriter {
     }
 
     pub async fn drop_table(&self, db_name: &str, table_name: &str) -> common::Result<()> {
-        let op = CatalogOp::DropTable { db: db_name.to_string(), table: table_name.to_string() };
+        let op = CatalogOp::DropTable { db: db_name.to_string(), table: db_name.to_string() };
         let data = serde_json::to_vec(&op)
             .map_err(|e| DrorisError::Internal(e.to_string()))?;
         let _index = self.edit_log.write().await.append(fe_common::edit_log::OpType::DropTable, data);
         self.catalog.write().await.drop_table(db_name, table_name)?;
         Ok(())
+    }
+}
+
+/// Helper trait for downcasting MetaBackend implementations
+trait AsAny {
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+impl<T: 'static> AsAny for T {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl MetaBackend for Arc<dyn MetaBackend> {
+    fn put_database(&self, name: &str, db: &Database) -> Result<()> {
+        (**self).put_database(name, db)
+    }
+    fn get_database(&self, name: &str) -> Result<Option<Database>> {
+        (**self).get_database(name)
+    }
+    fn delete_database(&self, name: &str) -> Result<()> {
+        (**self).delete_database(name)
+    }
+    fn list_databases(&self) -> Result<Vec<String>> {
+        (**self).list_databases()
+    }
+    fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()> {
+        (**self).put_table(db_name, table_name, table)
+    }
+    fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
+        (**self).get_table(db_name, table_name)
+    }
+    fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
+        (**self).delete_table(db_name, table_name)
+    }
+    fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
+        (**self).list_tables(db_name)
+    }
+    fn next_id(&self) -> Result<u64> {
+        (**self).next_id()
+    }
+    fn set_next_id(&self, value: u64) -> Result<()> {
+        (**self).set_next_id(value)
+    }
+    fn get_next_id(&self) -> Result<u64> {
+        (**self).get_next_id()
+    }
+    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+        (**self).put_materialized_view(db_name, name, mv)
+    }
+    fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
+        (**self).get_materialized_view(db_name, name)
+    }
+    fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
+        (**self).delete_materialized_view(db_name, name)
+    }
+    fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
+        (**self).list_materialized_views(db_name)
+    }
+    fn flush(&self) -> Result<()> {
+        (**self).flush()
+    }
+    fn load(&self) -> Result<()> {
+        (**self).load()
     }
 }
 
@@ -380,10 +1032,52 @@ mod tests {
         mgr.create_table("saved_db", make_table(1, "saved_table")).unwrap();
         mgr.save().unwrap();
 
-        let mut mgr2 = CatalogManager::with_path(&dir);
+        let mgr2 = CatalogManager::with_path(&dir);
         mgr2.load().unwrap();
         assert!(mgr2.get_database("saved_db").is_some());
         assert!(mgr2.get_table("saved_db", "saved_table").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_rocks_backend() {
+        let dir = format!("/tmp/rovisdb_test_rocks_{}", std::process::id());
+        let config = CatalogConfig {
+            catalog_path: dir.clone(),
+            use_rocks_meta: true,
+            dual_write: false,
+        };
+        let mgr = CatalogManager::with_config(config);
+        assert_eq!(mgr.backend_type(), "rocksdb");
+
+        mgr.create_database("rocks_db").unwrap();
+        mgr.create_table("rocks_db", make_table(1, "rocks_table")).unwrap();
+        mgr.save().unwrap();
+
+        // Reopen and verify
+        let config2 = CatalogConfig {
+            catalog_path: dir.clone(),
+            use_rocks_meta: true,
+            dual_write: false,
+        };
+        let mgr2 = CatalogManager::with_config(config2);
+        mgr2.load().unwrap();
+        assert!(mgr2.get_database("rocks_db").is_some());
+        assert!(mgr2.get_table("rocks_db", "rocks_table").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_dual_write_backend() {
+        let dir = format!("/tmp/rovisdb_test_dual_{}", std::process::id());
+        let mgr = CatalogManager::with_dual_write(&dir);
+        assert_eq!(mgr.backend_type(), "dual-write");
+
+        mgr.create_database("dual_db").unwrap();
+        mgr.create_table("dual_db", make_table(1, "dual_table")).unwrap();
+        mgr.save().unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);
     }
