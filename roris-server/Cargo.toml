@@ -30,6 +30,7 @@ fe-datafusion = { workspace = true }
 mysql-protocol = { workspace = true }
 be-storage = { workspace = true }
 be-common = { workspace = true }
+be-rocks = { workspace = true }
 common = { workspace = true }
 rpc = { workspace = true }
 types = { workspace = true }

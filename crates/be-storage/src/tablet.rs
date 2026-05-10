@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 use types::{Block, DataType, Field, Schema, Vector, ScalarValue};
@@ -36,6 +37,400 @@ impl TabletSchema {
             .map(|c| Field::new(&c.name, c.data_type.clone(), c.nullable))
             .collect();
         Schema::new(fields)
+    }
+}
+
+/// Error type for tablet metadata backend operations.
+#[derive(Debug, thiserror::Error)]
+pub enum TabletMetaError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Serialization error: {0}")]
+    Serialize(#[from] serde_json::Error),
+    #[error("Path error: {0}")]
+    Path(String),
+    #[error("RocksDB error: {0}")]
+    RocksDb(String),
+    #[error("Backend not available: {0}")]
+    NotAvailable(String),
+}
+
+/// Backend trait for tablet metadata storage.
+/// Allows swapping between JSON files and RocksDB storage.
+pub trait TabletMetaBackend: Send + Sync {
+    /// Save tablet schema.
+    fn save_schema(&self, tablet_id: u64, schema: &TabletSchema) -> Result<(), TabletMetaError>;
+
+    /// Load tablet schema.
+    fn load_schema(&self, tablet_id: u64) -> Result<Option<TabletSchema>, TabletMetaError>;
+
+    /// Save rowset metadata.
+    fn save_rowset(&self, tablet_id: u64, rowset_id: u64, meta: &RowsetMeta, segments: &[SegmentRef]) -> Result<(), TabletMetaError>;
+
+    /// Load rowset metadata.
+    fn load_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<Option<(RowsetMeta, Vec<SegmentRef>)>, TabletMetaError>;
+
+    /// List all rowset IDs for a tablet.
+    fn list_rowsets(&self, tablet_id: u64) -> Result<Vec<u64>, TabletMetaError>;
+
+    /// Delete a rowset.
+    fn delete_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<(), TabletMetaError>;
+
+    /// Delete all metadata for a tablet.
+    fn delete_tablet(&self, tablet_id: u64) -> Result<(), TabletMetaError>;
+
+    /// Get the next rowset ID (atomically increment and return).
+    fn next_rowset_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError>;
+
+    /// Get the next segment ID (atomically increment and return).
+    fn next_segment_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError>;
+
+    /// Set the next rowset ID counter (for migration).
+    fn set_next_rowset_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError>;
+
+    /// Set the next segment ID counter (for migration).
+    fn set_next_segment_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError>;
+
+    /// Flush any pending writes.
+    fn flush(&self) -> Result<(), TabletMetaError>;
+}
+
+/// JSON file-based tablet metadata backend.
+/// Stores metadata in `{tablet_dir}/schema.json` and `{tablet_dir}/rowset_{id}.json`.
+pub struct JsonTabletMetaBackend {
+    data_dir: PathBuf,
+}
+
+impl JsonTabletMetaBackend {
+    pub fn new(data_dir: PathBuf) -> Self {
+        Self { data_dir }
+    }
+
+    fn tablet_dir(&self, tablet_id: u64) -> PathBuf {
+        self.data_dir.join(format!("tablet_{}", tablet_id))
+    }
+
+    fn schema_path(&self, tablet_id: u64) -> PathBuf {
+        self.tablet_dir(tablet_id).join("schema.json")
+    }
+
+    fn rowset_path(&self, tablet_id: u64, rowset_id: u64) -> PathBuf {
+        self.tablet_dir(tablet_id).join(format!("rowset_{}.json", rowset_id))
+    }
+}
+
+impl TabletMetaBackend for JsonTabletMetaBackend {
+    fn save_schema(&self, tablet_id: u64, schema: &TabletSchema) -> Result<(), TabletMetaError> {
+        let tablet_dir = self.tablet_dir(tablet_id);
+        std::fs::create_dir_all(&tablet_dir)?;
+        let path = self.schema_path(tablet_id);
+        let json = serde_json::to_string_pretty(schema)?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+
+    fn load_schema(&self, tablet_id: u64) -> Result<Option<TabletSchema>, TabletMetaError> {
+        let path = self.schema_path(tablet_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let json = std::fs::read_to_string(path)?;
+        let schema: TabletSchema = serde_json::from_str(&json)?;
+        Ok(Some(schema))
+    }
+
+    fn save_rowset(&self, tablet_id: u64, rowset_id: u64, meta: &RowsetMeta, segments: &[SegmentRef]) -> Result<(), TabletMetaError> {
+        let tablet_dir = self.tablet_dir(tablet_id);
+        std::fs::create_dir_all(&tablet_dir)?;
+        let path = self.rowset_path(tablet_id, rowset_id);
+        let json = serde_json::to_string_pretty(&(meta, segments))?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+
+    fn load_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<Option<(RowsetMeta, Vec<SegmentRef>)>, TabletMetaError> {
+        let path = self.rowset_path(tablet_id, rowset_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let json = std::fs::read_to_string(path)?;
+        let data: (RowsetMeta, Vec<SegmentRef>) = serde_json::from_str(&json)?;
+        Ok(Some(data))
+    }
+
+    fn list_rowsets(&self, tablet_id: u64) -> Result<Vec<u64>, TabletMetaError> {
+        let tablet_dir = self.tablet_dir(tablet_id);
+        if !tablet_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut rowset_ids = Vec::new();
+        for entry in std::fs::read_dir(&tablet_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                    if file_name.starts_with("rowset_") {
+                        if let Ok(id) = file_name[7..].parse::<u64>() {
+                            rowset_ids.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        rowset_ids.sort();
+        Ok(rowset_ids)
+    }
+
+    fn delete_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<(), TabletMetaError> {
+        let path = self.rowset_path(tablet_id, rowset_id);
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
+    fn delete_tablet(&self, tablet_id: u64) -> Result<(), TabletMetaError> {
+        let tablet_dir = self.tablet_dir(tablet_id);
+        if tablet_dir.exists() {
+            std::fs::remove_dir_all(tablet_dir)?;
+        }
+        Ok(())
+    }
+
+    fn next_rowset_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError> {
+        // JSON backend doesn't have atomic counters, read from file
+        let path = self.tablet_dir(tablet_id).join("next_rowset_id");
+        let current = if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            data.parse::<u64>().unwrap_or(0)
+        } else {
+            // Infer from existing rowsets
+            let rowsets = self.list_rowsets(tablet_id)?;
+            rowsets.into_iter().max().map(|m| m + 1).unwrap_or(1)
+        };
+        std::fs::write(&path, (current + 1).to_string())?;
+        Ok(current + 1)
+    }
+
+    fn next_segment_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError> {
+        // JSON backend doesn't have atomic counters, read from file
+        let path = self.tablet_dir(tablet_id).join("next_segment_id");
+        let current = if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            data.parse::<u64>().unwrap_or(0)
+        } else {
+            // Infer from existing segment files
+            let tablet_dir = self.tablet_dir(tablet_id);
+            let mut max_id = 0u64;
+            if tablet_dir.exists() {
+                for entry in std::fs::read_dir(&tablet_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dat") {
+                        if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                            if file_name.starts_with("seg_") {
+                                if let Ok(id) = file_name[4..].parse::<u64>() {
+                                    if id > max_id {
+                                        max_id = id;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            max_id + 1
+        };
+        std::fs::write(&path, (current + 1).to_string())?;
+        Ok(current + 1)
+    }
+
+    fn set_next_rowset_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError> {
+        let tablet_dir = self.tablet_dir(tablet_id);
+        std::fs::create_dir_all(&tablet_dir)?;
+        let path = tablet_dir.join("next_rowset_id");
+        std::fs::write(&path, value.to_string())?;
+        Ok(())
+    }
+
+    fn set_next_segment_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError> {
+        let tablet_dir = self.tablet_dir(tablet_id);
+        std::fs::create_dir_all(&tablet_dir)?;
+        let path = tablet_dir.join("next_segment_id");
+        std::fs::write(&path, value.to_string())?;
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), TabletMetaError> {
+        // JSON backend writes directly to disk, no flush needed
+        Ok(())
+    }
+}
+
+#[cfg(feature = "rocksdb")]
+mod rocks_backend {
+    use super::*;
+    use be_rocks::{MetaStore, TabletStore};
+
+    /// RocksDB-based tablet metadata backend.
+    /// Stores all metadata in a central RocksDB instance.
+    pub struct RocksTabletMetaBackend {
+        store: TabletStore,
+    }
+
+    impl RocksTabletMetaBackend {
+        pub fn new(store: MetaStore) -> Self {
+            Self { store: TabletStore::new(store) }
+        }
+
+        pub fn from_tablet_store(store: TabletStore) -> Self {
+            Self { store }
+        }
+    }
+
+    impl TabletMetaBackend for RocksTabletMetaBackend {
+        fn save_schema(&self, tablet_id: u64, schema: &TabletSchema) -> Result<(), TabletMetaError> {
+            self.store.put_schema(tablet_id, schema)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn load_schema(&self, tablet_id: u64) -> Result<Option<TabletSchema>, TabletMetaError> {
+            self.store.get_schema(tablet_id)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn save_rowset(&self, tablet_id: u64, rowset_id: u64, meta: &RowsetMeta, segments: &[SegmentRef]) -> Result<(), TabletMetaError> {
+            self.store.put_rowset(tablet_id, rowset_id, meta, segments)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn load_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<Option<(RowsetMeta, Vec<SegmentRef>)>, TabletMetaError> {
+            self.store.get_rowset(tablet_id, rowset_id)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn list_rowsets(&self, tablet_id: u64) -> Result<Vec<u64>, TabletMetaError> {
+            self.store.list_rowsets(tablet_id)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn delete_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<(), TabletMetaError> {
+            self.store.delete_rowset(tablet_id, rowset_id)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn delete_tablet(&self, tablet_id: u64) -> Result<(), TabletMetaError> {
+            self.store.delete_tablet(tablet_id)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn next_rowset_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError> {
+            self.store.next_rowset_id(tablet_id)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn next_segment_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError> {
+            self.store.next_segment_id(tablet_id)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn set_next_rowset_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError> {
+            self.store.set_next_rowset_id(tablet_id, value)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn set_next_segment_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError> {
+            self.store.set_next_segment_id(tablet_id, value)
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+
+        fn flush(&self) -> Result<(), TabletMetaError> {
+            self.store.flush()
+                .map_err(|e| TabletMetaError::RocksDb(e.to_string()))
+        }
+    }
+}
+
+#[cfg(feature = "rocksdb")]
+pub use rocks_backend::RocksTabletMetaBackend;
+
+/// Dual-write backend that writes to both JSON and RocksDB.
+/// Useful for migration - write to both, read from primary.
+pub struct DualWriteBackend {
+    primary: Arc<dyn TabletMetaBackend>,
+    secondary: Arc<dyn TabletMetaBackend>,
+}
+
+impl DualWriteBackend {
+    pub fn new(primary: Arc<dyn TabletMetaBackend>, secondary: Arc<dyn TabletMetaBackend>) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+impl TabletMetaBackend for DualWriteBackend {
+    fn save_schema(&self, tablet_id: u64, schema: &TabletSchema) -> Result<(), TabletMetaError> {
+        self.primary.save_schema(tablet_id, schema)?;
+        // Best-effort write to secondary
+        let _ = self.secondary.save_schema(tablet_id, schema);
+        Ok(())
+    }
+
+    fn load_schema(&self, tablet_id: u64) -> Result<Option<TabletSchema>, TabletMetaError> {
+        self.primary.load_schema(tablet_id)
+    }
+
+    fn save_rowset(&self, tablet_id: u64, rowset_id: u64, meta: &RowsetMeta, segments: &[SegmentRef]) -> Result<(), TabletMetaError> {
+        self.primary.save_rowset(tablet_id, rowset_id, meta, segments)?;
+        let _ = self.secondary.save_rowset(tablet_id, rowset_id, meta, segments);
+        Ok(())
+    }
+
+    fn load_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<Option<(RowsetMeta, Vec<SegmentRef>)>, TabletMetaError> {
+        self.primary.load_rowset(tablet_id, rowset_id)
+    }
+
+    fn list_rowsets(&self, tablet_id: u64) -> Result<Vec<u64>, TabletMetaError> {
+        self.primary.list_rowsets(tablet_id)
+    }
+
+    fn delete_rowset(&self, tablet_id: u64, rowset_id: u64) -> Result<(), TabletMetaError> {
+        self.primary.delete_rowset(tablet_id, rowset_id)?;
+        let _ = self.secondary.delete_rowset(tablet_id, rowset_id);
+        Ok(())
+    }
+
+    fn delete_tablet(&self, tablet_id: u64) -> Result<(), TabletMetaError> {
+        self.primary.delete_tablet(tablet_id)?;
+        let _ = self.secondary.delete_tablet(tablet_id);
+        Ok(())
+    }
+
+    fn next_rowset_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError> {
+        // Use primary for atomic counter
+        self.primary.next_rowset_id(tablet_id)
+    }
+
+    fn next_segment_id(&self, tablet_id: u64) -> Result<u64, TabletMetaError> {
+        self.primary.next_segment_id(tablet_id)
+    }
+
+    fn set_next_rowset_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError> {
+        self.primary.set_next_rowset_id(tablet_id, value)?;
+        let _ = self.secondary.set_next_rowset_id(tablet_id, value);
+        Ok(())
+    }
+
+    fn set_next_segment_id(&self, tablet_id: u64, value: u64) -> Result<(), TabletMetaError> {
+        self.primary.set_next_segment_id(tablet_id, value)?;
+        let _ = self.secondary.set_next_segment_id(tablet_id, value);
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), TabletMetaError> {
+        self.primary.flush()?;
+        let _ = self.secondary.flush();
+        Ok(())
     }
 }
 
@@ -345,6 +740,7 @@ pub fn truncate_tablet(tablet: &Tablet) -> Result<(), String> {
 }
 
 /// A tablet manages in-memory writes (memtable) and persistent rowsets.
+/// Supports both JSON and RocksDB metadata backends.
 pub struct Tablet {
     pub tablet_id: u64,
     pub schema: TabletSchema,
@@ -354,10 +750,35 @@ pub struct Tablet {
     data_dir: PathBuf,
     next_segment_id: AtomicU64,
     next_rowset_id: AtomicU64,
+    meta_backend: Option<Arc<dyn TabletMetaBackend>>,
+}
+
+/// Configuration for tablet loading.
+#[derive(Clone)]
+pub struct TabletConfig {
+    pub data_dir: PathBuf,
+    pub meta_backend: Option<Arc<dyn TabletMetaBackend>>,
+}
+
+impl TabletConfig {
+    pub fn new(data_dir: PathBuf) -> Self {
+        Self { data_dir, meta_backend: None }
+    }
+
+    pub fn with_backend(mut self, backend: Arc<dyn TabletMetaBackend>) -> Self {
+        self.meta_backend = Some(backend);
+        self
+    }
+
+    pub fn with_json_backend(mut self) -> Self {
+        self.meta_backend = Some(Arc::new(JsonTabletMetaBackend::new(self.data_dir.clone())));
+        self
+    }
 }
 
 impl Tablet {
-    pub fn new(tablet_id: u64, schema: TabletSchema, data_dir: PathBuf) -> Self {
+    /// Create a new tablet with the given configuration.
+    pub fn new(tablet_id: u64, schema: TabletSchema, config: TabletConfig) -> Self {
         let memtable_capacity = 64 * 1024 * 1024; // 64MB default
         Self {
             tablet_id,
@@ -365,71 +786,134 @@ impl Tablet {
             max_version: AtomicU64::new(0),
             memtable: RwLock::new(MemTable::new(memtable_capacity, schema)),
             rowsets: RwLock::new(Vec::new()),
-            data_dir,
+            data_dir: config.data_dir,
             next_segment_id: AtomicU64::new(0),
             next_rowset_id: AtomicU64::new(0),
+            meta_backend: config.meta_backend,
         }
     }
 
-    /// Load an existing tablet from disk by reading rowset metadata files.
+    /// Create a new tablet with legacy parameters (no backend).
+    pub fn new_legacy(tablet_id: u64, schema: TabletSchema, data_dir: PathBuf) -> Self {
+        Self::new(tablet_id, schema, TabletConfig::new(data_dir))
+    }
+
+    /// Load an existing tablet from disk using the legacy JSON file format.
     /// Returns the loaded Tablet or an error if the tablet directory doesn't exist.
     pub fn load_from_disk(tablet_id: u64, schema: TabletSchema, data_dir: PathBuf) -> Result<Self, String> {
-        let tablet = Self::new(tablet_id, schema, data_dir.clone());
-        
-        let tablet_dir = data_dir.join(format!("tablet_{}", tablet_id));
+        Self::load(tablet_id, schema, TabletConfig::new(data_dir))
+    }
+
+    /// Load a tablet using the configured backend.
+    /// Supports both JSON and RocksDB backends.
+    pub fn load(tablet_id: u64, schema: TabletSchema, config: TabletConfig) -> Result<Self, String> {
+        let tablet = Self::new(tablet_id, schema.clone(), config.clone());
+
+        let tablet_dir = config.data_dir.join(format!("tablet_{}", tablet_id));
         if !tablet_dir.exists() {
             return Err(format!("Tablet directory not found: {:?}", tablet_dir));
         }
-
-        // Read all rowset metadata files
-        let entries = std::fs::read_dir(&tablet_dir)
-            .map_err(|e| format!("Failed to read tablet directory: {}", e))?;
 
         let mut max_version: u64 = 0;
         let mut max_segment_id: u64 = 0;
         let mut max_rowset_id: u64 = 0;
 
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
-            let path = entry.path();
-            
-            // Load rowset metadata files
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-                if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
-                    if file_name.starts_with("rowset_") {
-                        match Rowset::load_meta(&path) {
-                            Ok((meta, segments)) => {
-                                let mut rowset = Rowset::with_segments(meta.clone(), segments);
-                                rowset.commit();
-                                tablet.rowsets.write().push(rowset);
-                                
-                                if meta.version > max_version {
-                                    max_version = meta.version;
+        // Try to load from backend if available
+        if let Some(backend) = &tablet.meta_backend {
+            // Load rowsets from backend
+            let rowset_ids = backend.list_rowsets(tablet_id)
+                .map_err(|e| format!("Failed to list rowsets: {}", e))?;
+
+            for rowset_id in rowset_ids {
+                match backend.load_rowset(tablet_id, rowset_id) {
+                    Ok(Some((meta, segments))) => {
+                        // Track segment IDs before moving segments into rowset
+                        for seg in &segments {
+                            if seg.segment_id > max_segment_id {
+                                max_segment_id = seg.segment_id;
+                            }
+                        }
+
+                        let mut rowset = Rowset::with_segments(meta.clone(), segments);
+                        rowset.commit();
+                        tablet.rowsets.write().push(rowset);
+
+                        if meta.version > max_version {
+                            max_version = meta.version;
+                        }
+                        if meta.rowset_id > max_rowset_id {
+                            max_rowset_id = meta.rowset_id;
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::warn!("Rowset {} not found in backend", rowset_id);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load rowset {} from backend: {}", rowset_id, e);
+                    }
+                }
+            }
+
+            tracing::info!(
+                "Loaded tablet {} from backend: {} rowsets, max_version={}",
+                tablet_id,
+                tablet.rowsets.read().len(),
+                max_version
+            );
+        } else {
+            // Fall back to legacy JSON file loading
+            let entries = std::fs::read_dir(&tablet_dir)
+                .map_err(|e| format!("Failed to read tablet directory: {}", e))?;
+
+            for entry in entries {
+                let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+                let path = entry.path();
+
+                // Load rowset metadata files
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                        if file_name.starts_with("rowset_") {
+                            match Rowset::load_meta(&path) {
+                                Ok((meta, segments)) => {
+                                    let mut rowset = Rowset::with_segments(meta.clone(), segments);
+                                    rowset.commit();
+                                    tablet.rowsets.write().push(rowset);
+
+                                    if meta.version > max_version {
+                                        max_version = meta.version;
+                                    }
+                                    if meta.rowset_id > max_rowset_id {
+                                        max_rowset_id = meta.rowset_id;
+                                    }
                                 }
-                                if meta.rowset_id > max_rowset_id {
-                                    max_rowset_id = meta.rowset_id;
+                                Err(e) => {
+                                    tracing::warn!("Failed to load rowset meta {:?}: {}", path, e);
                                 }
                             }
-                            Err(e) => {
-                                tracing::warn!("Failed to load rowset meta {:?}: {}", path, e);
+                        }
+                    }
+                }
+
+                // Track max segment ID
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dat") {
+                    if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                        if file_name.starts_with("seg_") {
+                            if let Ok(seg_id) = file_name[4..].parse::<u64>() {
+                                if seg_id > max_segment_id {
+                                    max_segment_id = seg_id;
+                                }
                             }
                         }
                     }
                 }
             }
-            
-            // Track max segment ID
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dat") {
-                if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
-                    if file_name.starts_with("seg_") {
-                        if let Ok(seg_id) = file_name[4..].parse::<u64>() {
-                            if seg_id > max_segment_id {
-                                max_segment_id = seg_id;
-                            }
-                        }
-                    }
-                }
-            }
+
+            tracing::info!(
+                "Loaded tablet {} from JSON files: {} rowsets, max_version={}",
+                tablet_id,
+                tablet.rowsets.read().len(),
+                max_version
+            );
         }
 
         // Update atomic counters
@@ -437,14 +921,17 @@ impl Tablet {
         tablet.next_segment_id.store(max_segment_id + 1, Ordering::SeqCst);
         tablet.next_rowset_id.store(max_rowset_id + 1, Ordering::SeqCst);
 
-        tracing::info!(
-            "Loaded tablet {} from disk: {} rowsets, max_version={}",
-            tablet_id,
-            tablet.rowsets.read().len(),
-            max_version
-        );
-
         Ok(tablet)
+    }
+
+    /// Get the metadata backend if configured.
+    pub fn meta_backend(&self) -> Option<&Arc<dyn TabletMetaBackend>> {
+        self.meta_backend.as_ref()
+    }
+
+    /// Set the metadata backend.
+    pub fn set_meta_backend(&mut self, backend: Arc<dyn TabletMetaBackend>) {
+        self.meta_backend = Some(backend);
     }
 
     /// Write a block of rows into the memtable.
@@ -494,8 +981,18 @@ impl Tablet {
         let block = memtable.to_block(&schema);
         let version = self.max_version.fetch_add(1, Ordering::SeqCst);
 
-        let seg_id = self.next_segment_id.fetch_add(1, Ordering::SeqCst);
-        let rowset_id = self.next_rowset_id.fetch_add(1, Ordering::SeqCst);
+        // Get IDs - use backend if available for atomic counters
+        let (seg_id, rowset_id) = if let Some(backend) = &self.meta_backend {
+            let seg_id = backend.next_segment_id(self.tablet_id)
+                .map_err(|e| e.to_string())?;
+            let rowset_id = backend.next_rowset_id(self.tablet_id)
+                .map_err(|e| e.to_string())?;
+            (seg_id, rowset_id)
+        } else {
+            let seg_id = self.next_segment_id.fetch_add(1, Ordering::SeqCst);
+            let rowset_id = self.next_rowset_id.fetch_add(1, Ordering::SeqCst);
+            (seg_id, rowset_id)
+        };
 
         // Ensure tablet data directory exists
         let tablet_dir = self.data_dir.join(format!("tablet_{}", self.tablet_id));
@@ -517,9 +1014,15 @@ impl Tablet {
         rowset.add_segment(seg_ref);
         rowset.commit();
 
-        // Save rowset metadata
-        let meta_path = tablet_dir.join(format!("rowset_{}.json", rowset_id));
-        rowset.save_meta(&meta_path)?;
+        // Save rowset metadata - use backend if available
+        if let Some(backend) = &self.meta_backend {
+            backend.save_rowset(self.tablet_id, rowset_id, &rowset.meta, &rowset.segments)
+                .map_err(|e| format!("Save rowset to backend: {}", e))?;
+        } else {
+            // Legacy JSON file saving
+            let meta_path = tablet_dir.join(format!("rowset_{}.json", rowset_id));
+            rowset.save_meta(&meta_path)?;
+        }
 
         self.rowsets.write().push(rowset);
         memtable.clear();
@@ -685,6 +1188,433 @@ impl Tablet {
     pub fn memtable_to_block(&self, schema: &Schema) -> Block {
         self.memtable.read().to_block(schema)
     }
+
+    // =========================================================================
+    // Arrow/Parquet interfaces (when parquet-storage feature is enabled)
+    // =========================================================================
+
+    /// Read data as Arrow RecordBatch.
+    #[cfg(feature = "parquet-storage")]
+    pub fn read_arrow(
+        &self,
+        projection: Option<&[String]>,
+        predicates: &[crate::segment::ReadPredicate],
+        limit: Option<usize>,
+    ) -> Result<arrow_array::RecordBatch, String> {
+        use arrow_array::RecordBatch;
+        use arrow_schema::{Schema as ArrowSchema, Field, DataType as ArrowDataType};
+        use crate::segment::{read_parquet_segment, ParquetReadOptions, is_parquet_file};
+
+        // Build Arrow schema from tablet schema
+        let arrow_fields: Vec<Field> = self.schema.columns.iter()
+            .map(|c| {
+                Field::new(
+                    &c.name,
+                    to_arrow_data_type(&c.data_type),
+                    c.nullable,
+                )
+            })
+            .collect();
+        let arrow_schema = Arc::new(ArrowSchema::new(arrow_fields));
+
+        // Read from Parquet segments
+        let mut batches: Vec<RecordBatch> = Vec::new();
+
+        // Read from memtable (convert Block to RecordBatch)
+        {
+            let memtable = self.memtable.read();
+            if !memtable.is_empty() {
+                let schema = self.schema.to_schema();
+                let block = memtable.to_block(&schema);
+                // Convert Block to RecordBatch
+                if let Ok(batch) = block_to_record_batch(&block) {
+                    batches.push(batch);
+                }
+            }
+        }
+
+        // Read from rowsets
+        let rowsets = self.rowsets.read();
+        for rowset in rowsets.iter() {
+            for seg_ref in &rowset.segments {
+                let path = Path::new(&seg_ref.path);
+                if path.exists() {
+                    // Check if it's a Parquet file
+                    if is_parquet_file(path) {
+                        let options = ParquetReadOptions {
+                            projection: projection.map(|p| p.to_vec()),
+                            predicates: predicates.to_vec(),
+                            limit,
+                        };
+                        match read_parquet_segment(path, &options) {
+                            Ok(batch) => {
+                                if batch.num_rows() > 0 {
+                                    batches.push(batch);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Error reading Parquet segment {}: {}", seg_ref.path, e);
+                            }
+                        }
+                    } else {
+                        // Legacy .dat format - read as Block and convert
+                        match SegmentReader::scan_segment(path, None, &[]) {
+                            Ok(block) => {
+                                if !block.is_empty() {
+                                    if let Ok(batch) = block_to_record_batch(&block) {
+                                        batches.push(batch);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Error reading segment {}: {}", seg_ref.path, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Merge batches
+        if batches.is_empty() {
+            // Return empty batch with correct schema
+            let empty_columns: Vec<Arc<dyn arrow_array::Array>> = arrow_schema.fields()
+                .iter()
+                .map(|f| arrow_array::new_empty_array(f.data_type()))
+                .collect();
+            return RecordBatch::try_new(arrow_schema, empty_columns)
+                .map_err(|e| e.to_string());
+        }
+
+        if batches.len() == 1 {
+            // Apply projection if needed
+            let batch = &batches[0];
+            if let Some(proj) = projection {
+                let indices: Vec<usize> = proj.iter()
+                    .filter_map(|col| batch.schema().index_of(col).ok())
+                    .collect();
+                return batch.project(&indices)
+                    .map_err(|e| e.to_string());
+            }
+            return Ok(batch.clone());
+        }
+
+        // Concatenate all batches
+        let merged = arrow_array::compute::concat_batches(&arrow_schema, &batches)
+            .map_err(|e| e.to_string())?;
+
+        // Apply projection
+        if let Some(proj) = projection {
+            let indices: Vec<usize> = proj.iter()
+                .filter_map(|col| merged.schema().index_of(col).ok())
+                .collect();
+            return merged.project(&indices)
+                .map_err(|e| e.to_string());
+        }
+
+        // Apply limit
+        if let Some(limit) = limit {
+            if merged.num_rows() > limit {
+                return Ok(merged.slice(0, limit));
+            }
+        }
+
+        Ok(merged)
+    }
+
+    /// Write an Arrow RecordBatch to the tablet.
+    #[cfg(feature = "parquet-storage")]
+    pub fn write_arrow(&self, batch: &arrow_array::RecordBatch) -> Result<(), String> {
+        // Convert RecordBatch to Block and use existing write logic
+        let block = record_batch_to_block(batch)?;
+        self.write(&block)
+    }
+
+    /// Flush memtable to Parquet file.
+    #[cfg(feature = "parquet-storage")]
+    pub fn flush_parquet(&self) -> Result<(), String> {
+        use crate::segment::{write_parquet_segment, ParquetWriterConfig};
+
+        let memtable = self.memtable.read();
+        if memtable.is_empty() {
+            return Ok(());
+        }
+
+        let schema = self.schema.to_schema();
+        let block = memtable.to_block(&schema);
+
+        // Convert to RecordBatch
+        let batch = block_to_record_batch(&block)?;
+
+        // Get next segment ID
+        let seg_id = self.next_segment_id();
+
+        // Write Parquet file
+        let tablet_dir = self.data_dir.join(format!("tablet_{}", self.tablet_id));
+        let seg_path = tablet_dir.join(format!("seg_{}.parquet", seg_id));
+
+        let config = ParquetWriterConfig::default();
+        let meta = write_parquet_segment(&seg_path, &batch, &config)
+            .map_err(|e| e.to_string())?;
+
+        // Create rowset
+        let rowset_id = self.next_rowset_id();
+        let rowset_meta = RowsetMeta {
+            rowset_id,
+            tablet_id: self.tablet_id,
+            txn_id: 0,
+            version: self.max_version.load(Ordering::SeqCst),
+            num_rows: meta.num_rows,
+            data_size: meta.size,
+            num_segments: 1,
+            empty: false,
+            packed_data_size: meta.size,
+            index_size: 0,
+        };
+
+        let seg_ref = SegmentRef {
+            segment_id: seg_id,
+            path: seg_path.to_string_lossy().to_string(),
+            num_rows: meta.num_rows,
+            size: meta.size,
+        };
+
+        let rowset = Rowset::with_segments(rowset_meta, vec![seg_ref]);
+
+        // Save to backend if available
+        if let Some(backend) = &self.meta_backend {
+            backend.save_rowset(self.tablet_id, rowset_id, &rowset.meta, &rowset.segments)
+                .map_err(|e| format!("Save rowset to backend: {}", e))?;
+        }
+
+        self.rowsets.write().push(rowset);
+        memtable.clear();
+
+        tracing::info!(
+            "Flushed tablet {} to Parquet: {} rows, {} bytes",
+            self.tablet_id,
+            meta.num_rows,
+            meta.size
+        );
+
+        Ok(())
+    }
+}
+
+/// Convert RorisDB DataType to Arrow DataType.
+#[cfg(feature = "parquet-storage")]
+fn to_arrow_data_type(dt: &types::DataType) -> arrow_schema::DataType {
+    use arrow_schema::DataType as ArrowDT;
+    match dt {
+        types::DataType::Boolean => ArrowDT::Boolean,
+        types::DataType::Int8 => ArrowDT::Int8,
+        types::DataType::Int16 => ArrowDT::Int16,
+        types::DataType::Int32 => ArrowDT::Int32,
+        types::DataType::Int64 => ArrowDT::Int64,
+        types::DataType::Int128 => ArrowDT::Int128,
+        types::DataType::Float32 => ArrowDT::Float32,
+        types::DataType::Float64 => ArrowDT::Float64,
+        types::DataType::String => ArrowDT::Utf8,
+        types::DataType::Date => ArrowDT::Date32,
+        types::DataType::DateTime => ArrowDT::Timestamp(arrow_schema::TimeUnit::Second, None),
+        _ => ArrowDT::Null,
+    }
+}
+
+/// Convert Block to Arrow RecordBatch.
+#[cfg(feature = "parquet-storage")]
+fn block_to_record_batch(block: &Block) -> Result<arrow_array::RecordBatch, String> {
+    use arrow_array::{Array, Int64Array, Float64Array, StringArray, Date32Array, BooleanArray};
+    use arrow_schema::{Schema as ArrowSchema, Field};
+
+    // Build Arrow schema
+    let fields: Vec<Field> = block.schema().fields().iter()
+        .map(|f| Field::new(&f.name, to_arrow_data_type(&f.data_type), f.nullable))
+        .collect();
+    let schema = Arc::new(ArrowSchema::new(fields));
+
+    // Convert columns
+    let columns: Vec<Arc<dyn Array>> = (0..block.num_columns())
+        .map(|col_idx| {
+            let col = block.column(col_idx).unwrap();
+            match col {
+                types::Vector::Int64(v) => {
+                    let data: Vec<Option<i64>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(Int64Array::from(data))
+                }
+                types::Vector::Float64(v) => {
+                    let data: Vec<Option<f64>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(Float64Array::from(data))
+                }
+                types::Vector::String(v) => {
+                    let data: Vec<Option<String>> = (0..v.len())
+                        .map(|i| v.get(i).map(|s| s.to_string()))
+                        .collect();
+                    Arc::new(StringArray::from(data))
+                }
+                types::Vector::Date(v) => {
+                    let data: Vec<Option<i32>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(Date32Array::from(data))
+                }
+                types::Vector::Boolean(v) => {
+                    let data: Vec<Option<bool>> = (0..v.len()).map(|i| v.get(i)).collect();
+                    Arc::new(BooleanArray::from(data))
+                }
+                _ => arrow_array::new_null_array(&to_arrow_data_type(&col.data_type()), col.len()),
+            }
+        })
+        .collect();
+
+    RecordBatch::try_new(schema, columns)
+        .map_err(|e| e.to_string())
+}
+
+/// Convert Arrow RecordBatch to Block.
+#[cfg(feature = "parquet-storage")]
+fn record_batch_to_block(batch: &arrow_array::RecordBatch) -> Result<Block, String> {
+    use types::{Schema, Field, DataType, Vector};
+    use arrow_array::{Int64Array, Float64Array, StringArray, Date32Array, BooleanArray};
+
+    // Build RorisDB schema
+    let fields: Vec<Field> = batch.schema().fields().iter()
+        .map(|f| {
+            let dt = match f.data_type() {
+                arrow_schema::DataType::Boolean => DataType::Boolean,
+                arrow_schema::DataType::Int64 => DataType::Int64,
+                arrow_schema::DataType::Float64 => DataType::Float64,
+                arrow_schema::DataType::Utf8 => DataType::String,
+                arrow_schema::DataType::Date32 => DataType::Date,
+                _ => DataType::String,
+            };
+            Field::new(f.name(), dt, f.is_nullable())
+        })
+        .collect();
+    let schema = Schema::new(fields);
+
+    // Convert columns
+    let columns: Vec<Vector> = batch.columns().iter()
+        .map(|col| {
+            match col.data_type() {
+                arrow_schema::DataType::Int64 => {
+                    let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+                    let data: Vec<Option<i64>> = arr.iter().collect();
+                    Vector::Int64(types::vector::Int64Vector::from_nullable_vec(data))
+                }
+                arrow_schema::DataType::Float64 => {
+                    let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+                    let data: Vec<Option<f64>> = arr.iter().collect();
+                    Vector::Float64(types::vector::Float64Vector::from_nullable_vec(data))
+                }
+                arrow_schema::DataType::Utf8 => {
+                    let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+                    let data: Vec<Option<String>> = arr.iter()
+                        .map(|s| s.map(|s| s.to_string()))
+                        .collect();
+                    Vector::String(types::vector::StringVector::from_option_vec(data))
+                }
+                arrow_schema::DataType::Date32 => {
+                    let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+                    let data: Vec<Option<i32>> = arr.iter().collect();
+                    Vector::Date(types::vector::DateVector::from_nullable_vec(data))
+                }
+                arrow_schema::DataType::Boolean => {
+                    let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    let data: Vec<Option<bool>> = arr.iter().collect();
+                    Vector::Boolean(types::vector::BooleanVector::from_nullable_vec(data))
+                }
+                _ => Vector::Null(types::vector::NullVector::new(col.len())),
+            }
+        })
+        .collect();
+
+    Ok(Block::new(schema, columns))
+}
+
+/// Migrate existing JSON metadata to RocksDB backend.
+/// This function reads all tablet metadata from JSON files and writes it to RocksDB.
+pub fn migrate_tablet_to_rocks(
+    tablet_id: u64,
+    data_dir: PathBuf,
+    rocks_backend: Arc<dyn TabletMetaBackend>,
+) -> Result<(), TabletMetaError> {
+    let json_backend = JsonTabletMetaBackend::new(data_dir.clone());
+
+    // Load schema from JSON if it exists
+    if let Some(schema) = json_backend.load_schema(tablet_id)? {
+        rocks_backend.save_schema(tablet_id, &schema)?;
+        tracing::info!("Migrated schema for tablet {}", tablet_id);
+    }
+
+    // Load all rowsets from JSON
+    let rowset_ids = json_backend.list_rowsets(tablet_id)?;
+    let mut max_rowset_id = 0u64;
+    let mut max_segment_id = 0u64;
+
+    for rowset_id in rowset_ids {
+        if let Some((meta, segments)) = json_backend.load_rowset(tablet_id, rowset_id)? {
+            rocks_backend.save_rowset(tablet_id, rowset_id, &meta, &segments)?;
+
+            if rowset_id > max_rowset_id {
+                max_rowset_id = rowset_id;
+            }
+            for seg in &segments {
+                if seg.segment_id > max_segment_id {
+                    max_segment_id = seg.segment_id;
+                }
+            }
+            tracing::info!("Migrated rowset {} for tablet {}", rowset_id, tablet_id);
+        }
+    }
+
+    // Set counters to next values
+    rocks_backend.set_next_rowset_id(tablet_id, max_rowset_id + 1)?;
+    rocks_backend.set_next_segment_id(tablet_id, max_segment_id + 1)?;
+
+    rocks_backend.flush()?;
+    tracing::info!("Migration complete for tablet {}", tablet_id);
+
+    Ok(())
+}
+
+/// Migrate all tablets in a data directory to RocksDB.
+#[cfg(feature = "rocksdb")]
+pub fn migrate_all_tablets_to_rocks(
+    data_dir: PathBuf,
+    rocks_backend: Arc<RocksTabletMetaBackend>,
+) -> Result<Vec<u64>, TabletMetaError> {
+    let tablet_ids = discover_tablet_ids(&data_dir)?;
+    let backend: Arc<dyn TabletMetaBackend> = rocks_backend;
+
+    for tablet_id in &tablet_ids {
+        migrate_tablet_to_rocks(*tablet_id, data_dir.clone(), backend.clone())?;
+    }
+
+    Ok(tablet_ids)
+}
+
+/// Discover all tablet IDs in a data directory.
+pub fn discover_tablet_ids(data_dir: &Path) -> Result<Vec<u64>, TabletMetaError> {
+    let mut tablet_ids = Vec::new();
+
+    if !data_dir.exists() {
+        return Ok(tablet_ids);
+    }
+
+    for entry in std::fs::read_dir(data_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            let dir_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if dir_name.starts_with("tablet_") {
+                if let Ok(id) = dir_name[7..].parse::<u64>() {
+                    tablet_ids.push(id);
+                }
+            }
+        }
+    }
+
+    tablet_ids.sort();
+    Ok(tablet_ids)
 }
 
 /// Estimate the memory size of a block.

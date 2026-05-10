@@ -10,7 +10,12 @@ use types::Block;
 
 use crate::compaction::{CompactionExecutor, CompactionManager, CompactionTask, CompactionType};
 use crate::index::ColumnPredicate;
-use crate::tablet::{Tablet, TabletSchema};
+use crate::tablet::{Tablet, TabletSchema, TabletConfig};
+
+#[cfg(feature = "parquet-storage")]
+use arrow_array::RecordBatch;
+#[cfg(feature = "parquet-storage")]
+use crate::segment::{ParquetReadOptions, ReadPredicate};
 
 /// The main storage engine that manages tablets and coordinates flush/compaction.
 pub struct StorageEngine {
@@ -125,7 +130,7 @@ impl StorageEngine {
         std::fs::write(&schema_path, schema_json)
             .map_err(|e| DrorisError::storage(StorageError::WriteFailed, format!("Write schema: {}", e)))?;
         
-        let tablet = Tablet::new(tablet_id, schema, self.data_dir.clone());
+        let tablet = Tablet::new(tablet_id, schema, TabletConfig::new(self.data_dir.clone()));
         self.tablets.insert(tablet_id, Arc::new(tablet));
         tracing::info!("Created tablet {}", tablet_id);
         Ok(())
@@ -323,6 +328,65 @@ impl StorageEngine {
     /// Get the data directory path.
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    // =========================================================================
+    // Arrow/Parquet interfaces (when parquet-storage feature is enabled)
+    // =========================================================================
+
+    /// Read data from a tablet as Arrow RecordBatch.
+    /// This is the preferred interface when using DataFusion.
+    #[cfg(feature = "parquet-storage")]
+    pub fn read_tablet_arrow(
+        &self,
+        tablet_id: u64,
+        projection: Option<&[String]>,
+        predicates: &[ReadPredicate],
+        limit: Option<usize>,
+    ) -> Result<RecordBatch> {
+        let tablet = self.tablets
+            .get(&tablet_id)
+            .map(|v| v.clone())
+            .ok_or_else(|| DrorisError::storage_with_tablet(
+                StorageError::TabletNotFound,
+                tablet_id,
+                format!("tablet {} not found", tablet_id)
+            ))?;
+
+        tablet.read_arrow(projection, predicates, limit)
+            .map_err(|e| DrorisError::storage(StorageError::ReadFailed, e.to_string()))
+    }
+
+    /// Write an Arrow RecordBatch to a tablet.
+    #[cfg(feature = "parquet-storage")]
+    pub fn write_batch_arrow(&self, tablet_id: u64, batch: &RecordBatch) -> Result<()> {
+        let tablet = self.tablets
+            .get(&tablet_id)
+            .map(|v| v.clone())
+            .ok_or_else(|| DrorisError::storage_with_tablet(
+                StorageError::TabletNotFound,
+                tablet_id,
+                format!("tablet {} not found", tablet_id)
+            ))?;
+
+        tablet.write_arrow(batch)
+            .map_err(|e| DrorisError::storage(StorageError::WriteFailed, e.to_string()))
+    }
+
+    /// Flush tablet memtable to Parquet file.
+    #[cfg(feature = "parquet-storage")]
+    pub fn flush_to_parquet(&self, tablet_id: u64) -> Result<()> {
+        let tablet = self.tablets
+            .get(&tablet_id)
+            .map(|v| v.clone())
+            .ok_or_else(|| DrorisError::storage_with_tablet(
+                StorageError::TabletNotFound,
+                tablet_id,
+                format!("tablet {} not found", tablet_id)
+            ))?;
+
+        tablet.flush_parquet()
+            .map_err(|e| DrorisError::storage(StorageError::FlushFailed, e.to_string()))
     }
 }
 

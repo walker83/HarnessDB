@@ -3,6 +3,11 @@ name = "be-storage"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+rocksdb = ["be-rocks"]
+parquet-storage = ["parquet", "arrow-array", "arrow-schema"]
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -20,6 +25,12 @@ zstd = { workspace = true }
 snap = { workspace = true }
 roaring = { workspace = true }
 dashmap = { workspace = true }
+be-rocks = { path = "../be-rocks", optional = true }
+
+# Arrow/Parquet support
+parquet = { workspace = true, optional = true }
+arrow-array = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"
