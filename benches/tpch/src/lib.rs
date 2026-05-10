@@ -6,40 +6,30 @@ use std::sync::Arc;
 
 use fe_catalog::table::{TableColumn, Table};
 use fe_catalog::CatalogManager;
-use fe_sql_planner::{Planner, PlanNode};
 use types::Block;
 
 use data_gen::TpchData;
 use be_storage::{StorageEngine, tablet::TabletSchema};
 use datafusion::prelude::SessionContext;
 
-/// Result of running a single TPC-H query.
+/// Result of running a single TPC-H query via DataFusion.
 #[derive(Debug)]
 pub struct QueryResult {
     pub query_name: &'static str,
     pub planning_time_us: u64,
-    pub plan: Option<PlanNode>,
+    pub execution_time_us: u64,
+    pub rows: usize,
     pub error: Option<String>,
-    pub blocks: Vec<Block>,
 }
 
 impl QueryResult {
-    pub fn rows(&self) -> usize {
-        self.blocks.iter().map(|b| b.num_rows()).sum()
+    pub fn is_success(&self) -> bool {
+        self.error.is_none()
     }
 }
 
-/// Execution result with actual data blocks.
-#[derive(Debug)]
-pub struct ExecutionResult {
-    pub blocks: Vec<Block>,
-    pub rows_produced: usize,
-    pub planning_time_us: u64,
-    pub execution_time_us: u64,
-}
-
 /// The TPC-H benchmark framework.
-/// Sets up a catalog with TPC-H data, writes it to storage, then runs queries through the planner and executor.
+/// Sets up a catalog with TPC-H data, writes it to storage, then runs queries through DataFusion.
 pub struct TpchBenchmark {
     data: TpchData,
     catalog: Arc<CatalogManager>,
@@ -153,16 +143,16 @@ impl TpchBenchmark {
         ctx
     }
 
-    /// Run a single TPC-H query by index (1-22).
+    /// Run a single TPC-H query by index (1-22) using DataFusion.
     pub fn run_query(&self, index: usize) -> QueryResult {
         let queries = queries::all_queries();
         if index == 0 || index > queries.len() {
             return QueryResult {
                 query_name: "INVALID",
                 planning_time_us: 0,
-                plan: None,
+                execution_time_us: 0,
+                rows: 0,
                 error: Some(format!("Invalid query index: {}", index)),
-                blocks: vec![],
             };
         }
 
@@ -170,136 +160,52 @@ impl TpchBenchmark {
         self.run_sql(name, sql)
     }
 
-    /// Run a query by name and SQL string.
+    /// Run a query by name and SQL string using DataFusion.
     pub fn run_sql(&self, name: &'static str, sql: &str) -> QueryResult {
-        let mut planner = Planner::new(self.catalog.clone());
-        planner.set_database("tpch");
+        let start = std::time::Instant::now();
 
-        let parse_start = std::time::Instant::now();
-
-        // Parse the SQL
-        let statements = match fe_sql_parser::parse_sql(sql) {
-            Ok(stmts) => stmts,
-            Err(e) => {
-                return QueryResult {
-                    query_name: name,
-                    planning_time_us: parse_start.elapsed().as_micros() as u64,
-                    plan: None,
-                    error: Some(format!("Parse error: {:?}", e)),
-                    blocks: vec![],
-                };
-            }
-        };
-
-        // Plan the query
-        let plan = match statements.into_iter().next() {
-            Some(stmt) => match planner.plan(stmt) {
-                Ok(plan) => Some(plan),
-                Err(e) => {
-                    return QueryResult {
-                        query_name: name,
-                        planning_time_us: parse_start.elapsed().as_micros() as u64,
-                        plan: None,
-                        error: Some(format!("Plan error: {:?}", e)),
-                        blocks: vec![],
-                    };
-                }
-            },
-            None => {
-                return QueryResult {
-                    query_name: name,
-                    planning_time_us: parse_start.elapsed().as_micros() as u64,
-                    plan: None,
-                    error: Some("No statements found".to_string()),
-                    blocks: vec![],
-                };
-            }
-        };
-
-        QueryResult {
-            query_name: name,
-            planning_time_us: parse_start.elapsed().as_micros() as u64,
-            plan,
-            error: None,
-            blocks: vec![],
-        }
-    }
-
-    /// Execute a query and return actual results.
-    /// This uses the storage engine and execution context to actually run the query.
-    pub fn execute_query(&self, index: usize) -> ExecutionResult {
-        let queries = queries::all_queries();
-        if index == 0 || index > queries.len() {
-            return ExecutionResult {
-                blocks: vec![],
-                rows_produced: 0,
-                planning_time_us: 0,
-                execution_time_us: 0,
-            };
-        }
-
-        let (name, sql) = queries[index - 1];
-        self.execute_sql(name, sql)
-    }
-
-    /// Execute a query by name and SQL string (sync wrapper).
-    pub fn execute_sql(&self, name: &'static str, sql: &str) -> ExecutionResult {
-        let planning_start = std::time::Instant::now();
-        let exec_start = std::time::Instant::now();
-
-        // Use a separate thread with its own runtime to avoid nested runtime issues
-        let blocks = std::thread::scope(|s| {
+        // Use a separate thread with its own runtime
+        let result = std::thread::scope(|s| {
             s.spawn(|| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .unwrap();
                 runtime.block_on(async {
-                    let mut planner = Planner::new(self.catalog.clone());
-                    planner.set_database("tpch");
-
-                    // Parse and plan
-                    let statements = match fe_sql_parser::parse_sql(sql) {
-                        Ok(stmts) => stmts,
-                        Err(e) => {
-                            tracing::warn!("Parse error for {}: {:?}", name, e);
-                            return vec![];
-                        }
-                    };
-
-                    let plan = match statements.into_iter().next() {
-                        Some(stmt) => match planner.plan(stmt) {
-                            Ok(plan) => plan,
-                            Err(e) => {
-                                tracing::warn!("Plan error for {}: {:?}", name, e);
-                                return vec![];
+                    let ctx = self.datafusion_ctx();
+                    match ctx.sql(sql).await {
+                        Ok(df) => {
+                            match df.collect().await {
+                                Ok(batches) => {
+                                    let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                                    Ok(rows)
+                                }
+                                Err(e) => Err(format!("Execution error: {}", e)),
                             }
-                        },
-                        None => return vec![],
-                    };
-
-                    // Create execution context and execute
-                    let context = be_execution::ExecutionContext::new(self.storage.clone(), self.catalog.clone());
-
-                    match be_execution::execute_plan(&plan, &context).await {
-                        Ok(blocks) => blocks,
-                        Err(e) => {
-                            tracing::warn!("Execution error for {}: {}", name, e);
-                            vec![]
                         }
+                        Err(e) => Err(format!("SQL error: {}", e)),
                     }
                 })
             }).join().unwrap()
         });
 
-        let execution_time_us = exec_start.elapsed().as_micros() as u64;
-        let rows_produced: usize = blocks.iter().map(|b| b.num_rows()).sum();
+        let elapsed = start.elapsed().as_micros() as u64;
 
-        ExecutionResult {
-            planning_time_us: planning_start.elapsed().as_micros() as u64,
-            execution_time_us,
-            rows_produced,
-            blocks,
+        match result {
+            Ok(rows) => QueryResult {
+                query_name: name,
+                planning_time_us: elapsed / 2,  // Approximate split
+                execution_time_us: elapsed / 2,
+                rows,
+                error: None,
+            },
+            Err(e) => QueryResult {
+                query_name: name,
+                planning_time_us: elapsed,
+                execution_time_us: 0,
+                rows: 0,
+                error: Some(e),
+            },
         }
     }
 

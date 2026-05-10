@@ -8,10 +8,8 @@ tokio = { workspace = true }
 types = { workspace = true }
 common = { workspace = true }
 fe-sql-parser = { workspace = true }
-fe-sql-planner = { workspace = true }
 fe-catalog = { workspace = true }
 be-storage = { workspace = true }
-be-execution = { workspace = true }
 mysql-protocol = { workspace = true }
 bytes = { workspace = true }
 data-io = { workspace = true }

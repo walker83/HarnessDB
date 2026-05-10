@@ -3,7 +3,6 @@ use std::collections::HashMap;
 
 use fe_catalog::table::{TableColumn, KeysType, PartitionInfo, Partition, DistributionInfo};
 use fe_catalog::{CatalogManager, Table};
-use fe_sql_planner::PlanNodeType;
 use integration_tests::common;
 use types::DataType;
 
@@ -46,9 +45,6 @@ fn test_drop_database_nonexistent_error() {
     assert!(result.is_err());
 }
 
-// Note: CREATE DATABASE / DROP DATABASE are not directly parseable via SQL in this parser.
-// These are tested via catalog API above.
-
 // ===========================================================================
 // 1.2 CREATE TABLE with all data types
 // ===========================================================================
@@ -69,65 +65,41 @@ fn test_create_table_all_types() {
 }
 
 #[test]
-fn test_create_table_via_sql() {
+fn test_create_table_parse() {
     let catalog = Arc::new(CatalogManager::new());
     catalog.create_database("test_db").unwrap();
 
-    let sql = "CREATE TABLE employees (id INT64, name STRING, department STRING, salary FLOAT64)";
-    let plan = common::plan_sql(catalog.clone(), "test_db", sql);
-    assert!(matches!(plan.node_type, PlanNodeType::CreateTable(_)));
-
-    if let PlanNodeType::CreateTable(ct) = &plan.node_type {
-        assert_eq!(ct.table_name, "employees");
-        assert_eq!(ct.columns.len(), 4);
-        assert_eq!(ct.columns[0].name, "id");
-    }
+    // Parse CREATE TABLE SQL
+    let result = fe_sql_parser::parse_sql("CREATE TABLE employees (id INT64, name STRING, department STRING, salary FLOAT64)");
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_create_table_if_not_exists() {
-    let catalog = Arc::new(CatalogManager::new());
-    catalog.create_database("test_db").unwrap();
-
-    let sql = "CREATE TABLE IF NOT EXISTS t (id INT64)";
-    let plan = common::plan_sql(catalog, "test_db", sql);
-    if let PlanNodeType::CreateTable(ct) = &plan.node_type {
-        assert!(ct.if_not_exists);
-    } else {
-        panic!("Expected CreateTable");
-    }
+fn test_create_table_if_not_exists_parse() {
+    let result = fe_sql_parser::parse_sql("CREATE TABLE IF NOT EXISTS t (id INT64)");
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_drop_table_via_sql() {
-    let catalog = common::create_test_catalog();
-    let plan = common::plan_sql(catalog, "test_db", "DROP TABLE employees");
-    assert!(matches!(plan.node_type, PlanNodeType::DropTable(_)));
+fn test_drop_table_parse() {
+    let result = fe_sql_parser::parse_sql("DROP TABLE employees");
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_drop_table_if_exists() {
-    let catalog = common::create_test_catalog();
-    let plan = common::plan_sql(catalog, "test_db", "DROP TABLE IF EXISTS nonexistent");
-    if let PlanNodeType::DropTable(dt) = &plan.node_type {
-        assert!(dt.if_exists);
-    } else {
-        panic!("Expected DropTable");
-    }
+fn test_drop_table_if_exists_parse() {
+    let result = fe_sql_parser::parse_sql("DROP TABLE IF EXISTS nonexistent");
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_truncate_table_via_sql() {
-    let catalog = common::create_test_catalog();
-    let plan = common::plan_sql(catalog, "test_db", "TRUNCATE TABLE employees");
-    assert!(matches!(plan.node_type, PlanNodeType::TruncateTable(_)));
+fn test_truncate_table_parse() {
+    let result = fe_sql_parser::parse_sql("TRUNCATE TABLE employees");
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_create_table_all_data_types_sql() {
-    let catalog = Arc::new(CatalogManager::new());
-    catalog.create_database("test_db").unwrap();
-
+fn test_create_table_all_data_types_parse() {
     let sql = "CREATE TABLE all_types (
         col_bool BOOLEAN,
         col_i8 INT8,
@@ -140,14 +112,8 @@ fn test_create_table_all_data_types_sql() {
         col_date DATE,
         col_datetime DATETIME
     )";
-    let plan = common::plan_sql(catalog, "test_db", sql);
-    if let PlanNodeType::CreateTable(ct) = &plan.node_type {
-        assert_eq!(ct.columns.len(), 10);
-        assert!(ct.columns[0].data_type.to_uppercase().contains("BOOL"));
-        assert!(ct.columns[4].data_type.to_uppercase().contains("INT64"));
-        assert!(ct.columns[8].data_type.to_uppercase().contains("DATE"));
-        assert!(ct.columns[9].data_type.to_uppercase().contains("DATETIME"));
-    }
+    let result = fe_sql_parser::parse_sql(sql);
+    assert!(result.is_ok());
 }
 
 // ===========================================================================
@@ -348,9 +314,6 @@ fn test_create_table_primary_key() {
 // 1.6 ALTER TABLE
 // ===========================================================================
 
-// TODO: ALTER TABLE SQL parsing not supported by custom parser (sqlparser handles it but planner doesn't route it)
-// ALTER TABLE is tested via plan_alter_table in sql_test.rs with the parser's native format.
-
 #[test]
 fn test_alter_table_add_column() {
     let result = fe_sql_parser::parse_sql("ALTER TABLE employees ADD COLUMN age INT64");
@@ -387,10 +350,9 @@ fn test_show_tables_catalog() {
 }
 
 #[test]
-fn test_show_create_table_via_sql() {
-    let catalog = common::create_test_catalog();
-    let plan = common::plan_sql(catalog, "test_db", "SHOW CREATE TABLE employees");
-    assert!(matches!(plan.node_type, PlanNodeType::ShowCreateTable(_)));
+fn test_show_create_table_parse() {
+    let result = fe_sql_parser::parse_sql("SHOW CREATE TABLE employees");
+    assert!(result.is_ok());
 }
 
 // ===========================================================================
@@ -398,11 +360,10 @@ fn test_show_create_table_via_sql() {
 // ===========================================================================
 
 #[test]
-fn test_create_view_via_sql() {
-    let catalog = common::create_test_catalog();
-    let plan = common::plan_sql(catalog, "test_db",
+fn test_create_view_parse() {
+    let result = fe_sql_parser::parse_sql(
         "CREATE VIEW high_earners AS SELECT name, salary FROM employees WHERE salary > 80000");
-    assert!(matches!(plan.node_type, PlanNodeType::CreateView(_)));
+    assert!(result.is_ok());
 }
 
 // ===========================================================================

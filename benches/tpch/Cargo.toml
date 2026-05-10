@@ -9,10 +9,8 @@ tracing = { workspace = true }
 types = { workspace = true }
 common = { workspace = true }
 fe-sql-parser = { workspace = true }
-fe-sql-planner = { workspace = true }
 fe-catalog = { workspace = true }
 be-storage = { workspace = true }
-be-execution = { workspace = true }
 fe-datafusion = { workspace = true }
 datafusion = { workspace = true }
 criterion = "0.5"

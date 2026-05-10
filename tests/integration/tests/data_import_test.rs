@@ -105,9 +105,9 @@ fn test_csv_import_many_rows() {
 }
 
 #[test]
-fn test_csv_import_then_query_plan() {
+fn test_csv_import_schema_verify() {
     let csv_content = "id,name,department,salary\n1,Alice,Engineering,95000\n2,Bob,Marketing,75000\n";
-    let path = create_test_csv(csv_content, "query_test.csv");
+    let path = create_test_csv(csv_content, "schema_test.csv");
 
     let file = File::open(&path).unwrap();
     let reader = BufReader::new(file);
@@ -115,13 +115,11 @@ fn test_csv_import_then_query_plan() {
     let batch = csv_reader.next_batch().unwrap().unwrap();
 
     assert_eq!(batch.num_columns(), 4);
-
-    // Verify we can plan a query against this schema
-    let catalog = common::create_test_catalog();
-    let plan = common::plan_sql(catalog, "test_db",
-        "SELECT id, name FROM employees WHERE salary > 3000");
-    let node_types = common::collect_node_types(&plan);
-    assert!(node_types.contains(&"Scan".to_string()));
+    let headers = csv_reader.headers();
+    assert_eq!(headers[0], "id");
+    assert_eq!(headers[1], "name");
+    assert_eq!(headers[2], "department");
+    assert_eq!(headers[3], "salary");
 }
 
 // ===========================================================================

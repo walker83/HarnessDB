@@ -6,7 +6,6 @@ use tokio::time::{interval, Duration};
 
 use fe_common::edit_log::EditLog;
 use fe_catalog::CatalogManager;
-use fe_scheduler::ClusterManager;
 use fe_monitor::MonitoringManager;
 use fe_monitor::http_server::MonitoringHttpServer;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
@@ -15,7 +14,6 @@ use fe_sql_parser::{parse_sql, Statement, is_dml_sql};
 use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, DropDatabaseStmt, DropTableStmt, AlterDatabaseStmt, DropViewStmt, AlterViewStmt, CreateIndexStmt, DropIndexStmt, CancelAlterTableStmt, AlterColocateGroupStmt, DeleteStmt};
 use types::DataType;
 use fe_catalog::table::{Table, TableColumn, KeysType};
-use be_execution::exec_node::TransactionContext;
 use datafusion::prelude::{SessionContext, SessionConfig};
 use fe_datafusion::catalog::RorisCatalogProvider;
 
@@ -45,7 +43,7 @@ struct RorisQueryHandler {
     catalog: Arc<CatalogManager>,
     current_database: Arc<StdRwLock<String>>,
     views: Arc<StdRwLock<Vec<ViewInfo>>>,
-    transaction: Arc<StdRwLock<TransactionContext>>,
+    transaction: Arc<StdRwLock<SimpleTransactionState>>,
     session_ctx: SessionContext,
 }
 
@@ -55,6 +53,53 @@ struct ViewInfo {
     name: String,
     query: String,
     columns: Vec<String>,
+}
+
+/// Minimal transaction state tracking (replaces be-execution's TransactionContext)
+struct SimpleTransactionState {
+    in_transaction: bool,
+    isolation_level: String,
+    savepoints: Vec<String>,
+}
+
+impl SimpleTransactionState {
+    fn new() -> Self {
+        Self {
+            in_transaction: false,
+            isolation_level: "REPEATABLE READ".to_string(),
+            savepoints: Vec::new(),
+        }
+    }
+
+    fn begin(&mut self) {
+        self.in_transaction = true;
+    }
+
+    fn rollback(&mut self) {
+        self.savepoints.clear();
+    }
+
+    fn savepoint(&mut self, name: String) -> Result<(), String> {
+        self.savepoints.push(name);
+        Ok(())
+    }
+
+    fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), String> {
+        if self.savepoints.contains(&name.to_string()) {
+            Ok(())
+        } else {
+            Err(format!("Savepoint '{}' not found", name))
+        }
+    }
+
+    fn release_savepoint(&mut self, name: &str) -> Result<(), String> {
+        self.savepoints.retain(|s| s != name);
+        Ok(())
+    }
+
+    fn set_isolation_level(&mut self, level: String) {
+        self.isolation_level = level;
+    }
 }
 
 impl RorisQueryHandler {
@@ -72,7 +117,7 @@ impl RorisQueryHandler {
             catalog,
             current_database: Arc::new(StdRwLock::new("information_schema".to_string())),
             views: Arc::new(StdRwLock::new(Vec::new())),
-            transaction: Arc::new(StdRwLock::new(TransactionContext::new())),
+            transaction: Arc::new(StdRwLock::new(SimpleTransactionState::new())),
             session_ctx,
         }
     }
@@ -2271,9 +2316,6 @@ async fn main() -> Result<()> {
         catalog.replay_edit_log(&log)?;
         tracing::info!("Edit log applied to catalog");
     }
-
-    // Initialize cluster manager for BE health monitoring
-    let _cluster = Arc::new(RwLock::new(ClusterManager::new(fe_scheduler::cluster::ClusterConfig::default())));
 
     let monitoring = Arc::new(MonitoringManager::new(catalog.clone()));
     tracing::info!("Monitoring manager initialized");

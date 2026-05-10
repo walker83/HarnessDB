@@ -6,20 +6,17 @@ members = [
 
     # Frontend (FE) - SQL parsing, query planning, catalog management
     "crates/fe-sql-parser",
-    "crates/fe-sql-planner",
     "crates/fe-catalog",
-    "crates/fe-scheduler",
     "crates/fe-common",
-    "crates/fe-expression",
     "crates/fe-datafusion",
     "crates/fe-monitor",
     "crates/mysql-protocol",
 
     # Backend (BE) - Storage engine, query execution
     "crates/be-storage",
-    "crates/be-execution",
     "crates/be-segment",
     "crates/be-common",
+    "crates/be-rocks",
 
     # Shared crates
     "crates/common",
@@ -29,7 +26,6 @@ members = [
     "crates/data-io",
 
     # Tools & utilities
-    "tools/roris-cli",
     "tools/tpch_test",
     "tools/mysql_server",
 
@@ -121,19 +117,16 @@ async-trait = "0.1"
 
 # Internal crates
 fe-sql-parser = { path = "crates/fe-sql-parser" }
-fe-sql-planner = { path = "crates/fe-sql-planner" }
 fe-catalog = { path = "crates/fe-catalog" }
-fe-scheduler = { path = "crates/fe-scheduler" }
 fe-common = { path = "crates/fe-common" }
 be-storage = { path = "crates/be-storage" }
-be-execution = { path = "crates/be-execution" }
 be-segment = { path = "crates/be-segment" }
 be-common = { path = "crates/be-common" }
+be-rocks = { path = "crates/be-rocks" }
 common = { path = "crates/common" }
 rpc = { path = "crates/rpc" }
 types = { path = "crates/types" }
 proto = { path = "crates/proto" }
-fe-expression = { path = "crates/fe-expression" }
 fe-datafusion = { path = "crates/fe-datafusion" }
 fe-monitor = { path = "crates/fe-monitor" }
 mysql-protocol = { path = "crates/mysql-protocol" }
