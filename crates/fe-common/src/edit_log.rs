@@ -80,6 +80,9 @@ impl EditLog {
             file.write_all(line.as_bytes()).await?;
             file.write_all(b"\n").await?;
         }
+        // Ensure edit log is flushed to disk (critical for durability)
+        file.sync_all().await
+            .map_err(|e| common::DrorisError::Internal(format!("Failed to sync edit log: {}", e)))?;
         self.last_applied_index = self.entries.last().map(|e| e.index).unwrap_or(self.last_applied_index);
         self.entries.clear();
         Ok(())

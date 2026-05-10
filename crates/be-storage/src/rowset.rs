@@ -117,7 +117,11 @@ impl Rowset {
         let json = serde_json::to_string_pretty(&(&self.meta, &self.segments))
             .map_err(|e| format!("Serialize rowset meta: {}", e))?;
         std::fs::write(path, json)
-            .map_err(|e| format!("Write rowset meta: {}", e))
+            .map_err(|e| format!("Write rowset meta: {}", e))?;
+        // Ensure metadata is flushed to disk
+        std::fs::File::open(path)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| format!("Sync rowset meta: {}", e))
     }
 
     /// Load rowset metadata from a JSON file.

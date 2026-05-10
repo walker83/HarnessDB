@@ -138,6 +138,11 @@ pub fn write_parquet_segment(
     let meta = writer.close()
         .map_err(|e| ParquetWriteError::ParquetError(e.to_string()))?;
 
+    // Ensure data is flushed to disk (critical for durability)
+    std::fs::File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(ParquetWriteError::IoError)?;
+
     // Collect statistics
     let column_stats = collect_column_stats(batch);
 
@@ -148,7 +153,7 @@ pub fn write_parquet_segment(
         column_stats,
     };
 
-    debug!("Written Parquet segment: {} rows, {} bytes", result.num_rows, result.size);
+    debug!("Written Parquet segment: {} rows, {} bytes (synced to disk)", result.num_rows, result.size);
     Ok(result)
 }
 
