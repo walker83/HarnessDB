@@ -41,10 +41,12 @@ pub struct Connection {
     prepared_statements: Vec<(String, u16, u16)>,
     next_stmt_id: u32,
     read_buf: BytesMut,
+    /// Authentication timeout in seconds
+    auth_timeout_secs: u64,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, conn_id: u32, handler: Arc<dyn QueryHandler>) -> Self {
+    pub fn new(stream: TcpStream, conn_id: u32, handler: Arc<dyn QueryHandler>, auth_timeout_secs: u64) -> Self {
         Self {
             stream,
             conn_id,
@@ -60,24 +62,29 @@ impl Connection {
             prepared_statements: Vec::new(),
             next_stmt_id: 1,
             read_buf: BytesMut::with_capacity(16 * 1024),
+            auth_timeout_secs,
         }
     }
 
     /// Run the connection through all phases until closed.
     pub async fn run(&mut self) -> std::io::Result<()> {
+        info!("Connection {} starting handshake phase", self.conn_id);
         // Phase 1: Send handshake
         self.send_handshake().await?;
+        info!("Connection {} handshake sent, waiting for auth response (timeout={}s)", self.conn_id, self.auth_timeout_secs);
 
-        // Phase 2: Receive auth response (with timeout)
-        let auth_result = timeout(Duration::from_secs(1), self.handle_auth_response()).await;
+        // Phase 2: Receive auth response (with configurable timeout)
+        let auth_result = timeout(Duration::from_secs(self.auth_timeout_secs), self.handle_auth_response()).await;
         match auth_result {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                info!("Connection {} auth successful, entering command loop", self.conn_id);
+            }
             Ok(Err(e)) => {
                 warn!("Auth failed for conn {}: {}", self.conn_id, e);
                 return Err(e);
             }
             Err(_) => {
-                warn!("Auth timeout for conn {}", self.conn_id);
+                warn!("Auth timeout for conn {} after {}s", self.conn_id, self.auth_timeout_secs);
                 return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "auth timeout"));
             }
         }
@@ -108,7 +115,7 @@ impl Connection {
         let seq_before = self.seq_id;
         debug!("handle_auth_response: reading auth packet, current seq_id={}", seq_before);
         let payload = self.read_packet().await?;
-        debug!("handle_auth_response: received {} bytes, seq_id now={}", payload.len(), self.seq_id);
+        info!("Connection {} received auth response: {} bytes, seq_id={}", self.conn_id, payload.len(), self.seq_id);
 
         let response = match HandshakeResponse::parse(&payload) {
             Ok(r) => r,
@@ -124,13 +131,15 @@ impl Connection {
         self.username = response.username.clone();
         self.database = response.database.clone();
 
-        debug!(
-            "Auth: user={}, db={:?}, charset={}, auth_plugin={:?}, our seq_id={}",
+        info!(
+            "Connection {} auth details: user={}, db={:?}, charset={}, client_caps=0x{:x}, server_caps=0x{:x}, auth_plugin={:?}",
+            self.conn_id,
             self.username,
             self.database,
             crate::charset::charset_name(self.charset),
-            response.auth_plugin_name,
-            self.seq_id
+            response.capability_flags,
+            self.capability_flags,
+            response.auth_plugin_name
         );
 
         let auth_result = self.authenticate_user(
@@ -142,6 +151,12 @@ impl Connection {
         match auth_result {
             Ok(auth_user) => {
                 self.auth_user = Some(auth_user);
+                // If database was specified in handshake, set it
+                if let Some(ref db) = self.database {
+                    if !db.is_empty() {
+                        self.handler.set_database(db);
+                    }
+                }
                 self.send_ok(0, 0).await?;
                 debug!("handle_auth_response: sent OK, seq_id now={}", self.seq_id);
                 self.phase = Phase::Command;
@@ -220,28 +235,68 @@ impl Connection {
     // -----------------------------------------------------------------------
 
     async fn command_loop(&mut self) -> std::io::Result<()> {
+        info!("Connection {} entering command loop", self.conn_id);
         loop {
             let payload = match self.read_packet().await {
                 Ok(p) => p,
                 Err(e) => {
                     if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                        info!("Client disconnected");
+                        info!("Connection {} client disconnected", self.conn_id);
                         break;
                     }
-                    error!("Read error: {}", e);
+                    error!("Connection {} read error: {}", self.conn_id, e);
                     break;
                 }
             };
 
             if payload.is_empty() {
-                warn!("Empty command packet");
+                warn!("Connection {} empty command packet", self.conn_id);
                 continue;
             }
 
             let cmd = payload[0];
             let data = &payload[1..];
 
-            debug!("Command: {:#x} ({} bytes payload)", cmd, data.len());
+            let cmd_str = match cmd {
+                    0x00 => "COM_SLEEP",
+                    0x01 => "COM_QUIT",
+                    0x02 => "COM_INIT_DB",
+                    0x03 => "COM_QUERY",
+                    0x04 => "COM_FIELD_LIST",
+                    0x05 => "COM_CREATE_DB",
+                    0x06 => "COM_DROP_DB",
+                    0x07 => "COM_REFRESH",
+                    0x08 => "COM_SHUTDOWN",
+                    0x09 => "COM_STATISTICS",
+                    0x0a => "COM_PROCESS_INFO",
+                    0x0b => "COM_CONNECT",
+                    0x0c => "COM_PROCESS_KILL",
+                    0x0d => "COM_DEBUG",
+                    0x0e => "COM_PING",
+                    0x0f => "COM_TIME",
+                    0x10 => "COM_DELAYED_INSERT",
+                    0x11 => "COM_CHANGE_USER",
+                    0x12 => "COM_BINLOG_DUMP",
+                    0x13 => "COM_TABLE_DUMP",
+                    0x14 => "COM_CONNECT_OUT",
+                    0x15 => "COM_REGISTER_SLAVE",
+                    0x16 => "COM_STMT_PREPARE",
+                    0x17 => "COM_STMT_EXECUTE",
+                    0x18 => "COM_STMT_SEND_LONG_DATA",
+                    0x19 => "COM_STMT_CLOSE",
+                    0x1a => "COM_STMT_RESET",
+                    0x1b => "COM_SET_OPTION",
+                    0x1c => "COM_STMT_FETCH",
+                    0x1d => "COM_DAEMON",
+                    0x1e => "COM_BINLOG_DUMP_GTID",
+                    0x1f => "COM_RESET_CONNECTION",
+                    _ => "UNKNOWN",
+                };
+            if cmd == 0x03 {
+                info!("Connection {} command: {} ({} bytes) - SQL: {:?}", self.conn_id, cmd_str, data.len(), String::from_utf8_lossy(data));
+            } else {
+                info!("Connection {} command: {} ({} bytes)", self.conn_id, cmd_str, data.len());
+            }
 
             match cmd {
                 command::COM_QUIT => {
@@ -357,9 +412,30 @@ impl Connection {
             }
             // select @@variable (various system variables)
             if trimmed.contains("@@") {
+                // Extract variable name from query like "SELECT @@max_allowed_packet"
+                let var_name = trimmed
+                    .split("@@")
+                    .nth(1)
+                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").trim_end_matches(';').trim())
+                    .unwrap_or("");
+
+                let (value, col_type) = match var_name {
+                    "max_allowed_packet" => (4194304.to_string(), ColumnType::Int), // 4MB default
+                    "version" | "version_comment" => ("RorisDB".to_string(), ColumnType::String),
+                    "character_set_client" | "character_set_connection" | "character_set_results" => ("utf8mb4".to_string(), ColumnType::String),
+                    "collation_connection" | "collation_server" => ("utf8mb4_general_ci".to_string(), ColumnType::String),
+                    "autocommit" => ("1".to_string(), ColumnType::Int),
+                    "sql_mode" => ("".to_string(), ColumnType::String),
+                    "time_zone" => ("SYSTEM".to_string(), ColumnType::String),
+                    "wait_timeout" => (28800.to_string(), ColumnType::Int),
+                    "interactive_timeout" => (28800.to_string(), ColumnType::Int),
+                    "net_buffer_length" => (16384.to_string(), ColumnType::Int),
+                    _ => ("".to_string(), ColumnType::String),
+                };
+
                 let result = QueryResult::with_rows(
-                    vec![ColumnDef { name: "@@variable".to_string(), col_type: ColumnType::String }],
-                    vec![vec![Some(String::new())]],
+                    vec![ColumnDef { name: format!("@@{}", var_name), col_type }],
+                    vec![vec![Some(value)]],
                 );
                 return self.send_result_set(result).await;
             }
@@ -505,6 +581,7 @@ impl Connection {
     // -----------------------------------------------------------------------
 
     async fn handle_stmt_prepare(&mut self, sql: &str) -> std::io::Result<()> {
+        info!("Connection {} COM_STMT_PREPARE: {}", self.conn_id, sql);
         // For now, parse the statement but don't actually bind parameters.
         // We store it and assign a statement ID.
         let stmt_id = self.next_stmt_id;
@@ -513,9 +590,28 @@ impl Connection {
         // Parse placeholders (?) for parameter count
         let num_params = count_placeholders(sql) as u16;
 
-        // Execute the query to determine columns (with empty params)
-        let result = self.handler.handle_query(sql);
-        let num_columns = result.columns.len() as u16;
+        // Check if this is a DML statement (INSERT/UPDATE/DELETE)
+        // For DML, we don't execute during PREPARE - just validate syntax
+        let upper_sql = sql.trim().to_uppercase();
+        let is_dml = upper_sql.starts_with("INSERT") || upper_sql.starts_with("UPDATE") || upper_sql.starts_with("DELETE");
+
+        let (num_columns, result_columns) = if is_dml {
+            // DML statements don't return columns during PREPARE
+            (0, Vec::new())
+        } else {
+            // Execute the query to determine columns
+            // For queries with placeholders, replace ? with dummy values to get schema
+            let exec_sql = if num_params > 0 {
+                self.replace_placeholders_with_dummy(sql, num_params)
+            } else {
+                sql.to_string()
+            };
+            info!("Connection {} COM_STMT_PREPARE exec_sql: {}", self.conn_id, exec_sql);
+
+            let result = self.handler.handle_query(&exec_sql);
+            (result.columns.len() as u16, result.columns)
+        };
+        info!("Connection {} COM_STMT_PREPARE result: {} columns, {} params", self.conn_id, num_columns, num_params);
 
         // Store the statement
         self.prepared_statements
@@ -543,7 +639,7 @@ impl Connection {
         }
 
         // Send result column definitions (if any)
-        for col_def in &result.columns {
+        for col_def in &result_columns {
             let col: Column = col_def.into();
             let pkt = col.encode(self.seq_id);
             self.write_all(&pkt).await?;
@@ -574,11 +670,320 @@ impl Connection {
             return Ok(());
         }
 
-        let (sql, _num_params, _num_cols) = &self.prepared_statements[stmt_id - 1];
+        let (sql, num_params, _stored_num_cols) = &self.prepared_statements[stmt_id - 1];
+        let num_params = *num_params;
 
-        // For simplicity, just execute the SQL directly (ignoring bound params)
-        let result = self.handler.handle_query(sql);
-        self.send_result_set(result).await
+        // Parse and bind parameters if any
+        let bound_sql = if num_params > 0 && data.len() > 9 {
+            self.bind_params(sql, data, num_params)
+        } else {
+            sql.clone()
+        };
+
+        info!("Connection {} COM_STMT_EXECUTE: {} (bound: {})", self.conn_id, sql, bound_sql);
+
+        // Execute the SQL with bound parameters
+        let result = self.handler.handle_query(&bound_sql);
+
+        // Use actual column count from result, not stored value
+        let actual_num_cols = result.columns.len() as u16;
+        info!("Connection {} COM_STMT_EXECUTE result: {} columns, {} rows", self.conn_id, actual_num_cols, result.rows.len());
+
+        // Send result set using binary protocol
+        self.send_binary_result_set(result, actual_num_cols).await
+    }
+
+    /// Replace ? placeholders with dummy values for PREPARE phase.
+    /// This allows us to execute the query to get schema even with placeholders.
+    fn replace_placeholders_with_dummy(&self, sql: &str, num_params: u16) -> String {
+        // Use NULL as dummy value - most compatible with different column types
+        let dummy_values: Vec<String> = (0..num_params).map(|_| "NULL".to_string()).collect();
+        self.replace_placeholders(sql, &dummy_values)
+    }
+
+    /// Bind parameters from COM_STMT_EXECUTE packet to SQL placeholders.
+    fn bind_params(&self, sql: &str, data: &[u8], num_params: u16) -> String {
+        // COM_STMT_EXECUTE packet format after stmt_id:
+        // 1 byte: flags
+        // 4 bytes: iteration count
+        // (num_params + 7) / 8 bytes: NULL bitmap
+        // 1 byte: new_params_bound_flag (if 1, followed by type info for each param)
+        // If new_params_bound_flag == 1:
+        //   For each param: 2 bytes type (1 byte type_code, 1 byte unsigned flag)
+        // Then: parameter values (for non-NULL params)
+
+        if data.len() < 10 {
+            return sql.to_string();
+        }
+
+        let _flags = data[4];
+        let _iteration = u32::from_le_bytes([data[5], data[6], data[7], data[8]]);
+
+        // NULL bitmap starts at offset 9
+        let null_bitmap_size = ((num_params as usize + 7) / 8).max(1);
+        if data.len() < 9 + null_bitmap_size {
+            return sql.to_string();
+        }
+
+        let null_bitmap = &data[9..9 + null_bitmap_size];
+
+        // Check if new params are bound
+        let new_params_bound = if data.len() > 9 + null_bitmap_size {
+            data[9 + null_bitmap_size] == 1
+        } else {
+            false
+        };
+
+        // First, read ALL parameter types (if new_params_bound)
+        // MySQL protocol sends all type info first, then all values
+        let mut offset = if new_params_bound {
+            9 + null_bitmap_size + 1
+        } else {
+            9 + null_bitmap_size
+        };
+
+        let param_types: Vec<(u8, bool)> = if new_params_bound {
+            let mut types = Vec::new();
+            for _ in 0..num_params {
+                if offset + 2 <= data.len() {
+                    let type_byte = data[offset];
+                    let unsigned_flag = data[offset + 1];
+                    types.push((type_byte, unsigned_flag != 0));
+                    offset += 2;
+                } else {
+                    types.push((column_type::VAR_STRING, false));
+                }
+            }
+            types
+        } else {
+            // Default all to string type
+            (0..num_params).map(|_| (column_type::VAR_STRING, false)).collect()
+        };
+
+        // Now read ALL parameter values
+        let mut param_values: Vec<String> = Vec::new();
+        for (i, (param_type, is_unsigned)) in param_types.iter().enumerate() {
+            // Check NULL bitmap
+            let is_null = (null_bitmap[i / 8] & (1 << (i % 8))) != 0;
+
+            if is_null {
+                param_values.push("NULL".to_string());
+                continue;
+            }
+
+            // Read value based on type - returns (value, bytes_consumed)
+            let (value, size) = self.read_param_value(data, offset, *param_type, *is_unsigned);
+            param_values.push(value);
+
+            // Advance offset based on actual bytes consumed
+            offset += size;
+        }
+
+        // Replace ? placeholders with values
+        self.replace_placeholders(sql, &param_values)
+    }
+
+    /// Read a parameter value from the packet data.
+    /// Returns (value_string, bytes_consumed).
+    fn read_param_value(&self, data: &[u8], offset: usize, param_type: u8, _is_unsigned: bool) -> (String, usize) {
+        if offset >= data.len() {
+            return ("NULL".to_string(), 0);
+        }
+
+        match param_type {
+            column_type::TINY => {
+                if offset + 1 <= data.len() {
+                    (data[offset].to_string(), 1)
+                } else {
+                    ("0".to_string(), 0)
+                }
+            }
+            column_type::SHORT => {
+                if offset + 2 <= data.len() {
+                    (i16::from_le_bytes([data[offset], data[offset + 1]]).to_string(), 2)
+                } else {
+                    ("0".to_string(), 0)
+                }
+            }
+            column_type::LONG => {
+                if offset + 4 <= data.len() {
+                    (i32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]).to_string(), 4)
+                } else {
+                    ("0".to_string(), 0)
+                }
+            }
+            column_type::LONGLONG => {
+                if offset + 8 <= data.len() {
+                    (i64::from_le_bytes([
+                        data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+                        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+                    ]).to_string(), 8)
+                } else {
+                    ("0".to_string(), 0)
+                }
+            }
+            column_type::FLOAT => {
+                if offset + 4 <= data.len() {
+                    (f32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]).to_string(), 4)
+                } else {
+                    ("0.0".to_string(), 0)
+                }
+            }
+            column_type::DOUBLE => {
+                if offset + 8 <= data.len() {
+                    (f64::from_le_bytes([
+                        data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+                        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+                    ]).to_string(), 8)
+                } else {
+                    ("0.0".to_string(), 0)
+                }
+            }
+            column_type::VAR_STRING | column_type::VARCHAR | column_type::BLOB => {
+                // Length-encoded string
+                if offset >= data.len() {
+                    return ("''".to_string(), 0);
+                }
+                let len_byte = data[offset];
+                if len_byte < 0xFB {
+                    // 1-byte length
+                    let len = len_byte as usize;
+                    if offset + 1 + len <= data.len() {
+                        let s = String::from_utf8_lossy(&data[offset + 1..offset + 1 + len]);
+                        // Escape single quotes for SQL
+                        (format!("'{}'", s.replace("'", "''")), 1 + len)
+                    } else {
+                        ("''".to_string(), 0)
+                    }
+                } else if len_byte == 0xFC {
+                    // 2-byte length
+                    if offset + 2 <= data.len() {
+                        let len = u16::from_le_bytes([data[offset + 1], data[offset + 2]]) as usize;
+                        if offset + 3 + len <= data.len() {
+                            let s = String::from_utf8_lossy(&data[offset + 3..offset + 3 + len]);
+                            (format!("'{}'", s.replace("'", "''")), 3 + len)
+                        } else {
+                            ("''".to_string(), 0)
+                        }
+                    } else {
+                        ("''".to_string(), 0)
+                    }
+                } else {
+                    ("''".to_string(), 0)
+                }
+            }
+            _ => {
+                ("NULL".to_string(), 0)
+            }
+        }
+    }
+
+    /// Replace ? placeholders in SQL with actual values.
+    fn replace_placeholders(&self, sql: &str, values: &[String]) -> String {
+        let mut result = String::new();
+        let mut in_string = false;
+        let mut string_char = b'\0';
+        let mut prev = b'\0';
+        let mut param_idx = 0;
+
+        for b in sql.bytes() {
+            if in_string {
+                if b == string_char && prev != b'\\' {
+                    in_string = false;
+                }
+                result.push(b as char);
+            } else if b == b'\'' || b == b'"' {
+                in_string = true;
+                string_char = b;
+                result.push(b as char);
+            } else if b == b'?' {
+                if param_idx < values.len() {
+                    result.push_str(&values[param_idx]);
+                    param_idx += 1;
+                } else {
+                    result.push('?');
+                }
+            } else {
+                result.push(b as char);
+            }
+            prev = b;
+        }
+        result
+    }
+
+    /// Send result set in binary protocol format (for COM_STMT_EXECUTE).
+    async fn send_binary_result_set(&mut self, result: QueryResult, num_columns: u16) -> std::io::Result<()> {
+        info!("Connection {} send_binary_result_set: {} columns, {} rows, columns={:?}",
+            self.conn_id, num_columns, result.rows.len(),
+            result.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>());
+
+        // For prepared statements, always send column count and definitions
+        // even if result.columns is empty (DDL) or num_columns is 0
+        if num_columns == 0 {
+            // This was a DDL or non-select statement
+            info!("Connection {} send_binary_result_set: num_columns=0, sending OK", self.conn_id);
+            self.send_ok(0, 0).await?;
+            return Ok(());
+        }
+
+        let use_eof = (self.capability_flags & CapabilityFlags::DEPRECATE_EOF) == 0;
+
+        // 1. Column count packet (lenenc int)
+        let mut pb = packet::PacketBuilder::new(self.seq_id);
+        pb.lenenc_int(num_columns as u64);
+        let (pkt, next) = pb.finish();
+        self.write_all(&pkt).await?;
+        self.seq_id = next;
+
+        // 2. Column definition packets (same as text protocol)
+        let columns: Vec<Column> = result.columns.iter().map(|c| c.into()).collect();
+        for col in &columns {
+            let pkt = col.encode(self.seq_id);
+            self.write_all(&pkt).await?;
+            self.seq_id = self.seq_id.wrapping_add(1);
+        }
+
+        // 3. EOF packet (if not deprecated)
+        if use_eof {
+            let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
+            self.write_all(&eof).await?;
+            self.seq_id = self.seq_id.wrapping_add(1);
+        }
+
+        // 4. Binary row data packets
+        for row in &result.rows {
+            // Convert text values to binary values based on column types
+            let binary_values: Vec<Option<packet::BinaryValue>> = row
+                .iter()
+                .zip(columns.iter())
+                .map(|(val, col)| {
+                    packet::text_to_binary(val.as_ref().map(|s| s.as_str()), col.column_type)
+                })
+                .collect();
+
+            let pkt = packet::encode_binary_row(self.seq_id, &binary_values, num_columns);
+            self.write_all(&pkt).await?;
+            self.seq_id = self.seq_id.wrapping_add(1);
+        }
+
+        // 5. Final EOF or OK
+        if use_eof {
+            let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
+            self.write_all(&eof).await?;
+            self.seq_id = self.seq_id.wrapping_add(1);
+        } else {
+            let ok = packet::make_ok_packet(
+                self.seq_id,
+                result.rows.len() as u64,
+                0,
+                packet::SERVER_STATUS_AUTOCOMMIT,
+                0,
+            );
+            self.write_all(&ok).await?;
+            self.seq_id = self.seq_id.wrapping_add(1);
+        }
+
+        Ok(())
     }
 
     fn handle_stmt_close(&mut self, data: &[u8]) {

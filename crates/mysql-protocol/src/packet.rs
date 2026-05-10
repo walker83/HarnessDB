@@ -742,3 +742,226 @@ pub fn make_auth_switch_request(seq_id: u8, plugin_name: &[u8], plugin_data: &[u
     let (packet, _) = pb.finish();
     packet
 }
+
+// ---------------------------------------------------------------------------
+// Binary protocol row encoding (for COM_STMT_EXECUTE)
+// ---------------------------------------------------------------------------
+
+/// Encode a single binary-protocol row.
+/// Format: 0x00 header + NULL bitmap + values
+/// NULL bitmap: bits 0-1 are padding, then each column has one bit
+/// Values are encoded in binary format based on column type.
+pub fn encode_binary_row(seq_id: u8, values: &[Option<BinaryValue>], num_columns: u16) -> BytesMut {
+    let mut pb = PacketBuilder::new(seq_id);
+
+    // Header byte (0x00 for binary row)
+    pb.put_u8(0x00);
+
+    // NULL bitmap: (num_columns + 7 + 2) / 8 bytes
+    // Bits 0-1 are padding, bit 2 = column 0, bit 3 = column 1, etc.
+    let null_bitmap_size = ((num_columns as usize + 9) / 8).max(1);
+    let mut null_bitmap = vec![0u8; null_bitmap_size];
+
+    for (i, val) in values.iter().enumerate() {
+        if val.is_none() {
+            // Set bit at position (i + 2)
+            let bit_pos = i + 2;
+            null_bitmap[bit_pos / 8] |= 1 << (bit_pos % 8);
+        }
+    }
+    pb.put_slice(&null_bitmap);
+
+    // Encode non-NULL values
+    for val in values.iter() {
+        if let Some(v) = val {
+            encode_binary_value(&mut pb, v);
+        }
+    }
+
+    let (packet, _) = pb.finish();
+    packet
+}
+
+/// Binary value representation for MySQL binary protocol.
+#[derive(Debug, Clone)]
+pub enum BinaryValue {
+    /// Signed 8-bit integer (MYSQL_TYPE_TINY)
+    Int8(i8),
+    /// Unsigned 8-bit integer
+    UInt8(u8),
+    /// Signed 16-bit integer (MYSQL_TYPE_SHORT)
+    Int16(i16),
+    /// Unsigned 16-bit integer
+    UInt16(u16),
+    /// Signed 32-bit integer (MYSQL_TYPE_LONG)
+    Int32(i32),
+    /// Unsigned 32-bit integer
+    UInt32(u32),
+    /// Signed 64-bit integer (MYSQL_TYPE_LONGLONG)
+    Int64(i64),
+    /// Unsigned 64-bit integer
+    UInt64(u64),
+    /// 32-bit float (MYSQL_TYPE_FLOAT)
+    Float(f32),
+    /// 64-bit double (MYSQL_TYPE_DOUBLE)
+    Double(f64),
+    /// String/binary (MYSQL_TYPE_VAR_STRING, MYSQL_TYPE_BLOB)
+    String(Vec<u8>),
+    /// Date (MYSQL_TYPE_DATE)
+    Date { year: u16, month: u8, day: u8 },
+    /// DateTime (MYSQL_TYPE_DATETIME)
+    DateTime { year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8, micros: u32 },
+    /// Time (MYSQL_TYPE_TIME)
+    Time { is_neg: bool, days: u32, hours: u8, minutes: u8, seconds: u8, micros: u32 },
+}
+
+/// Encode a binary value into the packet builder.
+fn encode_binary_value(pb: &mut PacketBuilder, val: &BinaryValue) {
+    match val {
+        BinaryValue::Int8(n) => {
+            pb.put_u8(*n as u8);
+        }
+        BinaryValue::UInt8(n) => {
+            pb.put_u8(*n);
+        }
+        BinaryValue::Int16(n) => {
+            pb.put_u16_le(*n as u16);
+        }
+        BinaryValue::UInt16(n) => {
+            pb.put_u16_le(*n);
+        }
+        BinaryValue::Int32(n) => {
+            pb.put_u32_le(*n as u32);
+        }
+        BinaryValue::UInt32(n) => {
+            pb.put_u32_le(*n);
+        }
+        BinaryValue::Int64(n) => {
+            pb.put_u64_le(*n as u64);
+        }
+        BinaryValue::UInt64(n) => {
+            pb.put_u64_le(*n);
+        }
+        BinaryValue::Float(f) => {
+            pb.put_slice(&f.to_le_bytes());
+        }
+        BinaryValue::Double(d) => {
+            pb.put_slice(&d.to_le_bytes());
+        }
+        BinaryValue::String(s) => {
+            pb.lenenc_bytes(s);
+        }
+        BinaryValue::Date { year, month, day } => {
+            pb.put_u8(4); // length
+            pb.put_u16_le(*year);
+            pb.put_u8(*month);
+            pb.put_u8(*day);
+        }
+        BinaryValue::DateTime { year, month, day, hour, minute, second, micros } => {
+            if *micros == 0 {
+                pb.put_u8(7); // length without micros
+                pb.put_u16_le(*year);
+                pb.put_u8(*month);
+                pb.put_u8(*day);
+                pb.put_u8(*hour);
+                pb.put_u8(*minute);
+                pb.put_u8(*second);
+            } else {
+                pb.put_u8(11); // length with micros
+                pb.put_u16_le(*year);
+                pb.put_u8(*month);
+                pb.put_u8(*day);
+                pb.put_u8(*hour);
+                pb.put_u8(*minute);
+                pb.put_u8(*second);
+                pb.put_u32_le(*micros);
+            }
+        }
+        BinaryValue::Time { is_neg, days, hours, minutes, seconds, micros } => {
+            if *micros == 0 {
+                pb.put_u8(8); // length without micros
+                pb.put_u8(if *is_neg { 1 } else { 0 });
+                pb.put_u32_le(*days);
+                pb.put_u8(*hours);
+                pb.put_u8(*minutes);
+                pb.put_u8(*seconds);
+            } else {
+                pb.put_u8(12); // length with micros
+                pb.put_u8(if *is_neg { 1 } else { 0 });
+                pb.put_u32_le(*days);
+                pb.put_u8(*hours);
+                pb.put_u8(*minutes);
+                pb.put_u8(*seconds);
+                pb.put_u32_le(*micros);
+            }
+        }
+    }
+}
+
+/// Convert a string value to BinaryValue based on column type.
+pub fn text_to_binary(text: Option<&str>, col_type: u8) -> Option<BinaryValue> {
+    let text = text?;
+    match col_type {
+        column_type::TINY => {
+            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
+        }
+        column_type::SHORT => {
+            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
+        }
+        column_type::LONG => {
+            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
+        }
+        column_type::LONGLONG => {
+            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
+        }
+        column_type::FLOAT => {
+            text.parse::<f64>().ok().map(|f| BinaryValue::Double(f))
+        }
+        column_type::DOUBLE => {
+            text.parse::<f64>().ok().map(|f| BinaryValue::Double(f))
+        }
+        column_type::VAR_STRING | column_type::VARCHAR | column_type::BLOB => {
+            Some(BinaryValue::String(text.as_bytes().to_vec()))
+        }
+        column_type::DATE => {
+            // Parse YYYY-MM-DD
+            let parts: Vec<&str> = text.split('-').collect();
+            if parts.len() == 3 {
+                Some(BinaryValue::Date {
+                    year: parts[0].parse().ok()?,
+                    month: parts[1].parse().ok()?,
+                    day: parts[2].parse().ok()?,
+                })
+            } else {
+                Some(BinaryValue::String(text.as_bytes().to_vec()))
+            }
+        }
+        column_type::DATETIME => {
+            // Parse YYYY-MM-DD HH:MM:SS
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let date_parts: Vec<&str> = parts[0].split('-').collect();
+                let time_parts: Vec<&str> = parts[1].split(':').collect();
+                if date_parts.len() == 3 && time_parts.len() >= 3 {
+                    Some(BinaryValue::DateTime {
+                        year: date_parts[0].parse().ok()?,
+                        month: date_parts[1].parse().ok()?,
+                        day: date_parts[2].parse().ok()?,
+                        hour: time_parts[0].parse().ok()?,
+                        minute: time_parts[1].parse().ok()?,
+                        second: time_parts[2].parse().ok()?,
+                        micros: if time_parts.len() > 3 { time_parts[3].parse().ok()? } else { 0 },
+                    })
+                } else {
+                    Some(BinaryValue::String(text.as_bytes().to_vec()))
+                }
+            } else {
+                Some(BinaryValue::String(text.as_bytes().to_vec()))
+            }
+        }
+        _ => {
+            // Default: treat as string
+            Some(BinaryValue::String(text.as_bytes().to_vec()))
+        }
+    }
+}

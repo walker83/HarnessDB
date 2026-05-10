@@ -13,6 +13,9 @@ pub struct ServerConfig {
     pub bind_addr: String,
     pub port: u16,
     pub default_auth_plugin: AuthPluginType,
+    /// Authentication timeout in seconds. Default: 30 seconds.
+    /// Connection pools often need more time for handshake.
+    pub auth_timeout_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -21,6 +24,7 @@ impl Default for ServerConfig {
             bind_addr: "127.0.0.1".to_string(),
             port: 9030,
             default_auth_plugin: AuthPluginType::NativePassword,
+            auth_timeout_secs: 30,
         }
     }
 }
@@ -103,6 +107,8 @@ impl MysqlServer {
         let listener = TcpListener::bind(&addr).await?;
         info!("MySQL server listening on {}", addr);
 
+        let auth_timeout_secs = self.config.auth_timeout_secs;
+
         loop {
             let (stream, peer_addr) = listener.accept().await?;
             let conn_id = self.connection_counter.fetch_add(1, Ordering::Relaxed);
@@ -112,7 +118,7 @@ impl MysqlServer {
 
             tokio::spawn(
                 async move {
-                    if let Err(e) = handle_connection(stream, conn_id, handler).await {
+                    if let Err(e) = handle_connection(stream, conn_id, handler, auth_timeout_secs).await {
                         error!("Connection {} error: {}", conn_id, e);
                     }
                     info!("Connection {} closed", conn_id);
@@ -127,8 +133,9 @@ async fn handle_connection(
     stream: TcpStream,
     conn_id: u32,
     handler: Arc<dyn QueryHandler>,
+    auth_timeout_secs: u64,
 ) -> std::io::Result<()> {
-    let mut conn = Connection::new(stream, conn_id, handler);
+    let mut conn = Connection::new(stream, conn_id, handler, auth_timeout_secs);
     conn.run().await
 }
 

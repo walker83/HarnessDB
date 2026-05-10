@@ -135,6 +135,7 @@ impl RorisQueryHandler {
 
 impl QueryHandler for RorisQueryHandler {
     fn handle_query(&self, sql: &str) -> QueryResult {
+        tracing::info!("handle_query received SQL: {:?}", sql);
         let trimmed = sql.trim().trim_end_matches(';');
         if trimmed.is_empty() {
             return QueryResult::ok();
@@ -156,16 +157,18 @@ impl QueryHandler for RorisQueryHandler {
                         let rt = tokio::runtime::Runtime::new().unwrap();
                         rt.block_on(async {
                             let df = ctx.sql(&sql).await?;
+                            // Get schema before collecting batches
+                            let schema = df.schema().clone();
                             let batches = df.collect().await?;
-                            Ok::<_, datafusion::error::DataFusionError>(batches)
+                            Ok::<_, datafusion::error::DataFusionError>((batches, schema))
                         })
                     }
                 })
                 .join();
 
                 match result {
-                    Ok(Ok(batches)) => {
-                        return record_batches_to_query_result(&batches);
+                    Ok(Ok((batches, df_schema))) => {
+                        return record_batches_to_query_result_with_df_schema(&batches, &df_schema);
                     }
                     Ok(Err(df_err)) => {
                         tracing::error!("DataFusion error: {}", df_err);
@@ -1341,15 +1344,29 @@ impl RorisQueryHandler {
 
         let tablet_id = table_meta.tablet_id;
 
+        // Build a map from column name to value index in stmt.values
+        let column_value_map: std::collections::HashMap<String, usize> = stmt.columns.iter()
+            .enumerate()
+            .map(|(i, name)| (name.clone(), i))
+            .collect();
+
         let num_cols = table_meta.columns.len();
         let mut arrays: Vec<datafusion::arrow::array::ArrayRef> = Vec::new();
 
         for col_idx in 0..num_cols {
             let col_meta = &table_meta.columns[col_idx];
             let col_type = &col_meta.data_type;
-            let values: Vec<Option<String>> = stmt.values.iter().map(|row| {
-                row.get(col_idx).and_then(|expr| expr_to_string_value(expr))
-            }).collect();
+
+            // Look up this column in the insert statement's columns
+            let values: Vec<Option<String>> = if let Some(value_idx) = column_value_map.get(&col_meta.name) {
+                // Column was specified in INSERT - get value from that position
+                stmt.values.iter().map(|row| {
+                    row.get(*value_idx).and_then(|expr| expr_to_string_value(expr))
+                }).collect()
+            } else {
+                // Column was not specified - use NULL (or default value if applicable)
+                stmt.values.iter().map(|_| None).collect()
+            };
 
             let arr = build_arrow_array(col_type, &values);
             arrays.push(arr);
@@ -2231,11 +2248,13 @@ fn record_batches_to_query_result(batches: &[datafusion::arrow::record_batch::Re
     use datafusion::arrow::array::*;
     use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
 
+    // If batches is empty, we still need to get schema from somewhere
+    // For GROUP BY queries with empty tables, DataFusion may return empty batches
+    // But we should still return column definitions
     if batches.is_empty() {
-        return QueryResult::with_rows(
-            vec![ColumnDef { name: "OK".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some("Empty set".to_string())]],
-        );
+        // Return empty result set - no columns defined
+        // This handles the case where we truly have no schema information
+        return QueryResult::new(Vec::new());
     }
 
     let schema = batches[0].schema();
@@ -2265,13 +2284,53 @@ fn record_batches_to_query_result(batches: &[datafusion::arrow::record_batch::Re
         }
     }
 
-    if string_rows.is_empty() {
-        return QueryResult::with_rows(
-            vec![ColumnDef { name: "OK".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some("Empty set".to_string())]],
-        );
+    // Return columns with empty rows, not "OK" column
+    QueryResult::with_rows(columns, string_rows)
+}
+
+fn record_batches_to_query_result_with_df_schema(
+    batches: &[datafusion::arrow::record_batch::RecordBatch],
+    df_schema: &datafusion::common::DFSchema,
+) -> QueryResult {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
+
+    // Convert DFSchema to Arrow Schema for field access
+    let schema = df_schema.as_arrow();
+
+    // Always use the provided schema for column definitions
+    let columns: Vec<ColumnDef> = schema.fields().iter().map(|f| {
+        let col_type = match f.data_type() {
+            ADT::Int8 | ADT::Int16 | ADT::Int32 | ADT::Int64 => ColumnType::Int,
+            ADT::Float32 => ColumnType::Float,
+            ADT::Float64 => ColumnType::Double,
+            ADT::Boolean => ColumnType::Int,
+            ADT::Date32 | ADT::Date64 => ColumnType::Date,
+            ADT::Timestamp(_, _) => ColumnType::DateTime,
+            _ => ColumnType::String,
+        };
+        ColumnDef { name: f.name().clone(), col_type }
+    }).collect();
+
+    // If no columns in schema, return empty result
+    if columns.is_empty() {
+        return QueryResult::new(Vec::new());
     }
 
+    let mut string_rows: Vec<Vec<Option<String>>> = Vec::new();
+    for batch in batches {
+        if batch.num_rows() == 0 {
+            continue;
+        }
+        for row_idx in 0..batch.num_rows() {
+            let row: Vec<Option<String>> = batch.columns().iter().map(|col| {
+                arrow_value_to_string(col, row_idx)
+            }).collect();
+            string_rows.push(row);
+        }
+    }
+
+    // Return columns with rows (empty rows is fine for GROUP BY on empty table)
     QueryResult::with_rows(columns, string_rows)
 }
 
@@ -2658,6 +2717,7 @@ async fn main() -> Result<()> {
         bind_addr: "127.0.0.1".to_string(),
         port: args.mysql_port,
         default_auth_plugin: AuthPluginType::NativePassword,
+        auth_timeout_secs: 30,
     };
     let mysql_server = MysqlServer::new(mysql_config, Arc::new(query_handler));
     tracing::info!("MySQL server starting on port {}", args.mysql_port);

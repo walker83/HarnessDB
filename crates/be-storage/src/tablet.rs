@@ -695,6 +695,11 @@ impl MemTable {
             .ok_or_else(|| format!("Key column index {} out of bounds", col_idx))?;
         let scalar = col.scalar_at(row_idx);
         Ok(match scalar {
+            // For NULL key values (auto-increment), generate a new key using next_row_id
+            types::ScalarValue::Null => {
+                let auto_id = self.next_row_id;
+                MemTableKey::from_i64(auto_id as i64)
+            }
             types::ScalarValue::Int64(v) => MemTableKey::from_i64(v),
             types::ScalarValue::Int32(v) => MemTableKey::from_i64(v as i64),
             types::ScalarValue::String(s) => MemTableKey::from_string(&s),
@@ -1019,6 +1024,39 @@ impl Tablet {
         tablet.next_segment_id.store(max_segment_id + 1, Ordering::SeqCst);
         tablet.next_rowset_id.store(max_rowset_id + 1, Ordering::SeqCst);
 
+        // ── WAL Recovery ──
+        // Replay any WAL entries that weren't flushed (crash recovery).
+        // Entries after the last FlushMarker are replayed into MemTable.
+        let tablet_dir = config.data_dir.join(format!("tablet_{}", tablet_id));
+        let replay_result = replay_and_recover(&tablet_dir)?;
+
+        if let Some(recovered_block) = replay_result.recovered_block {
+            if !recovered_block.is_empty() {
+                tracing::info!(
+                    "WAL recovery: replaying {} rows into tablet {} MemTable ({} WAL entries)",
+                    recovered_block.num_rows(),
+                    tablet_id,
+                    replay_result.entry_count
+                );
+
+                // Find key column index
+                let key_col_idx = tablet.schema
+                    .columns
+                    .iter()
+                    .position(|c| c.is_key)
+                    .unwrap_or(0);
+
+                let mut memtable = tablet.memtable.write();
+                memtable.insert(&recovered_block, key_col_idx).map_err(|e| {
+                    format!("WAL replay insert error: {}", e)
+                })?;
+            }
+        }
+
+        // Truncate WAL after replay — data is now safely in MemTable.
+        // Future writes will start with a fresh WAL.
+        truncate_after_recovery(&tablet_dir)?;
+
         Ok(tablet)
     }
 
@@ -1034,6 +1072,12 @@ impl Tablet {
 
     /// Write a block of rows into the memtable.
     pub fn write(&self, block: &Block) -> Result<(), String> {
+        // Write to WAL first (before MemTable insert) for durability.
+        // If WAL is disabled or write fails, we continue with MemTable insert.
+        if let Some(ref wal) = self.wal {
+            wal.write_insert(block)?;
+        }
+
         // Find the key column index (first column marked as key)
         let key_col_idx = self.schema
             .columns
@@ -1123,6 +1167,15 @@ impl Tablet {
         }
 
         self.rowsets.write().push(rowset);
+
+        // Mark WAL checkpoint: data is now safely in Segment files.
+        // On recovery, entries before this marker will be skipped.
+        if let Some(ref wal) = self.wal {
+            wal.write_flush_marker(version)?;
+            // Truncate WAL — all data up to this marker is in Segments
+            wal.truncate()?;
+        }
+
         memtable.clear();
 
         tracing::info!(
