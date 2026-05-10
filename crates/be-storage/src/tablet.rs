@@ -9,6 +9,7 @@ use types::{Block, DataType, Field, Schema, Vector, ScalarValue};
 use crate::rowset::{Rowset, RowsetMeta, SegmentRef, RowsetState};
 use crate::segment::{SegmentWriter, SegmentReader};
 use crate::index::ColumnPredicate;
+use crate::wal::{WalWriter, replay_and_recover, truncate_after_recovery};
 
 /// Tablet column definition.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -751,6 +752,8 @@ pub struct Tablet {
     next_segment_id: AtomicU64,
     next_rowset_id: AtomicU64,
     meta_backend: Option<Arc<dyn TabletMetaBackend>>,
+    /// WAL writer for durability. Created on Tablet::new() if enabled.
+    wal: Option<Arc<WalWriter>>,
 }
 
 /// Configuration for tablet loading.
@@ -758,11 +761,13 @@ pub struct Tablet {
 pub struct TabletConfig {
     pub data_dir: PathBuf,
     pub meta_backend: Option<Arc<dyn TabletMetaBackend>>,
+    /// Enable Write-Ahead Log for durability. Default: true.
+    pub wal_enabled: bool,
 }
 
 impl TabletConfig {
     pub fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir, meta_backend: None }
+        Self { data_dir, meta_backend: None, wal_enabled: true }
     }
 
     pub fn with_backend(mut self, backend: Arc<dyn TabletMetaBackend>) -> Self {
@@ -774,12 +779,34 @@ impl TabletConfig {
         self.meta_backend = Some(Arc::new(JsonTabletMetaBackend::new(self.data_dir.clone())));
         self
     }
+
+    /// Disable WAL for this tablet (e.g., for bulk loads that can be re-run).
+    pub fn without_wal(mut self) -> Self {
+        self.wal_enabled = false;
+        self
+    }
 }
 
 impl Tablet {
     /// Create a new tablet with the given configuration.
     pub fn new(tablet_id: u64, schema: TabletSchema, config: TabletConfig) -> Self {
         let memtable_capacity = 64 * 1024 * 1024; // 64MB default
+        let data_dir = config.data_dir.clone();
+        let tablet_dir = data_dir.join(format!("tablet_{}", tablet_id));
+
+        // Create WAL if enabled
+        let wal = if config.wal_enabled {
+            match WalWriter::open(&tablet_dir, tablet_id) {
+                Ok(w) => Some(Arc::new(w)),
+                Err(e) => {
+                    tracing::warn!("Failed to create WAL for tablet {}: {}, continuing without WAL", tablet_id, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             tablet_id,
             schema: schema.clone(),
@@ -790,6 +817,7 @@ impl Tablet {
             next_segment_id: AtomicU64::new(0),
             next_rowset_id: AtomicU64::new(0),
             meta_backend: config.meta_backend,
+            wal,
         }
     }
 

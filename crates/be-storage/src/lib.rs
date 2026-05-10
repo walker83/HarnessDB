@@ -7,6 +7,7 @@ pub mod segment;
 pub mod index;
 pub mod codec;
 pub mod backup;
+pub mod wal;
 
 pub use engine::StorageEngine;
 pub use tablet::{
