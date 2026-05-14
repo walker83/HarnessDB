@@ -4,12 +4,15 @@ pub mod queries;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arrow_array::RecordBatch;
+use arrow_schema::{Schema as ArrowSchema, Field};
 use fe_catalog::table::{TableColumn, Table};
 use fe_catalog::CatalogManager;
+use fe_storage::{ParquetCatalogProvider, ParquetStorage};
+use fe_datafusion::block_convert;
 use types::Block;
 
 use data_gen::TpchData;
-use be_storage::{StorageEngine, tablet::TabletSchema};
 use datafusion::prelude::SessionContext;
 
 /// Result of running a single TPC-H query via DataFusion.
@@ -29,42 +32,34 @@ impl QueryResult {
 }
 
 /// The TPC-H benchmark framework.
-/// Sets up a catalog with TPC-H data, writes it to storage, then runs queries through DataFusion.
 pub struct TpchBenchmark {
     data: TpchData,
     catalog: Arc<CatalogManager>,
-    storage: Arc<StorageEngine>,
+    storage: Arc<ParquetStorage>,
 }
 
 impl TpchBenchmark {
-    /// Create a new benchmark instance with SF 0.01 data.
     pub fn new_sf001() -> Self {
         let data = TpchData::generate_sf001();
         Self::new_with_data(data)
     }
 
-    /// Create a new benchmark instance with tiny data for quick tests.
     pub fn new_tiny() -> Self {
         let data = TpchData::generate_tiny();
         Self::new_with_data(data)
     }
 
-    /// Create a new benchmark instance with provided data.
     fn new_with_data(data: TpchData) -> Self {
         let catalog = Arc::new(CatalogManager::new());
-        let storage = Arc::new(StorageEngine::open("/tmp/tpch_storage").unwrap());
+        let storage = Arc::new(ParquetStorage::open("/tmp/tpch_storage").unwrap());
 
-        // Create the tpch database
         catalog.create_database("tpch").unwrap();
-
-        // Register tables and write to storage
         Self::setup_tables(&data, &catalog, &storage);
 
         Self { data, catalog, storage }
     }
 
-    /// Setup tables: register in catalog and write to storage.
-    fn setup_tables(data: &TpchData, catalog: &Arc<CatalogManager>, storage: &Arc<StorageEngine>) {
+    fn setup_tables(data: &TpchData, catalog: &Arc<CatalogManager>, storage: &Arc<ParquetStorage>) {
         let table_specs = [
             (1, "nation", &data.nation),
             (2, "region", &data.region),
@@ -77,68 +72,39 @@ impl TpchBenchmark {
         ];
 
         for (id, name, block) in table_specs {
-            // Create table in catalog
             let table = make_table(id, "tpch", name, block);
             let _ = catalog.create_table("tpch", table);
 
-            // Create tablet in storage and write data
-            let schema = block.schema().clone();
-            let tablet_schema = TabletSchema {
-                tablet_id: id,
-                columns: schema.fields().iter().map(|f| {
-                    be_storage::tablet::TabletColumn {
-                        name: f.name.clone(),
-                        data_type: f.data_type.clone(),
-                        nullable: f.nullable,
-                        is_key: false,
-                        agg_type: None,
-                    }
-                }).collect(),
-                keys_type: "Duplicate".to_string(),
-                num_rows_per_row_block: 1024,
-            };
+            // Build Arrow schema and write to Parquet
+            let arrow_fields: Vec<Field> = block.schema().fields().iter().map(|f| {
+                Field::new(&f.name, fe_datafusion::types::to_arrow_data_type(&f.data_type), f.nullable)
+            }).collect();
+            let arrow_schema = Arc::new(ArrowSchema::new(arrow_fields));
 
-            if let Err(e) = storage.create_tablet(id, tablet_schema) {
-                tracing::warn!("Tablet {} may already exist: {}", id, e);
-            }
-
-            if let Err(e) = storage.write_batch(id, block) {
-                tracing::error!("Failed to write block to tablet {}: {}", id, e);
-            }
+            let batch = block_convert::block_to_record_batch(block).unwrap();
+            storage.create_table("tpch", name, arrow_schema).unwrap();
+            storage.insert("tpch", name, batch).unwrap();
         }
-
-        // Flush all tablets to Parquet for persistence
-        tracing::info!("Flushing tablets to Parquet...");
-        for (id, _name, _block) in table_specs {
-            if let Err(e) = storage.flush_to_parquet(id) {
-                tracing::warn!("Failed to flush tablet {} to Parquet: {}", id, e);
-            }
-        }
-        tracing::info!("Flush complete");
 
         tracing::info!("TPC-H tables setup complete");
     }
 
-    /// Get a reference to the generated data.
     pub fn data(&self) -> &TpchData {
         &self.data
     }
 
-    /// Get a reference to the catalog.
     pub fn catalog(&self) -> &Arc<CatalogManager> {
         &self.catalog
     }
 
-    /// Get a reference to the storage engine.
-    pub fn storage(&self) -> &Arc<StorageEngine> {
+    pub fn storage(&self) -> &Arc<ParquetStorage> {
         &self.storage
     }
 
-    /// Create a DataFusion SessionContext wired to RorisDB storage.
     pub fn datafusion_ctx(&self) -> SessionContext {
         use datafusion::common::config::ConfigOptions;
 
-        let catalog_provider = fe_datafusion::RorisCatalogProvider::new(
+        let catalog_provider = ParquetCatalogProvider::new(
             self.catalog.clone(),
             self.storage.clone(),
         );
@@ -152,7 +118,6 @@ impl TpchBenchmark {
         ctx
     }
 
-    /// Run a single TPC-H query by index (1-22) using DataFusion.
     pub fn run_query(&self, index: usize) -> QueryResult {
         let queries = queries::all_queries();
         if index == 0 || index > queries.len() {
@@ -169,11 +134,9 @@ impl TpchBenchmark {
         self.run_sql(name, sql)
     }
 
-    /// Run a query by name and SQL string using DataFusion.
     pub fn run_sql(&self, name: &'static str, sql: &str) -> QueryResult {
         let start = std::time::Instant::now();
 
-        // Use a separate thread with its own runtime
         let result = std::thread::scope(|s| {
             s.spawn(|| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -203,7 +166,7 @@ impl TpchBenchmark {
         match result {
             Ok(rows) => QueryResult {
                 query_name: name,
-                planning_time_us: elapsed / 2,  // Approximate split
+                planning_time_us: elapsed / 2,
                 execution_time_us: elapsed / 2,
                 rows,
                 error: None,
@@ -218,13 +181,11 @@ impl TpchBenchmark {
         }
     }
 
-    /// Run all 22 TPC-H queries and return results.
     pub fn run_all(&self) -> Vec<QueryResult> {
         (1..=22).map(|i| self.run_query(i)).collect()
     }
 }
 
-/// Helper to create a Table definition from a Block's schema.
 fn make_table(id: u64, database: &str, name: &str, block: &Block) -> Table {
     let columns: Vec<TableColumn> = block
         .schema()

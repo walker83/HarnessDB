@@ -9,7 +9,6 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-dashmap = { workspace = true }
 chrono = { workspace = true }
 
 # Arrow sub-crates (needed because workspace uses default-features = false)
@@ -22,4 +21,3 @@ arrow-cast = { workspace = true }
 fe-catalog = { workspace = true }
 types = { workspace = true }
 common = { workspace = true }
-be-storage = { workspace = true, features = ["parquet-storage"] }

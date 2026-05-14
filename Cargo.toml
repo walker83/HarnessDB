@@ -9,6 +9,7 @@ members = [
     "crates/fe-catalog",
     "crates/fe-common",
     "crates/fe-datafusion",
+    "crates/fe-storage",
     "crates/fe-monitor",
     "crates/mysql-protocol",
 
@@ -129,6 +130,7 @@ rpc = { path = "crates/rpc" }
 types = { path = "crates/types" }
 proto = { path = "crates/proto" }
 fe-datafusion = { path = "crates/fe-datafusion" }
+fe-storage = { path = "crates/fe-storage" }
 fe-monitor = { path = "crates/fe-monitor" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 data-io = { path = "crates/data-io" }

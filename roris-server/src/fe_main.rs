@@ -15,7 +15,8 @@ use fe_sql_parser::ast::{AlterTableStmt, CreateDatabaseStmt, CreateTableStmt, Dr
 use types::DataType;
 use fe_catalog::table::{Table, TableColumn, KeysType};
 use datafusion::prelude::{SessionContext, SessionConfig};
-use fe_datafusion::catalog::RorisCatalogProvider;
+use fe_storage::ParquetCatalogProvider;
+use fe_storage::ParquetStorage;
 use fe_datafusion::register_doris_udfs;
 
 #[derive(Parser)]
@@ -49,7 +50,7 @@ struct RorisQueryHandler {
     views: Arc<StdRwLock<Vec<ViewInfo>>>,
     transaction: Arc<StdRwLock<SimpleTransactionState>>,
     session_ctx: SessionContext,
-    storage: Arc<be_storage::StorageEngine>,
+    storage: Arc<ParquetStorage>,
 }
 
 #[derive(Clone)]
@@ -109,8 +110,8 @@ impl SimpleTransactionState {
 
 impl RorisQueryHandler {
     fn new(catalog: Arc<CatalogManager>, data_dir: impl Into<std::path::PathBuf>) -> Self {
-        let storage = Arc::new(be_storage::StorageEngine::open(data_dir).unwrap());
-        let df_catalog = Arc::new(RorisCatalogProvider::new(catalog.clone(), storage.clone()));
+        let storage = Arc::new(ParquetStorage::open(data_dir).unwrap());
+        let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog.clone(), storage.clone()));
         let config = SessionConfig::new()
             .with_default_catalog_and_schema("roris", "information_schema")
             .with_create_default_catalog_and_schema(false)
@@ -485,7 +486,7 @@ impl RorisQueryHandler {
                 drop(catalog);
                 let df_cat = self.session_ctx.catalog("roris")
                     .ok_or_else(|| "roris catalog not found".to_string())?;
-                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
+                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<ParquetCatalogProvider>() {
                     roris_cat.create_database(&stmt.name);
                 }
                 Ok(QueryResult::ok())
@@ -505,9 +506,7 @@ impl RorisQueryHandler {
         let current_db = self.current_database.read().unwrap();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
 
-        // Generate table ID before acquiring write lock
         let table_id = catalog.next_id();
-        let tablet_id = table_id;
 
         use fe_catalog::table::{Table, TableColumn, KeysType, PartitionInfo, Partition, DistributionInfo};
 
@@ -522,7 +521,6 @@ impl RorisQueryHandler {
             }
         }).collect();
 
-        // Convert partition definition
         let partition_info = stmt.partition.as_ref().map(|p| {
             PartitionInfo {
                 partition_type: p.partition_type.clone(),
@@ -538,7 +536,6 @@ impl RorisQueryHandler {
             }
         });
 
-        // Convert distribution definition
         let distribution_info = stmt.distribution.as_ref().map(|d| {
             DistributionInfo {
                 dist_type: d.dist_type.clone(),
@@ -547,19 +544,17 @@ impl RorisQueryHandler {
             }
         });
 
-        // Convert properties
         let properties: std::collections::HashMap<String, String> = stmt.properties.iter()
             .cloned()
             .collect();
 
-        // Extract replication_num from properties if present
         let replication_num = properties.get("replication_num")
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(1);
 
         let table = Table {
             id: table_id,
-            tablet_id: tablet_id,
+            tablet_id: table_id,
             name: stmt.name.clone(),
             database: db.to_string(),
             columns,
@@ -600,37 +595,10 @@ impl RorisQueryHandler {
                 }).collect();
                 let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
                 let df_cat = self.session_ctx.catalog("roris").unwrap();
-                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
-                    // Determine which columns are key columns
-                    let key_column_names: std::collections::HashSet<String> = stmt.unique_keys.iter()
-                        .flat_map(|uk| uk.columns.iter().cloned())
-                        .collect();
-
-                    // Create tablet in storage engine
-                    let tablet_columns: Vec<be_storage::tablet::TabletColumn> = stmt.columns.iter().map(|c| {
-                        be_storage::tablet::TabletColumn {
-                            name: c.name.clone(),
-                            data_type: parse_data_type(&c.data_type),
-                            nullable: c.nullable,
-                            is_key: key_column_names.contains(&c.name),
-                            agg_type: c.agg_type.clone(),
-                        }
-                    }).collect();
-                    let tablet_schema = be_storage::tablet::TabletSchema {
-                        tablet_id,
-                        columns: tablet_columns,
-                        keys_type: match stmt.keys_type {
-                            fe_sql_parser::ast::KeysType::Duplicate => "DUP",
-                            fe_sql_parser::ast::KeysType::Aggregate => "AGG",
-                            fe_sql_parser::ast::KeysType::Unique => "UNIQUE",
-                            fe_sql_parser::ast::KeysType::Primary => "PRIMARY",
-                        }.to_string(),
-                        num_rows_per_row_block: 1024,
-                    };
-                    if let Err(e) = roris_cat.create_table_with_id(tablet_id, tablet_schema) {
-                        tracing::error!("Failed to create tablet: {}", e);
+                if let Some(parquet_cat) = df_cat.as_any().downcast_ref::<ParquetCatalogProvider>() {
+                    if let Err(e) = parquet_cat.create_table(db, &stmt.name, arrow_schema) {
+                        tracing::error!("Failed to create table storage: {}", e);
                     }
-                    roris_cat.create_table(db, &stmt.name, arrow_schema);
                 }
                 Ok(QueryResult::ok())
             }
@@ -670,6 +638,13 @@ impl RorisQueryHandler {
             Ok(()) => {
                 if let Err(e) = catalog.save() {
                     tracing::error!("Failed to save catalog: {}", e);
+                }
+                // Drop Parquet data
+                let df_cat = self.session_ctx.catalog("roris").unwrap();
+                if let Some(parquet_cat) = df_cat.as_any().downcast_ref::<ParquetCatalogProvider>() {
+                    if let Err(e) = parquet_cat.drop_table(db, &table) {
+                        tracing::warn!("Failed to drop table storage: {}", e);
+                    }
                 }
                 Ok(QueryResult::ok())
             }
@@ -1264,7 +1239,7 @@ impl RorisQueryHandler {
                             catalog.create_table(db, table).map_err(|e| e.to_string())?;
                             // Update DataFusion catalog
                             if let Some(df_cat) = self.session_ctx.catalog("roris") {
-                                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
+                                if let Some(roris_cat) = df_cat.as_any().downcast_ref::<ParquetCatalogProvider>() {
                                     // Get the old schema and create with new name
                                     if let Some(schema) = roris_cat.get_table_schema(db, &old_name) {
                                         roris_cat.create_table(db, new_name, schema);
@@ -1291,14 +1266,19 @@ impl RorisQueryHandler {
 
         match catalog.get_table(db, &table) {
             Some(tbl) => {
-                let tablet_id = tbl.tablet_id;
                 drop(catalog);
 
-                // Clear tablet data if tablet exists
-                if tablet_id > 0 {
-                    // Note: This requires backend communication
-                    // For now, we just reset the metadata
-                    tracing::info!("Truncating table {}.{} (tablet_id={})", db, table, tablet_id);
+                // Truncate Parquet data
+                let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = tbl.columns.iter().map(|c| {
+                    datafusion::arrow::datatypes::Field::new(
+                        &c.name,
+                        fe_datafusion::types::to_arrow_data_type(&c.data_type),
+                        c.nullable,
+                    )
+                }).collect();
+                let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
+                if let Err(e) = self.storage.truncate(db, &table, arrow_schema) {
+                    tracing::warn!("Failed to truncate table storage: {}", e);
                 }
 
                 // Update catalog metadata
@@ -1334,18 +1314,19 @@ impl RorisQueryHandler {
             }
         };
 
-        let df_cat = self.session_ctx.catalog("roris")
-            .ok_or_else(|| "roris catalog not found".to_string())?;
-        let roris_cat = df_cat.as_any().downcast_ref::<RorisCatalogProvider>()
-            .ok_or_else(|| "catalog type mismatch".to_string())?;
-        let mem_table = roris_cat.get_mem_table(&database, &table_name)
-            .ok_or_else(|| format!("table '{}.{}' not found", database, table_name))?;
-
         let catalog = &self.catalog;
         let table_meta = catalog.get_table(&database, &table_name)
             .ok_or_else(|| format!("table '{}.{}' not found in catalog", database, table_name))?;
 
-        let tablet_id = table_meta.tablet_id;
+        // Build Arrow schema from table metadata
+        let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = table_meta.columns.iter().map(|c| {
+            datafusion::arrow::datatypes::Field::new(
+                &c.name,
+                fe_datafusion::types::to_arrow_data_type(&c.data_type),
+                c.nullable,
+            )
+        }).collect();
+        let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
 
         // Build a map from column name to value index in stmt.values
         let column_value_map: std::collections::HashMap<String, usize> = stmt.columns.iter()
@@ -1360,14 +1341,11 @@ impl RorisQueryHandler {
             let col_meta = &table_meta.columns[col_idx];
             let col_type = &col_meta.data_type;
 
-            // Look up this column in the insert statement's columns
             let values: Vec<Option<String>> = if let Some(value_idx) = column_value_map.get(&col_meta.name) {
-                // Column was specified in INSERT - get value from that position
                 stmt.values.iter().map(|row| {
                     row.get(*value_idx).and_then(|expr| expr_to_string_value(expr))
                 }).collect()
             } else {
-                // Column was not specified - use NULL (or default value if applicable)
                 stmt.values.iter().map(|_| None).collect()
             };
 
@@ -1375,55 +1353,13 @@ impl RorisQueryHandler {
             arrays.push(arr);
         }
 
-        let arrow_schema = datafusion::catalog::TableProvider::schema(&*mem_table);
         let batch = datafusion::arrow::record_batch::RecordBatch::try_new(
             arrow_schema.clone(), arrays,
         ).map_err(|e| format!("Failed to create record batch: {}", e))?;
 
-        // Write to MemTable (fast, in-memory) for queries
-        let mem_table_clone = mem_table.clone();
-        let batch_clone = batch.clone();
-        std::thread::spawn(move || {
-            let mut partition = mem_table_clone.batches[0].blocking_write();
-            partition.push(batch_clone);
-        }).join().map_err(|_| "Insert thread failed".to_string())?;
-
-        // Also write to StorageEngine for persistence (async flush will handle Parquet)
-        #[cfg(feature = "parquet-storage")]
-        {
-            use be_storage::tablet::{TabletSchema, TabletColumn};
-
-            let tablet_columns: Vec<TabletColumn> = table_meta.columns.iter().map(|c| {
-                TabletColumn {
-                    name: c.name.clone(),
-                    data_type: c.data_type.clone(),
-                    nullable: c.nullable,
-                    is_key: false,
-                    agg_type: None,
-                }
-            }).collect();
-
-            let tablet_schema = TabletSchema {
-                tablet_id,
-                columns: tablet_columns,
-                keys_type: "DUP".to_string(),
-                num_rows_per_row_block: 1024,
-            };
-
-            // Create tablet if not exists
-            if !self.storage.get_tablet(tablet_id) {
-                if let Err(e) = self.storage.create_tablet(tablet_id, tablet_schema) {
-                    tracing::warn!("Failed to create tablet {}: {}", tablet_id, e);
-                }
-            }
-
-            // Write RecordBatch directly to StorageEngine
-            if let Some(tablet) = self.storage.get_tablet_arc(tablet_id) {
-                if let Err(e) = tablet.write_arrow(&batch) {
-                    tracing::error!("Failed to write to storage: {}", e);
-                }
-            }
-        }
+        // Write to Parquet storage
+        self.storage.insert(&database, &table_name, batch)
+            .map_err(|e| format!("Insert failed: {}", e))?;
 
         let affected_rows = stmt.values.len();
         Ok(QueryResult::with_rows(
@@ -1446,51 +1382,30 @@ impl RorisQueryHandler {
             }
         };
 
-        let df_cat = self.session_ctx.catalog("roris")
-            .ok_or_else(|| "roris catalog not found".to_string())?;
-        let roris_cat = df_cat.as_any().downcast_ref::<RorisCatalogProvider>()
-            .ok_or_else(|| "catalog type mismatch".to_string())?;
-        let mem_table = roris_cat.get_mem_table(&database, &table_name)
-            .ok_or_else(|| format!("table '{}.{}' not found", database, table_name))?;
-
         let set_clauses = stmt.set_clauses.clone();
         let selection = stmt.selection.clone();
 
-        let result = std::thread::spawn({
-            let mem_table = mem_table.clone();
-            move || {
-                let mut total_updated = 0usize;
-                let mut partition = mem_table.batches[0].blocking_write();
-                let mut new_batches = Vec::new();
-                for batch in partition.drain(..) {
-                    let update_mask: Vec<bool> = if let Some(ref sel) = selection {
-                        evaluate_delete_filter_simple(&batch, sel)?
-                    } else {
-                        vec![true; batch.num_rows()]
-                    };
-                    total_updated += update_mask.iter().filter(|&u| *u).count();
-                    
-                    let mut updated_batch = batch.clone();
-                    for set_clause in &set_clauses {
-                        let col_idx = updated_batch.schema().index_of(&set_clause.column)
-                            .map_err(|e| format!("{}", e))?;
-                        let val_str = expr_to_string_value(&set_clause.value)
-                            .ok_or_else(|| format!("Unsupported assignment value: {:?}", set_clause.value))?;
-                        update_column_in_batch(&mut updated_batch, col_idx, &val_str, &update_mask)?;
-                    }
-                    new_batches.push(updated_batch);
-                }
-                *partition = new_batches;
-                Ok::<_, String>(total_updated)
+        let total_updated = self.storage.update(&database, &table_name, |batch| {
+            let mut total_updated = 0usize;
+            let update_mask: Vec<bool> = if let Some(ref sel) = selection {
+                evaluate_delete_filter_simple(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
+            } else {
+                vec![true; batch.num_rows()]
+            };
+            total_updated += update_mask.iter().filter(|&u| *u).count();
+
+            let mut updated_batch = batch;
+            for set_clause in &set_clauses {
+                let col_idx = updated_batch.schema().index_of(&set_clause.column)
+                    .map_err(|e| fe_storage::StorageError::Other(e.to_string()))?;
+                let val_str = expr_to_string_value(&set_clause.value)
+                    .ok_or_else(|| fe_storage::StorageError::Other(format!("Unsupported assignment value: {:?}", set_clause.value)))?;
+                update_column_in_batch(&mut updated_batch, col_idx, &val_str, &update_mask)
+                    .map_err(|e| fe_storage::StorageError::Other(e))?;
             }
-        })
-        .join()
-        .map_err(|e| format!("Thread error: {:?}", e))?;
+            Ok((updated_batch, total_updated))
+        }).map_err(|e| format!("Update failed: {}", e))?;
 
-        let total_updated = result?;
-
-        // Note: UPDATE only modifies MemTable
-        // Background flush task will persist to Parquet periodically
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
             vec![vec![Some(total_updated.to_string())]],
@@ -1529,51 +1444,25 @@ impl RorisQueryHandler {
             }
         };
 
-        let df_cat = self.session_ctx.catalog("roris")
-            .ok_or_else(|| "roris catalog not found".to_string())?;
-        let roris_cat = df_cat.as_any().downcast_ref::<RorisCatalogProvider>()
-            .ok_or_else(|| "catalog type mismatch".to_string())?;
-        let mem_table = roris_cat.get_mem_table(&database, &table_name)
-            .ok_or_else(|| format!("table '{}.{}' not found", database, table_name))?;
-
         let selection = stmt.selection.clone();
 
-        let result = std::thread::spawn({
-            let mem_table = mem_table.clone();
-            let database_clone = database.clone();
-            let table_name_clone = table_name.clone();
-            move || {
-                let mut total_deleted = 0usize;
-                let mut partition = mem_table.batches[0].blocking_write();
-                let mut new_batches = Vec::new();
-                for batch in partition.drain(..) {
-                    let keep_mask: Vec<bool> = if let Some(ref sel) = selection {
-                        evaluate_delete_filter_simple(&batch, sel)?
-                    } else {
-                        total_deleted += batch.num_rows();
-                        continue;
-                    };
-                    let deleted = keep_mask.iter().filter(|&&k| !k).count();
-                    total_deleted += deleted;
-                    if keep_mask.iter().any(|&k| k) {
-                        let filtered = datafusion::arrow::compute::filter_record_batch(
-                            &batch,
-                            &datafusion::arrow::array::BooleanArray::from(keep_mask),
-                        ).map_err(|e| format!("Filter error: {}", e))?;
-                        new_batches.push(filtered);
-                    }
-                }
-                *partition = new_batches;
-                Ok::<_, String>(total_deleted)
+        let total_deleted = self.storage.delete(&database, &table_name, |batch| {
+            if let Some(ref sel) = selection {
+                let keep_mask = evaluate_delete_filter_simple(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?;
+                let deleted_count = keep_mask.iter().filter(|&&k| !k).count();
+                let filtered = datafusion::arrow::compute::filter_record_batch(
+                    &batch,
+                    &datafusion::arrow::array::BooleanArray::from(keep_mask),
+                ).map_err(|e| fe_storage::StorageError::Arrow(e.to_string()))?;
+                Ok((filtered, deleted_count))
+            } else {
+                let count = batch.num_rows();
+                let schema = batch.schema();
+                let empty = datafusion::arrow::record_batch::RecordBatch::new_empty(schema);
+                Ok((empty, count))
             }
-        })
-        .join()
-        .map_err(|e| format!("Thread error: {:?}", e))?;
+        }).map_err(|e| format!("Delete failed: {}", e))?;
 
-        let total_deleted = result?;
-
-        // Note: DELETE only modifies MemTable
-        // Background flush task will persist to Parquet periodically
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
             vec![vec![Some(total_deleted.to_string())]],
@@ -2169,13 +2058,11 @@ impl RorisQueryHandler {
         ))
     }
 
-    /// Update DataFusion table schema after ALTER TABLE
     fn update_df_table_schema(&self, db: &str, table_name: &str) -> Result<(), String> {
         let catalog = &self.catalog;
         let tbl = catalog.get_table(db, table_name)
             .ok_or_else(|| format!("Table {}.{} not found", db, table_name))?;
 
-        // Build new Arrow schema from table columns
         let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = tbl.columns.iter().map(|c| {
             datafusion::arrow::datatypes::Field::new(
                 &c.name,
@@ -2185,11 +2072,9 @@ impl RorisQueryHandler {
         }).collect();
         let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
 
-        // Update DataFusion catalog
-        if let Some(df_cat) = self.session_ctx.catalog("roris") {
-            if let Some(roris_cat) = df_cat.as_any().downcast_ref::<RorisCatalogProvider>() {
-                roris_cat.create_table(db, table_name, arrow_schema);
-            }
+        // Re-create Parquet storage with new schema (truncate + create)
+        if let Err(e) = self.storage.truncate(db, table_name, arrow_schema) {
+            tracing::warn!("Failed to update table storage schema: {}", e);
         }
 
         Ok(())
@@ -2714,8 +2599,6 @@ async fn main() -> Result<()> {
     tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
 
     let query_handler = RorisQueryHandler::new(catalog.clone(), args.data_dir.clone());
-    let storage_for_flush = query_handler.storage.clone();
-    let storage_for_bg = storage_for_flush.clone();
     let mysql_config = ServerConfig {
         bind_addr: "127.0.0.1".to_string(),
         port: args.mysql_port,
@@ -2764,85 +2647,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Background task to periodically flush StorageEngine MemTables to Parquet
-    #[cfg(feature = "parquet-storage")]
-    {
-        tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(10)); // Flush every 10 seconds
-            loop {
-                ticker.tick().await;
-                let tablet_ids = storage_for_bg.tablet_ids();
-                if tablet_ids.is_empty() {
-                    continue;
-                }
-
-                let mut flushed_count = 0;
-                let mut total_rows = 0;
-
-                // Iterate through all tablets and flush if they have data in memtable
-                for tablet_id in tablet_ids {
-                    if let Some(tablet) = storage_for_bg.get_tablet_arc(tablet_id) {
-                        let memtable_rows = tablet.memtable_num_rows();
-                        if memtable_rows > 0 {
-                            match tablet.flush_parquet() {
-                                Ok(()) => {
-                                    flushed_count += 1;
-                                    total_rows += memtable_rows;
-                                    tracing::info!("Flushed tablet {} ({} rows) to Parquet", tablet_id, memtable_rows);
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to flush tablet {}: {}", tablet_id, e);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if flushed_count > 0 {
-                    tracing::info!("Background flush: {} tablets, {} total rows", flushed_count, total_rows);
-                }
-            }
-        });
-        tracing::info!("Background Parquet flush task started (interval: 10s)");
-    }
-
     tokio::signal::ctrl_c().await?;
-    tracing::info!("Roris FE shutting down...");
-
-    // Flush all MemTables to Parquet before shutdown
-    #[cfg(feature = "parquet-storage")]
-    {
-        tracing::info!("Flushing MemTables to Parquet...");
-        let tablet_ids = storage_for_flush.tablet_ids();
-        let mut flushed_count = 0;
-        let mut total_rows = 0;
-
-        for tablet_id in tablet_ids {
-            if let Some(tablet) = storage_for_flush.get_tablet_arc(tablet_id) {
-                let memtable_rows = tablet.memtable_num_rows();
-                if memtable_rows > 0 {
-                    match tablet.flush_parquet() {
-                        Ok(()) => {
-                            flushed_count += 1;
-                            total_rows += memtable_rows;
-                            tracing::info!("Flushed tablet {} on shutdown ({} rows)", tablet_id, memtable_rows);
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to flush tablet {} on shutdown: {}", tablet_id, e);
-                        }
-                    }
-                }
-            }
-        }
-
-        tracing::info!("Shutdown flush complete: {} tablets, {} total rows", flushed_count, total_rows);
-    }
-
-    #[cfg(not(feature = "parquet-storage"))]
-    {
-        tokio::signal::ctrl_c().await?;
-    }
-
     tracing::info!("Roris FE shutting down...");
 
     // Flush audit logs before shutdown

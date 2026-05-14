@@ -1,0 +1,24 @@
+[package]
+name = "fe-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+parquet = { workspace = true }
+arrow = { workspace = true, default-features = false, features = ["prettyprint"] }
+arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
+arrow-data = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-cast = { workspace = true }
+arrow-select = { workspace = true }
+datafusion = { workspace = true }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+dashmap = { workspace = true }
+
+fe-catalog = { workspace = true }
+types = { workspace = true }

@@ -1833,10 +1833,8 @@ dependencies = [
  "arrow-data 55.2.0",
  "arrow-schema 55.2.0",
  "async-trait",
- "be-storage",
  "chrono",
  "common",
- "dashmap",
  "datafusion",
  "fe-catalog",
  "thiserror 2.0.18",
@@ -1871,6 +1869,28 @@ dependencies = [
  "datafusion",
  "sqlparser 0.53.0",
  "thiserror 2.0.18",
+ "types",
+]
+
+[[package]]
+name = "fe-storage"
+version = "0.1.5"
+dependencies = [
+ "arrow",
+ "arrow-array 55.2.0",
+ "arrow-buffer 55.2.0",
+ "arrow-cast",
+ "arrow-data 55.2.0",
+ "arrow-schema 55.2.0",
+ "arrow-select 55.2.0",
+ "async-trait",
+ "dashmap",
+ "datafusion",
+ "fe-catalog",
+ "parquet 55.2.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
  "types",
 ]
 
@@ -3609,6 +3629,7 @@ dependencies = [
  "fe-datafusion",
  "fe-monitor",
  "fe-sql-parser",
+ "fe-storage",
  "mysql-protocol",
  "proto",
  "rpc",
@@ -4352,13 +4373,15 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tpch-bench"
 version = "0.1.5"
 dependencies = [
- "be-storage",
+ "arrow-array 55.2.0",
+ "arrow-schema 55.2.0",
  "common",
  "criterion",
  "datafusion",
  "fe-catalog",
  "fe-datafusion",
  "fe-sql-parser",
+ "fe-storage",
  "tokio",
  "tracing",
  "types",
