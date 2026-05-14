@@ -38,6 +38,9 @@ struct Args {
 
     #[arg(long, default_value = "9030")]
     mysql_port: u16,
+
+    #[arg(long, default_value = "data/fe/storage")]
+    data_dir: String,
 }
 
 struct RorisQueryHandler {
@@ -105,8 +108,8 @@ impl SimpleTransactionState {
 }
 
 impl RorisQueryHandler {
-    fn new(catalog: Arc<CatalogManager>) -> Self {
-        let storage = Arc::new(be_storage::StorageEngine::open("/tmp/roris_fe_storage").unwrap());
+    fn new(catalog: Arc<CatalogManager>, data_dir: impl Into<std::path::PathBuf>) -> Self {
+        let storage = Arc::new(be_storage::StorageEngine::open(data_dir).unwrap());
         let df_catalog = Arc::new(RorisCatalogProvider::new(catalog.clone(), storage.clone()));
         let config = SessionConfig::new()
             .with_default_catalog_and_schema("roris", "information_schema")
@@ -2710,7 +2713,7 @@ async fn main() -> Result<()> {
     });
     tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
 
-    let query_handler = RorisQueryHandler::new(catalog.clone());
+    let query_handler = RorisQueryHandler::new(catalog.clone(), args.data_dir.clone());
     let storage_for_flush = query_handler.storage.clone();
     let storage_for_bg = storage_for_flush.clone();
     let mysql_config = ServerConfig {

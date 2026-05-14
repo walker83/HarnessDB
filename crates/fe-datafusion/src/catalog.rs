@@ -192,7 +192,19 @@ impl RorisCatalogProvider {
 
     pub fn get_mem_table(&self, db: &str, name: &str) -> Option<Arc<MemTable>> {
         let key = format!("{}.{}", db, name);
-        self.mem_tables.get(&key).map(|r| r.value().clone())
+        if let Some(r) = self.mem_tables.get(&key) {
+            return Some(r.value().clone());
+        }
+        // Not cached — create from catalog metadata and cache it
+        let table_meta = self.catalog.get_table(db, name)?;
+        let fields: Vec<arrow_schema::Field> = table_meta.columns.iter()
+            .map(|c| arrow_schema::Field::new(&c.name, crate::types::to_arrow_data_type(&c.data_type), c.nullable))
+            .collect();
+        let schema = Arc::new(arrow_schema::Schema::new(fields));
+        let mem_table = MemTable::try_new(schema, vec![vec![]]).ok()?;
+        let arc = Arc::new(mem_table);
+        self.mem_tables.insert(key, arc.clone());
+        Some(arc)
     }
 }
 

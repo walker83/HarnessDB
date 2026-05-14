@@ -347,6 +347,24 @@ impl Connection {
                     debug!("COM_STMT_CLOSE");
                     self.handle_stmt_close(data);
                 }
+                command::COM_STMT_SEND_LONG_DATA => {
+                    debug!("COM_STMT_SEND_LONG_DATA (ignored)");
+                }
+                command::COM_STMT_RESET => {
+                    debug!("COM_STMT_RESET");
+                    self.send_ok(0, 0).await?;
+                }
+                command::COM_STMT_FETCH => {
+                    debug!("COM_STMT_FETCH (no more rows)");
+                    // No cursor-based fetch support; send empty EOF
+                    self.write_all(&packet::make_eof_packet(
+                        self.seq_id,
+                        0,
+                        packet::SERVER_STATUS_AUTOCOMMIT,
+                    ))
+                    .await?;
+                    self.seq_id = self.seq_id.wrapping_add(1);
+                }
                 command::COM_STATISTICS => {
                     debug!("COM_STATISTICS");
                     let stats = b"Uptime: 0  Threads: 1  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000";
