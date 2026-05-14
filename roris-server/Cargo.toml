@@ -7,14 +7,6 @@ edition.workspace = true
 name = "roris-fe"
 path = "src/fe_main.rs"
 
-[[bin]]
-name = "roris-be"
-path = "src/be_main.rs"
-
-[[bin]]
-name = "migrate-meta"
-path = "src/bin/migrate-meta.rs"
-
 [dependencies]
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -39,8 +31,3 @@ rpc = { workspace = true }
 types = { workspace = true }
 datafusion = { workspace = true }
 chrono = { workspace = true }
-
-# BE dependencies (only used by roris-be and migrate-meta binaries)
-be-storage = { workspace = true }
-be-common = { workspace = true }
-be-rocks = { workspace = true }

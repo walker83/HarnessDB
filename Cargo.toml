@@ -13,10 +13,7 @@ members = [
     "crates/fe-monitor",
     "crates/mysql-protocol",
 
-    # Backend (BE) - Storage engine, query execution
-    "crates/be-storage",
-    "crates/be-segment",
-    "crates/be-common",
+    # Metadata backend
     "crates/be-rocks",
 
     # Shared crates
@@ -121,9 +118,6 @@ async-trait = "0.1"
 fe-sql-parser = { path = "crates/fe-sql-parser" }
 fe-catalog = { path = "crates/fe-catalog" }
 fe-common = { path = "crates/fe-common" }
-be-storage = { path = "crates/be-storage" }
-be-segment = { path = "crates/be-segment" }
-be-common = { path = "crates/be-common" }
 be-rocks = { path = "crates/be-rocks" }
 common = { path = "crates/common" }
 rpc = { path = "crates/rpc" }

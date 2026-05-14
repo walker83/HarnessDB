@@ -174,40 +174,6 @@ pub fn create_departments_block() -> Block {
     Block::new(schema, columns)
 }
 
-/// Create a StorageEngine with a sample tablet for testing.
-/// Uses a temporary directory for data storage.
-pub fn create_test_storage_engine() -> be_storage::StorageEngine {
-    use be_storage::tablet::{TabletColumn, TabletSchema};
-
-    let temp_dir = std::env::temp_dir().join("rovisdb_test_storage");
-    let engine = be_storage::StorageEngine::open(&temp_dir).unwrap();
-
-    let schema = TabletSchema {
-        tablet_id: 1,
-        columns: vec![
-            TabletColumn {
-                name: "id".into(),
-                data_type: DataType::Int64,
-                nullable: false,
-                is_key: true,
-                agg_type: None,
-            },
-            TabletColumn {
-                name: "value".into(),
-                data_type: DataType::String,
-                nullable: true,
-                is_key: false,
-                agg_type: None,
-            },
-        ],
-        keys_type: "DUP".to_string(),
-        num_rows_per_row_block: 1024,
-    };
-
-    engine.create_tablet(1, schema).unwrap();
-    engine
-}
-
 // ---------------------------------------------------------------------------
 // SSB (Star Schema Benchmark) test data
 // ---------------------------------------------------------------------------
