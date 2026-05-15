@@ -38,7 +38,8 @@ pub fn try_parse_dml_with_datafusion(sql: &str) -> Result<LogicalPlan, DataFusio
         return Err(DataFusionParseError::SyntaxError("Empty SQL statement".to_string()));
     }
 
-    let stmt = statements.into_iter().next().unwrap();
+    let stmt = statements.into_iter().next()
+        .ok_or_else(|| DataFusionParseError::SyntaxError("No statement found".to_string()))?;
     let context_provider = EmptyContextProvider::new();
     let planner = SqlToRel::new(&context_provider);
 

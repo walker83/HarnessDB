@@ -26,7 +26,9 @@ fn fixup_insert_select_on_duplicate(sql: &str) -> String {
     // Check if it has SELECT (not just VALUES)
     // INSERT ... VALUES: has VALUES but no SELECT before ON DUPLICATE KEY
     // INSERT ... SELECT: has SELECT before ON DUPLICATE KEY
-    let on_dup_pos = upper.find("ON DUPLICATE KEY").unwrap();
+    let Some(on_dup_pos) = upper.find("ON DUPLICATE KEY") else {
+        return sql.to_string();
+    };
     let before_on_dup = &upper[..on_dup_pos];
 
     if !before_on_dup.contains("SELECT") {
@@ -240,7 +242,10 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         return parse_drop_stats(sql);
     }
     if trimmed.starts_with("DROP ANALYZE JOB") {
-        let after = sql.trim().strip_prefix("DROP ANALYZE JOB").unwrap().trim();
+        let Some(rest) = sql.trim().strip_prefix("DROP ANALYZE JOB") else {
+            return Err(ParseError::SyntaxError { position: 0, message: "Expected DROP ANALYZE JOB".into() });
+        };
+        let after = rest.trim();
         let (name, _) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected job ID".to_string() })?;
         return Ok(vec![Statement::DropJob(name.to_string())]);
     }
@@ -354,7 +359,7 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
     // SET TRANSACTION ISOLATION LEVEL ...
     if upper.starts_with("SET TRANSACTION ISOLATION LEVEL") {
-        let level = upper.strip_prefix("SET TRANSACTION ISOLATION LEVEL").unwrap().trim().to_uppercase();
+        let level = upper.strip_prefix("SET TRANSACTION ISOLATION LEVEL").unwrap_or_default().trim().to_uppercase();
         let isolation_level = match level.as_str() {
             "READ UNCOMMITTED" => "READ UNCOMMITTED",
             "READ COMMITTED" => "READ COMMITTED",
@@ -558,7 +563,7 @@ fn parse_create_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let mut properties = vec![];
 
     if rest.starts_with("WITH") {
-        let after_with = rest.strip_prefix("WITH").unwrap().trim();
+        let after_with = rest.strip_prefix("WITH").unwrap_or_default().trim();
         if after_with.starts_with("S3") || after_with.starts_with("s3") {
             repo_type = RepositoryType::S3;
             let after_s3 = after_with
@@ -709,14 +714,14 @@ fn parse_show_variables(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     if after_show.starts_with("GLOBAL ") {
         global = true;
-        let rest = after_show.strip_prefix("GLOBAL ").unwrap().trim();
+        let rest = after_show.strip_prefix("GLOBAL ").unwrap_or_default().trim();
         if rest.starts_with("LIKE ") {
             pattern = Some(rest[5..].trim().trim_matches('\'').to_string());
         } else {
             pattern = Some(rest.to_string());
         }
     } else if after_show.starts_with("SESSION ") {
-        let rest = after_show.strip_prefix("SESSION ").unwrap().trim();
+        let rest = after_show.strip_prefix("SESSION ").unwrap_or_default().trim();
         if rest.starts_with("LIKE ") {
             pattern = Some(rest[5..].trim().trim_matches('\'').to_string());
         } else {
@@ -872,7 +877,7 @@ fn parse_drop_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     let if_exists = after_drop.starts_with("IF EXISTS");
     let name_part = if if_exists {
-        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+        after_drop.strip_prefix("IF EXISTS").unwrap_or_default().trim()
     } else {
         after_drop
     };
@@ -920,7 +925,7 @@ fn parse_backup_database(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     let rest = rest.trim();
     let backup_name = if rest.starts_with("BACKUP") {
-        let after_backup = rest.strip_prefix("BACKUP").unwrap().trim();
+        let after_backup = rest.strip_prefix("BACKUP").unwrap_or_default().trim();
         let (name, _) = extract_identifier(after_backup)
             .ok_or_else(|| ParseError::SyntaxError {
                 position: 0,
@@ -1003,7 +1008,7 @@ fn parse_create_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErro
 
     let if_not_exists = after_create.starts_with("IF NOT EXISTS");
     let rest = if if_not_exists {
-        after_create.strip_prefix("IF NOT EXISTS").unwrap().trim()
+        after_create.strip_prefix("IF NOT EXISTS").unwrap_or_default().trim()
     } else {
         after_create
     };
@@ -1043,8 +1048,7 @@ fn parse_create_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErro
         }
     }
 
-    if query.to_uppercase().contains("REFRESH") {
-        let refresh_pos = query.to_uppercase().find("REFRESH").unwrap();
+    if let Some(refresh_pos) = query.to_uppercase().find("REFRESH") {
         let before_refresh = query[..refresh_pos].trim();
         if !before_refresh.is_empty() && before_refresh != "AS" {
             query = before_refresh.to_string();
@@ -1090,7 +1094,7 @@ fn parse_drop_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError>
 
     let if_exists = after_drop.starts_with("IF EXISTS");
     let rest = if if_exists {
-        after_drop.strip_prefix("IF EXISTS").unwrap().trim()
+        after_drop.strip_prefix("IF EXISTS").unwrap_or_default().trim()
     } else {
         after_drop
     };
@@ -1145,7 +1149,8 @@ fn parse_alter_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError
     } else if rest.to_uppercase().starts_with("RESUME REFRESH") {
         AlterMaterializedViewOperation::ResumeRefresh
     } else if rest.to_uppercase().starts_with("RENAME TO ") {
-        let new_name = rest.strip_prefix("RENAME TO ").unwrap().trim();
+        let prefix_len = "RENAME TO ".len();
+        let new_name = rest[prefix_len..].trim();
         AlterMaterializedViewOperation::Rename(new_name.to_string())
     } else {
         return Err(ParseError::SyntaxError {
@@ -1472,7 +1477,7 @@ fn extract_identifier(s: &str) -> Option<(&str, &str)> {
     }
 
     if s.starts_with('"') || s.starts_with('\'') {
-        let quote = s.chars().next().unwrap();
+        let quote = s.chars().next().unwrap_or('"');
         let rest = &s[1..];
         let end = rest.find(quote).unwrap_or(0);
         let identifier = &rest[..end];
@@ -1496,7 +1501,7 @@ fn parse_properties(s: &str) -> Vec<(String, String)> {
         return vec![];
     }
 
-    let props_str = s.strip_prefix("PROPERTIES").unwrap().trim();
+    let props_str = s.strip_prefix("PROPERTIES").unwrap_or_default().trim();
     if !props_str.starts_with('(') || !props_str.ends_with(')') {
         return vec![];
     }
@@ -2124,11 +2129,17 @@ fn convert_table_ref(t: sqlparser::ast::TableWithJoins) -> TableRef {
             }
         }
         sqlparser::ast::TableFactor::Derived { subquery, alias, .. } => {
-            let query = convert_query(*subquery.clone()).ok().unwrap();
-            return TableRef::Subquery {
-                query: Box::new(query),
-                alias: alias.as_ref().map(|a| a.name.value.clone()).unwrap_or_default(),
-            };
+            match convert_query(*subquery.clone()) {
+                Ok(query) => {
+                    return TableRef::Subquery {
+                        query: Box::new(query),
+                        alias: alias.as_ref().map(|a| a.name.value.clone()).unwrap_or_default(),
+                    };
+                }
+                Err(_) => {
+                    return TableRef::Table { name: "unknown".into(), alias: None };
+                }
+            }
         }
         _ => TableRef::Table { name: "unknown".into(), alias: None },
     };
@@ -2527,9 +2538,9 @@ fn parse_create_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
     if rest.starts_with("PROPERTIES") || rest.starts_with("WITH") {
         let after_with = if rest.starts_with("PROPERTIES") {
-            rest.strip_prefix("PROPERTIES").unwrap().trim()
+            rest.strip_prefix("PROPERTIES").unwrap_or_default().trim()
         } else {
-            rest.strip_prefix("WITH").unwrap().trim()
+            rest.strip_prefix("WITH").unwrap_or_default().trim()
         };
 
         if after_with.starts_with("TYPE") {
@@ -2630,12 +2641,11 @@ fn parse_create_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
             let after_paren = rest[end_paren + 1..].trim();
             if after_paren.to_uppercase().starts_with("USING") {
                 let after_using = after_paren.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
-                if let (itype, _) = extract_identifier(after_using).map(|(t, r)| (Some(t.to_string()), r)).unwrap_or((None, "")) {
-                    index_type = itype;
+                if let Some((t, _)) = extract_identifier(after_using) {
+                    index_type = Some(t.to_string());
                 }
             }
-            if after_paren.to_uppercase().contains("PROPERTIES") {
-                let prop_start = after_paren.to_uppercase().find("PROPERTIES").unwrap();
+            if let Some(prop_start) = after_paren.to_uppercase().find("PROPERTIES") {
                 properties = parse_properties(&after_paren[prop_start..]);
             }
         }
@@ -2663,10 +2673,7 @@ fn parse_cancel_alter_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let after = sql.trim().strip_prefix("CANCEL ALTER TABLE")
         .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected CANCEL ALTER TABLE".to_string() })?
         .trim();
-    let (database, rest) = if after.to_uppercase().starts_with("FROM") {
-        // Find "FROM" position in original string (case-insensitive)
-        let after_upper = after.to_uppercase();
-        let from_pos = after_upper.find("FROM").unwrap();
+    let (database, rest) = if let Some(from_pos) = after.to_uppercase().find("FROM") {
         let after_from = after[from_pos + 4..].trim();
         let (db, remaining) = extract_identifier(after_from).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected database name".to_string() })?;
         (Some(db.to_string()), remaining.trim())
@@ -2833,7 +2840,7 @@ fn parse_alter_table_doris(sql: &str) -> Result<Vec<Statement>, ParseError> {
         let after_table = if after_replace.to_uppercase().starts_with("TABLE") { after_replace.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() } else { after_replace };
         let (old_table, remaining) = extract_identifier(after_table).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
         let swap = remaining.trim().to_uppercase().starts_with("SWAP");
-        let properties = if remaining.to_uppercase().contains("PROPERTIES") { let s = remaining.to_uppercase().find("PROPERTIES").unwrap(); parse_properties(&remaining[s..]) } else { vec![] };
+        let properties = if let Some(s) = remaining.to_uppercase().find("PROPERTIES").map(|s| s) { parse_properties(&remaining[s..]) } else { vec![] };
         AlterOperation::Replace { old_table: old_table.to_string(), swap, properties }
     } else if rest_upper.starts_with("ADD GENERATED COLUMN") {
         let after_add = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
@@ -2875,8 +2882,7 @@ fn parse_export_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let path = rest.trim_start_matches(|c: char| c != ' ').trim_start().split_whitespace().next().unwrap_or("").trim_matches('\'').trim_matches('"').to_string();
     let mut properties = vec![];
     let rest_upper = rest.to_uppercase();
-    if rest_upper.contains("PROPERTIES") {
-        let idx = rest_upper.find("PROPERTIES").unwrap();
+    if let Some(idx) = rest_upper.find("PROPERTIES") {
         properties = parse_properties(&rest[idx..]);
     }
     Ok(vec![Statement::ExportTable(ExportTableStmt { database, table, path, properties })])
@@ -2908,10 +2914,9 @@ fn parse_create_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
             let after_upper = after_paren.to_uppercase();
             if after_upper.starts_with("RETURNS") {
                 let after_returns = after_paren.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
-                if let (r, _) = extract_identifier(after_returns).map(|(t, r)| (Some(t.to_string()), r)).unwrap_or((None, "")) { returns = r; }
+                if let Some((t, _)) = extract_identifier(after_returns) { returns = Some(t.to_string()); }
             }
-            if after_paren.to_uppercase().contains("PROPERTIES") {
-                let idx = after_paren.to_uppercase().find("PROPERTIES").unwrap();
+            if let Some(idx) = after_paren.to_uppercase().find("PROPERTIES") {
                 properties = parse_properties(&after_paren[idx..]);
             }
         }
@@ -2945,7 +2950,7 @@ fn parse_show_create_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
 fn parse_desc_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let after = sql.trim();
     let after = if after.to_uppercase().starts_with("DESCRIBE FUNCTION") { after.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() }
-    else { after.strip_prefix("DESC FUNCTION").unwrap().trim() };
+    else { after.strip_prefix("DESC FUNCTION").unwrap_or_default().trim() };
     let (name, _) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected function name".to_string() })?;
     Ok(vec![Statement::DescribeFunction(name.to_string())])
 }
@@ -2962,13 +2967,11 @@ fn parse_analyze_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let mut columns = vec![];
     let mut sample_rate = None;
     let rest_upper = rest.to_uppercase();
-    if rest_upper.contains("UPDATE COLUMNS") {
-        let idx = rest_upper.find("UPDATE COLUMNS").unwrap();
+    if let Some(idx) = rest_upper.find("UPDATE COLUMNS") {
         let after_cols = rest[idx + 14..].trim();
         if after_cols.starts_with('(') { if let Some(end) = after_cols.find(')') { columns = after_cols[1..end].split(',').map(|c| c.trim().to_string()).collect(); } }
     }
-    if rest_upper.contains("SAMPLE RATE") {
-        let idx = rest_upper.find("SAMPLE RATE").unwrap();
+    if let Some(idx) = rest_upper.find("SAMPLE RATE") {
         let rate_str = rest[idx + 11..].trim().split_whitespace().next().unwrap_or("0.1");
         sample_rate = rate_str.parse().ok();
     }
@@ -3034,7 +3037,7 @@ fn parse_show_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
 fn parse_show_table_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let after = sql.trim();
     let after = if after.to_uppercase().starts_with("SHOW TABLE STATISTICS") { after.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() }
-    else { after.strip_prefix("SHOW TABLE STATS").unwrap().trim().trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() };
+    else { after.strip_prefix("SHOW TABLE STATS").unwrap_or_default().trim().trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() };
     let (name, _) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
     Ok(vec![Statement::ShowTableStats(name.to_string())])
 }
@@ -3054,8 +3057,7 @@ fn parse_create_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
             inner.trim_matches('\'').trim_matches('"').to_string()
         } else { after_schedule.to_string() }
     } else { String::new() };
-    let execute = if rest.to_uppercase().contains("EXECUTE") {
-        let idx = rest.to_uppercase().find("EXECUTE").unwrap();
+    let execute = if let Some(idx) = rest.to_uppercase().find("EXECUTE") {
         let after_exec = rest[idx + 7..].trim();
         after_exec.trim_matches('\'').trim_matches('"').to_string()
     } else { String::new() };

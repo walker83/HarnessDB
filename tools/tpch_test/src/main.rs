@@ -14,29 +14,27 @@ fn main() {
     println!("--- Storage Verification ---\n");
 
     let table_specs = [
-        (1, "nation", 15),
-        (2, "region", 5),
-        (3, "supplier", 10),
-        (4, "part", 20),
-        (5, "partsupp", 80),
-        (6, "customer", 15),
-        (7, "orders", 150),
-        (8, "lineitem", 600),
+        ("nation", 15),
+        ("region", 5),
+        ("supplier", 10),
+        ("part", 20),
+        ("partsupp", 80),
+        ("customer", 15),
+        ("orders", 150),
+        ("lineitem", 600),
     ];
 
     let storage = bench.storage();
     let mut all_ok = true;
-    for (tablet_id, name, expected) in &table_specs {
-        let tablet_ok = storage.get_tablet(*tablet_id);
-        // Use Arrow interface to read data (supports both memtable and Parquet)
-        let read_rows = storage.read_tablet_arrow(*tablet_id, None, &[], None)
+    for (name, expected) in &table_specs {
+        let read_rows = storage.read("tpch", name)
             .map(|b| b.num_rows())
             .unwrap_or(0);
         let read_status = if read_rows == *expected { "OK" } else { "MISMATCH" };
-        if !tablet_ok || read_rows != *expected {
+        if read_rows != *expected {
             all_ok = false;
         }
-        println!("  {} tablet={} rows={}/{} tablet_exists={}", read_status, name, read_rows, expected, tablet_ok);
+        println!("  {} table={} rows={}/{}", read_status, name, read_rows, expected);
     }
 
     if !all_ok {

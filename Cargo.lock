@@ -2798,6 +2798,8 @@ name = "mysql_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
+ "datafusion",
  "mysql-protocol",
  "tokio",
  "tpch-bench",
@@ -3550,6 +3552,7 @@ dependencies = [
  "fe-sql-parser",
  "fe-storage",
  "mysql-protocol",
+ "parking_lot",
  "proto",
  "rpc",
  "serde",

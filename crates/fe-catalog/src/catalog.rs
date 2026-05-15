@@ -409,8 +409,9 @@ impl DualWriteBackend {
 impl MetaBackend for DualWriteBackend {
     fn put_database(&self, name: &str, db: &Database) -> Result<()> {
         self.primary.put_database(name, db)?;
-        // Ignore secondary errors in dual-write mode
-        let _ = self.secondary.put_database(name, db);
+        if let Err(e) = self.secondary.put_database(name, db) {
+            tracing::warn!("dual-write: secondary put_database({name}) failed: {e}");
+        }
         Ok(())
     }
 
@@ -420,7 +421,9 @@ impl MetaBackend for DualWriteBackend {
 
     fn delete_database(&self, name: &str) -> Result<()> {
         self.primary.delete_database(name)?;
-        let _ = self.secondary.delete_database(name);
+        if let Err(e) = self.secondary.delete_database(name) {
+            tracing::warn!("dual-write: secondary delete_database({name}) failed: {e}");
+        }
         Ok(())
     }
 
@@ -430,7 +433,9 @@ impl MetaBackend for DualWriteBackend {
 
     fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()> {
         self.primary.put_table(db_name, table_name, table)?;
-        let _ = self.secondary.put_table(db_name, table_name, table);
+        if let Err(e) = self.secondary.put_table(db_name, table_name, table) {
+            tracing::warn!("dual-write: secondary put_table({db_name}.{table_name}) failed: {e}");
+        }
         Ok(())
     }
 
@@ -440,7 +445,9 @@ impl MetaBackend for DualWriteBackend {
 
     fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
         self.primary.delete_table(db_name, table_name)?;
-        let _ = self.secondary.delete_table(db_name, table_name);
+        if let Err(e) = self.secondary.delete_table(db_name, table_name) {
+            tracing::warn!("dual-write: secondary delete_table({db_name}.{table_name}) failed: {e}");
+        }
         Ok(())
     }
 
@@ -449,15 +456,18 @@ impl MetaBackend for DualWriteBackend {
     }
 
     fn next_id(&self) -> Result<u64> {
-        // Synchronize IDs between backends
         let id = self.primary.next_id()?;
-        let _ = self.secondary.set_next_id(id + 1);
+        if let Err(e) = self.secondary.set_next_id(id + 1) {
+            tracing::warn!("dual-write: secondary set_next_id({}) failed: {e}", id + 1);
+        }
         Ok(id)
     }
 
     fn set_next_id(&self, value: u64) -> Result<()> {
         self.primary.set_next_id(value)?;
-        let _ = self.secondary.set_next_id(value);
+        if let Err(e) = self.secondary.set_next_id(value) {
+            tracing::warn!("dual-write: secondary set_next_id({value}) failed: {e}");
+        }
         Ok(())
     }
 
@@ -467,7 +477,9 @@ impl MetaBackend for DualWriteBackend {
 
     fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
         self.primary.put_materialized_view(db_name, name, mv)?;
-        let _ = self.secondary.put_materialized_view(db_name, name, mv);
+        if let Err(e) = self.secondary.put_materialized_view(db_name, name, mv) {
+            tracing::warn!("dual-write: secondary put_materialized_view({db_name}.{name}) failed: {e}");
+        }
         Ok(())
     }
 
@@ -477,7 +489,9 @@ impl MetaBackend for DualWriteBackend {
 
     fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
         self.primary.delete_materialized_view(db_name, name)?;
-        let _ = self.secondary.delete_materialized_view(db_name, name);
+        if let Err(e) = self.secondary.delete_materialized_view(db_name, name) {
+            tracing::warn!("dual-write: secondary delete_materialized_view({db_name}.{name}) failed: {e}");
+        }
         Ok(())
     }
 
@@ -487,13 +501,17 @@ impl MetaBackend for DualWriteBackend {
 
     fn flush(&self) -> Result<()> {
         self.primary.flush()?;
-        let _ = self.secondary.flush();
+        if let Err(e) = self.secondary.flush() {
+            tracing::warn!("dual-write: secondary flush failed: {e}");
+        }
         Ok(())
     }
 
     fn load(&self) -> Result<()> {
         self.primary.load()?;
-        let _ = self.secondary.load();
+        if let Err(e) = self.secondary.load() {
+            tracing::warn!("dual-write: secondary load failed: {e}");
+        }
         Ok(())
     }
 }
@@ -506,6 +524,7 @@ pub struct CatalogManager {
     next_id: AtomicU64,
     catalog_path: String,
     backend: Arc<dyn MetaBackend>,
+    backend_type_name: &'static str,
     /// Optional secondary backend for dual-write mode
     secondary_backend: Option<Arc<dyn MetaBackend>>,
 }
@@ -543,12 +562,12 @@ impl CatalogManager {
 
     /// Create a CatalogManager with the specified configuration.
     pub fn with_config(config: CatalogConfig) -> Self {
-        let backend: Arc<dyn MetaBackend> = if config.use_rocks_meta {
+        let (backend, backend_type_name): (Arc<dyn MetaBackend>, &'static str) = if config.use_rocks_meta {
             let rocks_path = format!("{}/rocksdb", config.catalog_path);
-            Arc::new(RocksMetaBackend::new(&rocks_path)
-                .expect("Failed to initialize RocksDB backend"))
+            (Arc::new(RocksMetaBackend::new(&rocks_path)
+                .expect("Failed to initialize RocksDB backend")), "rocksdb")
         } else {
-            Arc::new(JsonMetaBackend::new(&config.catalog_path))
+            (Arc::new(JsonMetaBackend::new(&config.catalog_path)), "json")
         };
 
         let dbs = DashMap::new();
@@ -560,6 +579,7 @@ impl CatalogManager {
             next_id: AtomicU64::new(1),
             catalog_path: config.catalog_path,
             backend,
+            backend_type_name,
             secondary_backend: None,
         }
     }
@@ -584,23 +604,14 @@ impl CatalogManager {
             next_id: AtomicU64::new(1),
             catalog_path: path,
             backend: dual_backend,
+            backend_type_name: "dual-write",
             secondary_backend: None,
         }
     }
 
     /// Get the backend type name for logging/debugging.
     pub fn backend_type(&self) -> &'static str {
-        if self.secondary_backend.is_some() {
-            "dual-write"
-        } else if self.backend.as_any().downcast_ref::<RocksMetaBackend>().is_some() {
-            "rocksdb"
-        } else if self.backend.as_any().downcast_ref::<JsonMetaBackend>().is_some() {
-            "json"
-        } else if self.backend.as_any().downcast_ref::<DualWriteBackend>().is_some() {
-            "dual-write"
-        } else {
-            "unknown"
-        }
+        self.backend_type_name
     }
 
     pub fn create_database(&self, name: &str) -> Result<()> {

@@ -68,6 +68,7 @@ indexmap = "2"
 bytes = "1"
 tokio-stream = { version = "0.1", features = ["fs"] }
 dashmap = "6"
+parking_lot = "0.12"
 
 # HTTP server
 axum = "0.7"
