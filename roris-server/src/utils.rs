@@ -362,18 +362,20 @@ pub(crate) fn parse_datetime_to_seconds(s: &str) -> Option<i64> {
     Some(days as i64 * 86400)
 }
 
-pub(crate) fn evaluate_delete_filter_simple(
+/// Evaluate a simple WHERE filter against a RecordBatch.
+/// Returns a mask where `true` means the row **matches** the condition.
+pub(crate) fn evaluate_where_filter(
     batch: &datafusion::arrow::record_batch::RecordBatch,
     where_expr: &fe_sql_parser::ast::Expr,
 ) -> Result<Vec<bool>, String> {
     use fe_sql_parser::ast::{BinaryOp, Expr, LiteralValue};
     let num_rows = batch.num_rows();
-    let mut keep = vec![true; num_rows];
+    let mut matches = vec![false; num_rows];
 
     if let Expr::BinaryOp { left, op, right } = where_expr {
         let col_name = match left.as_ref() {
             Expr::ColumnRef { table: _, column } => column.clone(),
-            _ => return Ok(keep),
+            _ => return Ok(matches),
         };
         let col_idx = batch.schema().index_of(&col_name).map_err(|e| format!("{}", e))?;
         let col = batch.column(col_idx);
@@ -382,49 +384,62 @@ pub(crate) fn evaluate_delete_filter_simple(
             Expr::Literal(LiteralValue::Int64(n)) => n.to_string(),
             Expr::Literal(LiteralValue::Float64(f)) => f.to_string(),
             Expr::Literal(LiteralValue::String(s)) => s.clone(),
-            _ => return Ok(keep),
+            _ => return Ok(matches),
         };
 
         match op {
-            BinaryOp::Eq => apply_cmp(&mut keep, col, &val_str, |a, b| a == b),
-            BinaryOp::Gt => apply_cmp(&mut keep, col, &val_str, |a, b| a > b),
-            BinaryOp::Lt => apply_cmp(&mut keep, col, &val_str, |a, b| a < b),
-            BinaryOp::GtEq => apply_cmp(&mut keep, col, &val_str, |a, b| a >= b),
-            BinaryOp::LtEq => apply_cmp(&mut keep, col, &val_str, |a, b| a <= b),
-            BinaryOp::NotEq => apply_cmp(&mut keep, col, &val_str, |a, b| a != b),
+            BinaryOp::Eq => apply_cmp(&mut matches, col, &val_str, |a, b| a == b),
+            BinaryOp::Gt => apply_cmp(&mut matches, col, &val_str, |a, b| a > b),
+            BinaryOp::Lt => apply_cmp(&mut matches, col, &val_str, |a, b| a < b),
+            BinaryOp::GtEq => apply_cmp(&mut matches, col, &val_str, |a, b| a >= b),
+            BinaryOp::LtEq => apply_cmp(&mut matches, col, &val_str, |a, b| a <= b),
+            BinaryOp::NotEq => apply_cmp(&mut matches, col, &val_str, |a, b| a != b),
             _ => {}
         }
     }
 
-    Ok(keep)
+    Ok(matches)
 }
 
-pub(crate) fn apply_cmp<F: Fn(&str, &str) -> bool>(keep: &mut [bool], col: &datafusion::arrow::array::ArrayRef, val: &str, cmp: F) {
+fn apply_cmp<F: Fn(&str, &str) -> bool>(mask: &mut [bool], col: &datafusion::arrow::array::ArrayRef, val: &str, cmp: F) {
     match col.data_type() {
         ADT::Int32 => {
             let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
-            for (i, k) in keep.iter_mut().enumerate() {
-                if !arr.is_null(i) {
-                    let v = arr.value(i).to_string();
-                    if !cmp(&v, val) { *k = false; }
+            for (i, m) in mask.iter_mut().enumerate() {
+                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
+                    *m = true;
                 }
             }
         }
         ADT::Int64 => {
             let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
-            for (i, k) in keep.iter_mut().enumerate() {
-                if !arr.is_null(i) {
-                    let v = arr.value(i).to_string();
-                    if !cmp(&v, val) { *k = false; }
+            for (i, m) in mask.iter_mut().enumerate() {
+                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
+                    *m = true;
+                }
+            }
+        }
+        ADT::Float32 => {
+            let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
+            for (i, m) in mask.iter_mut().enumerate() {
+                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
+                    *m = true;
+                }
+            }
+        }
+        ADT::Float64 => {
+            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+            for (i, m) in mask.iter_mut().enumerate() {
+                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
+                    *m = true;
                 }
             }
         }
         ADT::Utf8 => {
             let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
-            for (i, k) in keep.iter_mut().enumerate() {
-                if !arr.is_null(i) {
-                    let v = arr.value(i);
-                    if !cmp(v, val) { *k = false; }
+            for (i, m) in mask.iter_mut().enumerate() {
+                if !arr.is_null(i) && cmp(arr.value(i), val) {
+                    *m = true;
                 }
             }
         }

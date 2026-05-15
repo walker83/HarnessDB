@@ -71,7 +71,7 @@ impl TableProvider for ParquetTableProvider {
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
         let rb = self
             .storage
-            .read_with_options(&self.db_name, &self.table_name, projection, limit)
+            .read(&self.db_name, &self.table_name)
             .map_err(|e| {
                 DataFusionError::Execution(format!(
                     "Failed to read {}.{}: {}",
@@ -79,14 +79,7 @@ impl TableProvider for ParquetTableProvider {
                 ))
             })?;
 
-        // If file is empty, return empty MemTable with the full schema
-        let schema_for_mem = if rb.num_rows() == 0 {
-            self.schema.clone()
-        } else {
-            rb.schema()
-        };
-
-        let mem = MemTable::try_new(schema_for_mem, vec![vec![rb]])?;
+        let mem = MemTable::try_new(self.schema.clone(), vec![vec![rb]])?;
         mem.scan(state, projection, _filters, limit).await
     }
 }

@@ -9,7 +9,7 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_parser::ast::DeleteStmt;
 
 use crate::handler_struct::RorisQueryHandler;
-use crate::utils::{build_arrow_array, evaluate_delete_filter_simple, expr_to_string_value, update_column_in_batch};
+use crate::utils::{build_arrow_array, evaluate_where_filter, expr_to_string_value, update_column_in_batch};
 
 impl RorisQueryHandler {
     pub(crate) fn insert(&self, stmt: &fe_sql_parser::ast::InsertStmt) -> Result<QueryResult, String> {
@@ -40,11 +40,18 @@ impl RorisQueryHandler {
         }).collect();
         let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
 
-        // Build a map from column name to value index in stmt.values
-        let column_value_map: std::collections::HashMap<String, usize> = stmt.columns.iter()
-            .enumerate()
-            .map(|(i, name)| (name.clone(), i))
-            .collect();
+        // Map column position to value index in stmt.values.
+        // If stmt.columns is empty (INSERT INTO t VALUES ...), values map 1:1 by position.
+        // Otherwise, build a name->index map from the explicit column list.
+        let positional = stmt.columns.is_empty();
+        let column_value_map: std::collections::HashMap<String, usize> = if !positional {
+            stmt.columns.iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), i))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
 
         let num_cols = table_meta.columns.len();
         let mut arrays: Vec<datafusion::arrow::array::ArrayRef> = Vec::new();
@@ -53,7 +60,12 @@ impl RorisQueryHandler {
             let col_meta = &table_meta.columns[col_idx];
             let col_type = &col_meta.data_type;
 
-            let values: Vec<Option<String>> = if let Some(value_idx) = column_value_map.get(&col_meta.name) {
+            let values: Vec<Option<String>> = if positional {
+                // No column list specified — values map by position
+                stmt.values.iter().map(|row| {
+                    row.get(col_idx).and_then(|expr| expr_to_string_value(expr))
+                }).collect()
+            } else if let Some(value_idx) = column_value_map.get(&col_meta.name) {
                 stmt.values.iter().map(|row| {
                     row.get(*value_idx).and_then(|expr| expr_to_string_value(expr))
                 }).collect()
@@ -100,7 +112,7 @@ impl RorisQueryHandler {
         let total_updated = self.storage.update(&database, &table_name, |batch| {
             let mut total_updated = 0usize;
             let update_mask: Vec<bool> = if let Some(ref sel) = selection {
-                evaluate_delete_filter_simple(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
+                evaluate_where_filter(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
             } else {
                 vec![true; batch.num_rows()]
             };
@@ -160,8 +172,10 @@ impl RorisQueryHandler {
 
         let total_deleted = self.storage.delete(&database, &table_name, |batch| {
             if let Some(ref sel) = selection {
-                let keep_mask = evaluate_delete_filter_simple(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?;
-                let deleted_count = keep_mask.iter().filter(|&&k| !k).count();
+                let match_mask = evaluate_where_filter(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?;
+                let deleted_count = match_mask.iter().filter(|&&m| m).count();
+                // keep rows that do NOT match
+                let keep_mask: Vec<bool> = match_mask.iter().map(|&m| !m).collect();
                 let filtered = datafusion::arrow::compute::filter_record_batch(
                     &batch,
                     &datafusion::arrow::array::BooleanArray::from(keep_mask),
