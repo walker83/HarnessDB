@@ -3,7 +3,7 @@ use std::sync::Arc;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::kernels::cmp;
 use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
-use fe_sql_parser::ast::BinaryOp;
+use fe_sql_parser::ast::{BinaryOp, Expr, LiteralValue, UnaryOp};
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::QueryResult;
 use ::types::DataType;
@@ -398,6 +398,11 @@ pub(crate) fn build_arrow_array_from_exprs(
             let arr: Int8Array = exprs.iter().map(|e| match e {
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i8),
                 Expr::Literal(LiteralValue::Null) => None,
+                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i8)),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i8)),
+                    _ => None,
+                },
                 _ => None,
             }).collect();
             Arc::new(arr)
@@ -406,6 +411,11 @@ pub(crate) fn build_arrow_array_from_exprs(
             let arr: Int16Array = exprs.iter().map(|e| match e {
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i16),
                 Expr::Literal(LiteralValue::Null) => None,
+                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i16)),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i16)),
+                    _ => None,
+                },
                 _ => None,
             }).collect();
             Arc::new(arr)
@@ -414,6 +424,11 @@ pub(crate) fn build_arrow_array_from_exprs(
             let arr: Int32Array = exprs.iter().map(|e| match e {
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
                 Expr::Literal(LiteralValue::Null) => None,
+                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i32)),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i32)),
+                    _ => None,
+                },
                 _ => None,
             }).collect();
             Arc::new(arr)
@@ -422,6 +437,11 @@ pub(crate) fn build_arrow_array_from_exprs(
             let arr: Int64Array = exprs.iter().map(|e| match e {
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
                 Expr::Literal(LiteralValue::Null) => None,
+                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(-*n),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i64)),
+                    _ => None,
+                },
                 _ => None,
             }).collect();
             Arc::new(arr)
@@ -431,6 +451,11 @@ pub(crate) fn build_arrow_array_from_exprs(
                 Expr::Literal(LiteralValue::Float64(f)) => Some(*f as f32),
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f32),
                 Expr::Literal(LiteralValue::Null) => None,
+                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as f32)),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as f32)),
+                    _ => None,
+                },
                 _ => None,
             }).collect();
             Arc::new(arr)
@@ -440,6 +465,11 @@ pub(crate) fn build_arrow_array_from_exprs(
                 Expr::Literal(LiteralValue::Float64(f)) => Some(*f),
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f64),
                 Expr::Literal(LiteralValue::Null) => None,
+                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as f64)),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-*f),
+                    _ => None,
+                },
                 _ => None,
             }).collect();
             Arc::new(arr)
