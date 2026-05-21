@@ -1,8 +1,8 @@
 # RorisDB
 
-> A real-time OLAP database built in Rust, powered by Apache DataFusion and Parquet.
+> A single-node OLAP database with Doris-compatible SQL, built in Rust.
 >
-> Architecturally inspired by Apache Doris.
+> Learn Doris SQL syntax, experiment with OLAP patterns, and explore columnar storage — all in one binary.
 
 [![Apache-2.0 License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024--edition-orange.svg)](https://www.rust-lang.org)
@@ -12,12 +12,20 @@
 
 ## What is RorisDB?
 
-RorisDB is a **single-node OLAP database** that combines:
+RorisDB is a **Doris-compatible single-node OLAP database** for learning and experimentation. It speaks Doris SQL dialect — including `DUPLICATE KEY`, `DISTRIBUTED BY HASH`, `date_trunc`, `months_add` — but runs as a single binary with no cluster setup required.
+
+**Use cases:**
+- Learn Doris/OLAP SQL syntax without deploying a cluster
+- Experiment with columnar storage and Parquet file formats
+- Prototype analytical queries locally before moving to production Doris
+- Study OLAP database internals in readable Rust code
+
+### How it works
 
 - **Apache DataFusion** as the query engine (SQL → Arrow → execution)
 - **Apache Parquet** as the storage format (columnar, compressed, portable)
 - **MySQL wire protocol** for connectivity (works with any MySQL client)
-- **Rust** for memory safety, zero-cost abstractions, and safe concurrency
+- **Rust** for memory safety and single-binary deployment
 
 ### Naming
 
@@ -40,12 +48,14 @@ mysql -h 127.0.0.1 -P 9030 -uroot
 CREATE DATABASE test;
 USE test;
 
+-- Doris-compatible table syntax
 CREATE TABLE users (
-    id BIGINT,
+    id INT,
     name VARCHAR(100),
     age INT,
     created_at DATE
-);
+) DUPLICATE KEY(id)
+DISTRIBUTED BY HASH(id) BUCKETS 1;
 
 INSERT INTO users VALUES (1, 'Alice', 30, '2024-01-15'), (2, 'Bob', 25, '2024-02-20');
 
@@ -190,9 +200,24 @@ RorisDB/
 | P2 | Replace `types` crate with native Arrow types | Planned |
 | P2 | Arrow-native QueryResult (eliminate string conversion) | Planned |
 
+## Doris Compatibility
+
+RorisDB implements a subset of Apache Doris SQL dialect for learning purposes:
+
+| Feature | Status |
+|---------|--------|
+| `DUPLICATE KEY` / `DISTRIBUTED BY HASH` | ✅ Parsed and accepted (single-node, no actual distribution) |
+| `PARTITION BY RANGE/LIST` | ✅ Parsed, execution planned |
+| Doris UDFs (`date_trunc`, `months_add`, `days_add`, `concat_ws`) | ✅ Compatible |
+| `INSERT INTO ... VALUES` / `INSERT INTO ... SELECT` | ✅ Supported |
+| `UPDATE` / `DELETE` with `WHERE` | ✅ Supported |
+| `SHOW DATABASES/TABLES/COLUMNS` | ✅ Supported |
+
+**Not a Doris replacement**: RorisDB is designed for learning Doris SQL syntax and OLAP concepts locally. For production workloads, use [Apache Doris](https://doris.apache.org).
+
 ## Relationship to Apache Doris
 
-RorisDB is an **independent open-source project**. It is not a fork, wrapper, or derivative of Apache Doris. It reimplements similar OLAP concepts (columnar storage, MySQL compatibility, materialized views) in Rust, with its own query engine (DataFusion) and storage layer (Parquet).
+RorisDB is an **independent open-source project**. It is not a fork, wrapper, or derivative of Apache Doris. It reimplements similar OLAP concepts (columnar storage, MySQL compatibility, Doris SQL dialect) in Rust, with its own query engine (DataFusion) and storage layer (Parquet).
 
 We deeply respect the Apache Doris community and their pioneering work in real-time OLAP.
 
