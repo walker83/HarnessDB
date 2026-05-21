@@ -1,340 +1,159 @@
 # RorisDB Features
 
-This document provides a detailed overview of the features currently supported by RorisDB.
+> Version 0.2.0
 
-## Version Information
+## SQL Language Support
 
-- **Current Version**: v0.1.3
-- **Project Status**: Proof-of-Concept
-- **License**: MIT / Apache-2.0
+### DDL (Data Definition)
 
-## Completed Features (v0.1.3)
+| Statement | Status | Notes |
+|-----------|--------|-------|
+| `CREATE DATABASE` | ✅ | With `IF NOT EXISTS` |
+| `DROP DATABASE` | ✅ | With `IF EXISTS` |
+| `CREATE TABLE` | ✅ | Column definitions, `KEYS` type, `PARTITION BY`, `DISTRIBUTED BY` |
+| `DROP TABLE` | ✅ | With `IF EXISTS` |
+| `ALTER TABLE` | ✅ | `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`, `MODIFY COLUMN` |
+| `TRUNCATE TABLE` | ✅ | Deletes data, keeps schema |
+| `CREATE VIEW` | ✅ | Stores query definition |
+| `DROP VIEW` | ✅ | |
+| `CREATE INDEX` | ⚠️ | Parsed, not enforced |
+| `CREATE MATERIALIZED VIEW` | ⚠️ | Parsed, framework only |
 
-### SQL Parsing and Planning
+### DML (Data Manipulation)
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **SQL Parser** | ✅ | MySQL-compatible SQL parsing (via sqlparser crate) |
-| **Query Planner** | ✅ | AST → Logical Plan → Physical Plan, rule-based optimization |
-| **Optimizer** | ✅ | Predicate pushdown, column pruning, limit pushdown, join reordering |
+| Statement | Status | Notes |
+|-----------|--------|-------|
+| `INSERT INTO ... VALUES` | ✅ | Multi-row, partial column, type-aware |
+| `INSERT INTO ... SELECT` | ⚠️ | Parsed, not executed |
+| `UPDATE ... SET ... WHERE` | ✅ | All Arrow types supported |
+| `DELETE FROM ... WHERE` | ✅ | Supports `AND`/`OR` conditions |
 
-### Expression Engine
+### Queries
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Vectorized Expressions** | ✅ | Batch evaluation for improved CPU cache utilization |
-| **Scalar Functions** | ✅ | 30+ built-in functions (math, string, date, etc.) |
-| **Type Conversion** | ✅ | Implicit and explicit type conversion |
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `SELECT` | ✅ | Via DataFusion |
+| `WHERE` | ✅ | Full DataFusion predicate support |
+| `ORDER BY` | ✅ | |
+| `LIMIT` / `OFFSET` | ✅ | |
+| `GROUP BY` | ✅ | |
+| `HAVING` | ✅ | |
+| `JOIN` (INNER) | ✅ | |
+| `JOIN` (LEFT/RIGHT/FULL/CROSS) | ✅ | |
+| Subqueries | ✅ | `IN`, `EXISTS`, correlated |
+| CTEs (`WITH`) | ✅ | Recursive supported |
+| `UNION` / `UNION ALL` | ✅ | |
+| `INTERSECT` / `EXCEPT` | ✅ | |
+| `EXPLAIN` | ✅ | Shows DataFusion execution plan |
 
 ### Aggregate Functions
 
-| Function | Status | Description |
-|----------|--------|-------------|
-| `COUNT` | ✅ | Counting (supports `COUNT(*)` and `COUNT(DISTINCT)`) |
-| `SUM` | ✅ | Summation |
-| `AVG` | ✅ | Average |
-| `MIN` | ✅ | Minimum value |
-| `MAX` | ✅ | Maximum value |
-| `GROUP_CONCAT` | ✅ | String concatenation |
+| Function | Status |
+|----------|--------|
+| `COUNT(*)` | ✅ |
+| `COUNT(expr)` | ✅ |
+| `COUNT(DISTINCT expr)` | ✅ |
+| `SUM` | ✅ |
+| `AVG` | ✅ |
+| `MIN` / `MAX` | ✅ |
+| `GROUP_CONCAT` | ✅ |
 
 ### Window Functions
 
-| Function | Status | Description |
-|----------|--------|-------------|
-| `ROW_NUMBER` | ✅ | Row number (no ties) |
-| `RANK` | ✅ | Ranking (with ties, gaps in numbering) |
-| `DENSE_RANK` | ✅ | Dense ranking (with ties, no gaps) |
-| `LAG` | ✅ | Access previous n rows |
-| `LEAD` | ✅ | Access next n rows |
-
-### Math Functions
-
-| Function | Status | Description |
-|----------|--------|-------------|
-| Basic Math | ✅ | sin, cos, tan, asin, acos, atan |
-| Exponential & Logarithmic | ✅ | exp, log, log10, sqrt, pow |
-| Others | ✅ | pi, rand, abs, ceil, floor, round, sign |
-
-### Data Types
-
-| Type | Status | Description |
-|------|--------|-------------|
-| **Integer Types** | ✅ | Int8, Int16, Int32, Int64 |
-| **Floating-Point Types** | ✅ | Float32, Float64 |
-| **String Type** | ✅ | String (VARCHAR) |
-| **Date/Time** | ✅ | Date, DateTime |
-| **Boolean Type** | ✅ | Boolean |
-| **Null Values** | ✅ | Null (tracked via Null Bitmap) |
-
-### Storage Engine
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Vectorized Storage** | ✅ | Columnar memory layout supporting multiple data types |
-| **Null Bitmap** | ✅ | Bitset-based null tracking with fast AND/OR/NOT operations |
-| **Block** | ✅ | Batch columnar data (schema + vectors), supports projection/filter/slice |
-| **Tablet** | ✅ | Basic unit of data sharding |
-| **Rowset** | ✅ | Data collection from a single import or compaction |
-| **Segment** | ✅ | Columnar storage file containing multiple Column Pages |
-| **ZoneMap Index** | ✅ | Records min/max values per column for range filtering |
-| **BloomFilter Index** | ✅ | Probabilistic filter for high-cardinality column filtering |
-| **LZ4 Compression** | ✅ | Lightweight compression algorithm |
-| **RLE Encoding** | ✅ | Run-length encoding for repeated values |
-
-### Compaction
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Cumulative Compaction** | ✅ | Small file merging for rapid latest data consolidation |
-| **Base Compaction** | ✅ | Large file merging for optimized query performance |
-| **Priority Scheduling** | ✅ | Priority queue-based compaction scheduling |
-
-### Query Execution
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Pipeline Execution** | ✅ | Pipeline execution engine |
-| **Vectorized Execution** | ✅ | Batch data processing for improved performance |
-| **Scan Operator** | ✅ | Table data scanning |
-| **Filter Operator** | ✅ | Data filtering |
-| **Project Operator** | ✅ | Column projection |
-| **Aggregate Operator** | ✅ | Aggregation computation (HashAggregate) |
-| **Join Operator** | ✅ | Join operations (Hash Join, Nested Loop Join) |
-| **Exchange Operator** | ✅ | Data exchange (HashPartition, Broadcast, Gather) |
-
-### Subqueries and Set Operations
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **IN Subquery** | ✅ | `WHERE col IN (SELECT ...)` |
-| **EXISTS Subquery** | ✅ | `WHERE EXISTS (SELECT ...)` |
-| **NOT IN** | ✅ | `WHERE col NOT IN (SELECT ...)` |
-| **NOT EXISTS** | ✅ | `WHERE NOT EXISTS (SELECT ...)` |
-| **SemiJoin/AntiSemiJoin** | ✅ | Optimized subquery execution |
-| **UNION** | ✅ | Set union (deduplicated) |
-| **UNION ALL** | ✅ | Set union (preserving duplicates) |
-| **INTERSECT** | ✅ | Set intersection |
-| **EXCEPT** | ✅ | Set difference |
-
-### CTE and Views
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **CTE (WITH)** | ✅ | Common Table Expressions, including recursive CTEs |
-| **CREATE VIEW** | ✅ | View creation and metadata management |
-| **SHOW CREATE TABLE** | ✅ | View table creation statements |
-
-### Data Import and Export
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **CSV Read/Write** | ✅ | CSV format import and export |
-| **JSON Lines Parsing** | ✅ | JSON Lines format parsing |
-| **Stream Load** | ✅ | HTTP streaming import framework |
-
-### Network Protocol
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **MySQL Protocol** | ✅ | MySQL wire protocol server (handshake, authentication, query, result set) |
-| **gRPC FE-BE** | ✅ | gRPC communication between FE and BE (tonic/prost) |
-
-### Distributed Query
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Fragment Planning** | ✅ | Splits physical plans into distributable Fragments |
-| **Distributed Scheduling** | ✅ | Load-aware BE node selection, round-robin allocation |
-| **Query Coordinator** | ✅ | Complete query lifecycle management (plan → fragment → schedule → execute → collect) |
-| **Failure Rescheduling** | ✅ | Query rescheduling on failure |
-
-### Cluster Management
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **BE Node Registration** | ✅ | BE registers with FE on startup |
-| **Heartbeat Mechanism** | ✅ | BE periodically sends heartbeats to FE (including load info) |
-| **Load Tracking** | ✅ | FE tracks load score for each BE node |
-
-### Client Tools
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **roris-cli** | ✅ | Command-line client (REPL) with SQL parsing and plan visualization |
-| **MySQL Client Compatible** | ✅ | Can connect directly using mysql command-line tool |
-
-### DDL and DML
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **CREATE DATABASE** | ✅ | Create database |
-| **DROP DATABASE** | ✅ | Drop database |
-| **ALTER DATABASE** | ✅ | Alter database properties |
-| **SHOW CREATE DATABASE** | ✅ | Show database creation statement |
-| **CREATE TABLE** | ✅ | Create table (supports DUPLICATE KEY, partition tables) |
-| **ALTER TABLE** | ✅ | Alter table (RENAME COLUMN, COMMENT, SET PROPERTY) |
-| **DROP TABLE** | ✅ | Drop table |
-| **TRUNCATE TABLE** | ✅ | Quick table truncation |
-| **INSERT** | ✅ | Insert data (single and multiple rows) |
-| **SELECT** | ✅ | Query data (supports complex queries) |
-| **CREATE VIEW** | ✅ | Create view |
-| **DROP VIEW** | ✅ | Drop view |
-| **ALTER VIEW** | ✅ | Alter view definition |
-| **SHOW CREATE VIEW** | ✅ | Show view creation statement |
-
-### Partition Support
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Range Partition** | ✅ | Partition by range of values |
-| **List Partition** | ✅ | Partition by list of values |
-| **Hash Partition** | ✅ | Partition by hash of values |
-| **Partition Management** | ✅ | Add/drop partitions dynamically |
-
-### Materialized Views
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **MV Framework** | ✅ | Materialized view creation and metadata management |
-| **Query Rewrite** | ✅ | Transparent query rewrite using materialized views |
-| **MV Maintenance** | 🚧 | Automatic refresh and consistency maintenance |
-
-### CBO Optimizer
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Cost Model** | ✅ | Cost-based optimization with CPU/I/O estimation |
-| **Statistics Collection** | ✅ | Table statistics via ANALYZE TABLE |
-| **Join Reordering** | ✅ | Cost-based join order optimization |
-| **Plan Selection** | ✅ | Optimal plan selection based on statistics |
-
-### Runtime Filter
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Runtime Filter Pushdown** | ✅ | Dynamic filter pushdown for join optimization |
-| **Bloom Filter** | ✅ | Runtime Bloom filters for selective joins |
-| **Filter Propagation** | ✅ | Cross-fragment filter propagation |
-
-### External Catalog
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Catalog Framework** | ✅ | External catalog framework (Hive/Iceberg/Hudi) |
-| **Federation Queries** | 🚧 | Query external data sources directly |
-| **Metadata Sync** | 🚧 | Catalog metadata synchronization |
-
-### Authentication Framework
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **MySQL Native Password** | ✅ | MySQL native password authentication |
-| **LDAP Authentication** | ✅ | External LDAP authentication support |
-| **Token Authentication** | ✅ | Token-based authentication |
-| **Pluggable Auth** | ✅ | Pluggable authentication framework |
-
-### Backup & Restore
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Backup Framework** | ✅ | Backup and restore framework |
-| **Incremental Backup** | 🚧 | Incremental backup support |
-| **Remote Storage** | 🚧 | Backup to S3/GCS remote storage |
-
-### Codec & Compression
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **LZ4 Compression** | ✅ | Improved LZ4 compression with optimizations |
-| **Codec Framework** | ✅ | Extensible codec framework |
-| **External File Scan** | ✅ | Direct scanning of external files (CSV, JSON) |
-
-## Features In Progress
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Materialized Views** | 🚧 | Transparent query rewriting (Materialized Views) |
-| **HA High Availability** | 🚧 | Raft-based FE metadata replication |
-| **Catalog Persistence** | 🚧 | EditLog + BDBJE-style metadata persistence |
-| **Federated Query** | 🚧 | Hive/Iceberg/Hudi external catalogs |
-| **Cloud-Native Mode** | 🚧 | S3 shared storage, metadata service |
-
-## Not Yet Implemented
-
-| Feature | Description |
-|---------|-------------|
-| **UDF / UDAF** | User-defined functions and aggregate functions |
-| **Multi-Database Transactions** | Cross-database transaction support |
-| **Row-Level Security** | Row-level permission control |
-| **Workload Management** | Query resource isolation and prioritization |
-| **TPC-H End-to-End** | Complete TPC-H benchmark testing |
-| **Kubernetes Operator** | K8s deployment and management tool |
-| **UPDATE / DELETE** | Data update and delete operations |
-| **Foreign Key Constraints** | Inter-table foreign key constraints |
-| **Stored Procedures** | Stored procedure support |
-| **Triggers** | Trigger support |
-
-## Feature Comparison with Apache Doris
-
-| Feature Category | Apache Doris | RorisDB | Notes |
-|------------------|--------------|---------|-------|
-| **Language** | C++ | Rust | Memory safety |
-| **SQL Compatibility** | MySQL | MySQL | Via mysql-protocol |
-| **Storage Format** | Tablet/Rowset/Segment | Tablet/Rowset/Segment | Similar design |
-| **Indexes** | ZoneMap, BloomFilter, Inverted | ZoneMap, BloomFilter | RorisDB adds Inverted |
-| **Compression Algorithms** | zstd, LZ4, Zlib | LZ4 | More codecs planned |
-| **Execution Model** | Vectorized + Pipeline | Vectorized + Pipeline | Same philosophy |
-| **Compaction** | Cumulative + Base | Cumulative + Base | Same strategy |
-| **High Availability** | BDBJE Master/Follower | Raft (planned) | Different consensus mechanisms |
-| **Cloud Mode** | Shared-nothing + S3 | Shared-nothing + S3 (planned) | |
-| **Materialized Views** | ✅ | 🚧 | Planned |
-| **Federated Query** | ✅ Hive/Iceberg/Hudi | 🚧 | Planned |
-| **Transactions** | ✅ | ❌ | Planned |
-
-## Performance Features
-
-### Vectorized Execution
-
-RorisDB uses a vectorized execution model for batch data processing:
-
-- **Batch Size**: Default 1024 rows per batch
-- **CPU Cache Friendly**: Contiguous memory layout reduces cache misses
-- **SIMD Friendly**: Tight loops enable compiler optimizations
-
-### Zero-Copy
-
-- Uses Rust's borrowing mechanism to avoid unnecessary data copies
-- Uses references instead of ownership transfers where possible
-
-### Late Materialization
-
-- Materializes data only when necessary
-- Filters data early to reduce the amount of data for subsequent processing
-
-### Index Optimization
-
-- **ZoneMap**: Quickly skips Segments that don't satisfy range conditions
-- **BloomFilter**: Quickly determines if a value exists in a Segment
-- **Column Pruning**: Only reads columns needed by the query
-
-## Scalability
-
-### Horizontal Scaling
-
-- Storage and compute capacity can be horizontally scaled by adding BE nodes
-- FE handles query planning and scheduling; BE handles data storage and execution
-
-### Distributed Query
-
-- Fragment-level parallel execution
-- Supports multiple data exchange modes:
-  - **HashPartition**: Partition by hash
-  - **Broadcast**: Broadcast small tables
-  - **Gather**: Collect results to a single node
-
-## Next Steps
-
-- Check the [Product Overview](product-overview.md) to understand RorisDB's positioning
-- Read the [Architecture Design Document](architecture.md) to learn about the system architecture
-- Refer to the [SQL Reference Manual](sql-reference.md) to learn SQL syntax
-- Check the [Developer Guide](developer-guide.md) to contribute to the project
+| Function | Status |
+|----------|--------|
+| `ROW_NUMBER()` | ✅ |
+| `RANK()` | ✅ |
+| `DENSE_RANK()` | ✅ |
+| `LAG(expr, n)` | ✅ |
+| `LEAD(expr, n)` | ✅ |
+
+### Built-in Functions
+
+| Category | Examples | Count |
+|----------|---------|-------|
+| Math | `abs`, `ceil`, `floor`, `round`, `sqrt`, `pow`, `log`, `sin`, `cos`, `tan`, `rand` | 30+ |
+| String | `concat`, `concat_ws`, `length`, `upper`, `lower`, `trim`, `substring`, `replace`, `substring_index` | 15+ |
+| Date/Time | `date_trunc`, `months_add`, `days_add`, `hours_add`, `now`, `curdate` | 8+ |
+| Aggregate | `bitmap_count` | 1 |
+| Type conversion | `CAST(expr AS type)` | All Arrow types |
+
+## Data Types
+
+| RorisDB Type | SQL Syntax | Arrow Type | Notes |
+|-------------|-----------|-----------|-------|
+| `Boolean` | `BOOLEAN`, `BOOL` | Boolean | |
+| `Int8` | `TINYINT` | Int8 | |
+| `Int16` | `SMALLINT` | Int16 | |
+| `Int32` | `INT`, `INTEGER` | Int32 | |
+| `Int64` | `BIGINT` | Int64 | |
+| `Float32` | `FLOAT` | Float32 | |
+| `Float64` | `DOUBLE` | Float64 | |
+| `Decimal(p,s)` | `DECIMAL(10,2)` | Decimal128 | Full precision |
+| `Date` | `DATE` | Date32 | Days since epoch |
+| `DateTime` | `DATETIME`, `TIMESTAMP` | Timestamp(Second) | |
+| `String` | `VARCHAR`, `CHAR`, `TEXT`, `STRING` | Utf8 | |
+| `Binary` | `BINARY`, `BLOB` | Binary | |
+| `Array(T)` | `ARRAY<INT>` | List | Nested type |
+| `Map(K,V)` | `MAP<STRING, INT>` | Map | Nested type |
+| `Struct` | `STRUCT<...>` | Struct | Nested type |
+| `Json` | `JSON` | Utf8 | Stored as string |
+
+## SHOW / DESCRIBE Commands
+
+| Command | Status |
+|---------|--------|
+| `SHOW DATABASES` | ✅ |
+| `SHOW TABLES` | ✅ | With `LIKE` pattern |
+| `SHOW CREATE TABLE` | ✅ | |
+| `SHOW CREATE DATABASE` | ✅ | |
+| `DESCRIBE table` / `DESC table` | ✅ | |
+| `SHOW TABLE STATUS` | ✅ | |
+| `SHOW VARIABLES` | ✅ | Returns empty |
+| `SHOW PROCESSLIST` | ✅ | Returns current connection |
+
+## Transaction Support
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `BEGIN` / `START TRANSACTION` | ⚠️ | Parsed, state tracked |
+| `COMMIT` | ⚠️ | State tracked, no MVCC |
+| `ROLLBACK` | ⚠️ | State tracked, no actual rollback |
+| `SAVEPOINT` | ⚠️ | Parsed, state tracked |
+| Isolation levels | ⚠️ | `SET TRANSACTION ISOLATION LEVEL` parsed, not enforced |
+
+> Transactions are **syntactically supported** but not enforced — there is no MVCC or WAL. Operations are individually atomic (Parquet atomic write).
+
+## MySQL Protocol Compatibility
+
+| Feature | Status |
+|---------|--------|
+| Wire protocol | ✅ MySQL text protocol |
+| Authentication | ✅ `mysql_native_password` (any password accepted) |
+| `COM_QUERY` | ✅ |
+| `COM_INIT_DB` | ✅ (USE database) |
+| `COM_FIELD_LIST` | ✅ |
+| `COM_QUIT` | ✅ |
+| Prepared statements | ⚠️ Framework only |
+| SSL/TLS | ❌ Not implemented |
+
+## Monitoring & Observability
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| HTTP health check | ✅ | `GET /api/health` |
+| Prometheus metrics | ✅ | `GET /api/metrics` |
+| Audit log | ✅ | Query logging |
+| Query profiles | ✅ | Execution timing |
+| `information_schema` | ✅ | `tables`, `columns`, `schemata` |
+
+## User Management
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `CREATE USER` | ⚠️ | Parsed, stub execution |
+| `DROP USER` | ⚠️ | Parsed, stub execution |
+| `GRANT` / `REVOKE` | ⚠️ | Parsed, stub execution |
+| `SET PASSWORD` | ⚠️ | Parsed, stub execution |
+
+> User management SQL is **parsed and accepted** for compatibility, but not enforced — all connections have full access.
