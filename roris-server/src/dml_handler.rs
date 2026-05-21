@@ -2,15 +2,17 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::concat_batches;
-use datafusion::arrow::datatypes::DataType as ADT;
+use datafusion::arrow::datatypes::{DataType as ADT, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::MemTable;
+use datafusion::prelude::SessionContext;
 use mysql_protocol::QueryResult;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 
 use fe_sql_parser::ast::{self, DeleteStmt};
 
 use crate::handler_struct::RorisQueryHandler;
-use crate::utils::{build_arrow_array_from_exprs, evaluate_where_filter, expr_to_string_value, update_column_in_batch};
+use crate::utils::{build_arrow_array_from_exprs, expr_to_string_value, update_column_in_batch};
 
 impl RorisQueryHandler {
     pub(crate) fn insert(&self, stmt: &ast::InsertStmt) -> Result<QueryResult, String> {
@@ -443,6 +445,79 @@ fn table_ref_to_sql(t: &ast::TableRef) -> String {
     }
 }
 
+/// Evaluate a WHERE expression on a RecordBatch using DataFusion.
+///
+/// Returns a boolean mask where `true` means the row matches the condition.
+/// Unlike the hand-written `evaluate_where_filter` (which only handles `column op literal`),
+/// this function supports BETWEEN, IN, LIKE, IS NULL, function calls, and arbitrary expressions.
+///
+/// The approach:
+/// 1. Convert the WHERE AST back to SQL using `expr_to_sql`
+/// 2. Wrap the RecordBatch in a MemTable with a row index column
+/// 3. Execute `SELECT __row_index FROM __tmp WHERE <condition>` via DataFusion
+/// 4. Build the boolean mask from the matched row indices
+pub(crate) fn evaluate_where_with_datafusion(
+    batch: &RecordBatch,
+    where_expr: &ast::Expr,
+) -> Result<Vec<bool>, String> {
+    let schema = batch.schema();
+    let num_rows = batch.num_rows();
+
+    // Add a row index column so we can identify which rows match the WHERE condition
+    let row_indices: Int64Array = (0i64..num_rows as i64).collect();
+    let indexed_fields: Vec<Field> = schema.fields().iter().map(|f| f.as_ref().clone()).collect();
+    let mut all_fields = indexed_fields;
+    all_fields.push(Field::new("__row_index", ADT::Int64, false));
+    let indexed_schema = Arc::new(Schema::new(all_fields));
+
+    let mut indexed_columns: Vec<ArrayRef> = batch.columns().to_vec();
+    indexed_columns.push(Arc::new(row_indices));
+    let indexed_batch = RecordBatch::try_new(indexed_schema.clone(), indexed_columns)
+        .map_err(|e| format!("Failed to create indexed batch: {}", e))?;
+
+    // Build the WHERE clause SQL from the AST
+    let where_sql = expr_to_sql(where_expr);
+
+    // Create a fresh SessionContext and register the batch as a MemTable
+    let ctx = SessionContext::new();
+    let mem_table = MemTable::try_new(indexed_schema, vec![vec![indexed_batch]])
+        .map_err(|e| format!("Failed to create MemTable: {}", e))?;
+    ctx.register_table("__tmp", Arc::new(mem_table))
+        .map_err(|e| format!("Failed to register table: {}", e))?;
+
+    let sql = format!("SELECT __row_index FROM __tmp WHERE {}", where_sql);
+
+    // Execute in a spawned thread with its own tokio runtime (same pattern as handle_insert_select)
+    let result = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let df = ctx.sql(&sql).await?;
+            let batches = df.collect().await?;
+            Ok::<_, datafusion::error::DataFusionError>(batches)
+        })
+    }).join();
+
+    let matching_batches = match result {
+        Ok(Ok(batches)) => batches,
+        Ok(Err(e)) => return Err(format!("WHERE evaluation via DataFusion failed: {}", e)),
+        Err(_) => return Err("WHERE evaluation thread panicked".to_string()),
+    };
+
+    // Build the boolean mask from the matched row indices
+    let mut matching = vec![false; num_rows];
+    for batch in &matching_batches {
+        let idx_col = batch.column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .ok_or_else(|| "Failed to downcast row index column".to_string())?;
+        for i in 0..idx_col.len() {
+            matching[idx_col.value(i) as usize] = true;
+        }
+    }
+
+    Ok(matching)
+}
+
 impl RorisQueryHandler {
     pub(crate) fn update(&self, stmt: &ast::UpdateStmt) -> Result<QueryResult, String> {
         let parts: Vec<&str> = stmt.table.split('.').collect();
@@ -464,7 +539,7 @@ impl RorisQueryHandler {
         let total_updated = self.storage.update(&database, &table_name, |batch| {
             let mut total_updated = 0usize;
             let update_mask: Vec<bool> = if let Some(ref sel) = selection {
-                evaluate_where_filter(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
+                evaluate_where_with_datafusion(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
             } else {
                 vec![true; batch.num_rows()]
             };
@@ -524,7 +599,7 @@ impl RorisQueryHandler {
 
         let total_deleted = self.storage.delete(&database, &table_name, |batch| {
             if let Some(ref sel) = selection {
-                let match_mask = evaluate_where_filter(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?;
+                let match_mask = evaluate_where_with_datafusion(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?;
                 let deleted_count = match_mask.iter().filter(|&&m| m).count();
                 // keep rows that do NOT match
                 let keep_mask: Vec<bool> = match_mask.iter().map(|&m| !m).collect();
