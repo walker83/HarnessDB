@@ -18,10 +18,7 @@ members = [
 
     # Shared crates
     "crates/common",
-    "crates/rpc",
     "crates/types",
-    "crates/proto",
-    "crates/data-io",
 
     # Tools & utilities
     "tools/tpch_test",
@@ -47,7 +44,6 @@ tokio = { version = "1", features = ["full"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-protobuf = "3"
 
 # Logging & tracing
 tracing = "0.1"
@@ -56,11 +52,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Error handling
 anyhow = "1"
 thiserror = "2"
-
-# Networking / RPC
-tonic = "0.12"
-tonic-build = "0.12"
-prost = "0.13"
 
 # Data structures
 hashbrown = "0.15"
@@ -95,15 +86,8 @@ arrow-select = { version = "55" }
 
 # Storage
 rocksdb = "0.23"
-lz4 = "1.28"
-zstd = "0.13"
-snap = "1.1"
-
-# Indexing
-roaring = "0.10"
 
 # Cryptography
-md5 = "0.7"
 sha1 = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
@@ -121,14 +105,11 @@ fe-catalog = { path = "crates/fe-catalog" }
 fe-common = { path = "crates/fe-common" }
 be-rocks = { path = "crates/be-rocks" }
 common = { path = "crates/common" }
-rpc = { path = "crates/rpc" }
 types = { path = "crates/types" }
-proto = { path = "crates/proto" }
 fe-datafusion = { path = "crates/fe-datafusion" }
 fe-storage = { path = "crates/fe-storage" }
 fe-monitor = { path = "crates/fe-monitor" }
 mysql-protocol = { path = "crates/mysql-protocol" }
-data-io = { path = "crates/data-io" }
 
 # Parquet support
 parquet = "55"

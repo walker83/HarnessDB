@@ -8,7 +8,7 @@ use fe_sql_parser::ast::*;
 use types::DataType;
 
 use crate::handler_struct::{RorisQueryHandler, ViewInfo};
-use crate::utils::{literal_to_string, parse_data_type, record_batches_to_query_result};
+use crate::utils::{literal_to_string, parse_data_type};
 
 impl RorisQueryHandler {
     // ---- Database DDL ----
@@ -95,14 +95,9 @@ impl RorisQueryHandler {
             PartitionInfo {
                 partition_type: p.partition_type.clone(),
                 columns: p.columns.clone(),
-                partitions: p.ranges.iter().enumerate().map(|(i, r)| {
-                    Partition {
-                        id: i as u64,
-                        name: r.name.clone(),
-                        range_start: Some(r.start.clone()),
-                        range_end: Some(r.end.clone()),
-                    }
-                }).collect(),
+                // Partition ranges parsing is not yet implemented; partitions
+                // will be populated when full partition DDL support is added.
+                partitions: vec![],
             }
         });
 

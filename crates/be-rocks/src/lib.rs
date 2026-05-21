@@ -19,10 +19,6 @@
 
 mod meta_store;
 mod catalog_store;
-mod tablet_store;
-mod edit_log_store;
 
 pub use meta_store::{MetaStore, RocksStoreError, Result};
 pub use catalog_store::{CatalogStore, Database, Table, TableColumn, KeysType};
-pub use tablet_store::{TabletStore, TabletSchema, TabletColumn, RowsetMeta, SegmentRef};
-pub use edit_log_store::{EditLogStore, EditLogEntry, OpType};

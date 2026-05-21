@@ -48,7 +48,7 @@ impl ParquetSchemaProvider {
             .map(|c| {
                 arrow_schema::Field::new(
                     &c.name,
-                    super::types_compat::to_arrow_data_type(&c.data_type),
+                    fe_datafusion::types::to_arrow_data_type(&c.data_type),
                     c.nullable,
                 )
             })
@@ -162,7 +162,7 @@ impl ParquetCatalogProvider {
             .map(|c| {
                 arrow_schema::Field::new(
                     &c.name,
-                    super::types_compat::to_arrow_data_type(&c.data_type),
+                    fe_datafusion::types::to_arrow_data_type(&c.data_type),
                     c.nullable,
                 )
             })

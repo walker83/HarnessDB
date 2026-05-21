@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use datafusion::arrow::array::*;
+use datafusion::arrow::compute::kernels::cmp;
 use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
+use fe_sql_parser::ast::BinaryOp;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::QueryResult;
 use ::types::DataType;
@@ -55,41 +57,6 @@ pub(crate) fn like_match(pattern: &str, text: &str) -> bool {
         }
     }
     dp[p.len()][t.len()]
-}
-
-pub(crate) fn record_batches_to_query_result(batches: &[datafusion::arrow::record_batch::RecordBatch]) -> QueryResult {
-    if batches.is_empty() {
-        return QueryResult::new(Vec::new());
-    }
-
-    let schema = batches[0].schema();
-    let columns: Vec<ColumnDef> = schema.fields().iter().map(|f| {
-        let col_type = match f.data_type() {
-            ADT::Int8 | ADT::Int16 | ADT::Int32 | ADT::Int64 => ColumnType::Int,
-            ADT::Float32 => ColumnType::Float,
-            ADT::Float64 => ColumnType::Double,
-            ADT::Boolean => ColumnType::Int,
-            ADT::Date32 | ADT::Date64 => ColumnType::Date,
-            ADT::Timestamp(_, _) => ColumnType::DateTime,
-            _ => ColumnType::String,
-        };
-        ColumnDef { name: f.name().clone(), col_type }
-    }).collect();
-
-    let mut string_rows: Vec<Vec<Option<String>>> = Vec::new();
-    for batch in batches {
-        if batch.num_rows() == 0 {
-            continue;
-        }
-        for row_idx in 0..batch.num_rows() {
-            let row: Vec<Option<String>> = batch.columns().iter().map(|col| {
-                arrow_value_to_string(col, row_idx)
-            }).collect();
-            string_rows.push(row);
-        }
-    }
-
-    QueryResult::with_rows(columns, string_rows)
 }
 
 pub(crate) fn record_batches_to_query_result_with_df_schema(
@@ -368,7 +335,7 @@ pub(crate) fn evaluate_where_filter(
     batch: &datafusion::arrow::record_batch::RecordBatch,
     where_expr: &fe_sql_parser::ast::Expr,
 ) -> Result<Vec<bool>, String> {
-    use fe_sql_parser::ast::{BinaryOp, Expr, LiteralValue};
+    use fe_sql_parser::ast::{Expr, LiteralValue};
     let num_rows = batch.num_rows();
     let mut matches = vec![false; num_rows];
 
@@ -387,92 +354,162 @@ pub(crate) fn evaluate_where_filter(
             _ => return Ok(matches),
         };
 
-        match op {
-            BinaryOp::Eq => apply_cmp(&mut matches, col, &val_str, |a, b| a == b),
-            BinaryOp::Gt => apply_cmp(&mut matches, col, &val_str, |a, b| a > b),
-            BinaryOp::Lt => apply_cmp(&mut matches, col, &val_str, |a, b| a < b),
-            BinaryOp::GtEq => apply_cmp(&mut matches, col, &val_str, |a, b| a >= b),
-            BinaryOp::LtEq => apply_cmp(&mut matches, col, &val_str, |a, b| a <= b),
-            BinaryOp::NotEq => apply_cmp(&mut matches, col, &val_str, |a, b| a != b),
-            _ => {}
-        }
+        apply_cmp(&mut matches, col, &val_str, op);
     }
 
     Ok(matches)
 }
 
-fn apply_cmp<F: Fn(&str, &str) -> bool>(mask: &mut [bool], col: &datafusion::arrow::array::ArrayRef, val: &str, cmp: F) {
-    match col.data_type() {
+/// Compare array column with a scalar value using Arrow typed compute kernels.
+/// Avoids string-based comparison for numeric types (the old approach caused
+/// bugs like `WHERE age > 2` returning false for age=10 because "10" < "2" lexicographically).
+fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
+    /// Macro to dispatch the Arrow compute comparison kernel for a given op.
+    macro_rules! cmp_op {
+        ($arr:expr, $fa:expr, $op:expr) => {
+            match $op {
+                BinaryOp::Eq => match cmp::eq($arr, &$fa) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                },
+                BinaryOp::Gt => match cmp::gt($arr, &$fa) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                },
+                BinaryOp::Lt => match cmp::lt($arr, &$fa) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                },
+                BinaryOp::GtEq => match cmp::gt_eq($arr, &$fa) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                },
+                BinaryOp::LtEq => match cmp::lt_eq($arr, &$fa) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                },
+                BinaryOp::NotEq => match cmp::neq($arr, &$fa) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                },
+                _ => return,
+            }
+        };
+    }
+
+    let result: BooleanArray = match col.data_type() {
+        ADT::Int8 => {
+            let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+            let fv: i8 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: Int8Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
+        }
+        ADT::Int16 => {
+            let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
+            let fv: i16 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: Int16Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
+        }
         ADT::Int32 => {
             let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
-            for (i, m) in mask.iter_mut().enumerate() {
-                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
-                    *m = true;
-                }
-            }
+            let fv: i32 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: Int32Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
         }
         ADT::Int64 => {
             let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
-            for (i, m) in mask.iter_mut().enumerate() {
-                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
-                    *m = true;
-                }
-            }
+            let fv: i64 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: Int64Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
+        }
+        ADT::UInt8 => {
+            let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+            let fv: u8 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: UInt8Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
+        }
+        ADT::UInt16 => {
+            let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+            let fv: u16 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: UInt16Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
+        }
+        ADT::UInt32 => {
+            let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+            let fv: u32 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: UInt32Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
+        }
+        ADT::UInt64 => {
+            let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+            let fv: u64 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: UInt64Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
         }
         ADT::Float32 => {
             let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
-            for (i, m) in mask.iter_mut().enumerate() {
-                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
-                    *m = true;
-                }
-            }
+            let fv: f32 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: Float32Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
         }
         ADT::Float64 => {
             let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
-            for (i, m) in mask.iter_mut().enumerate() {
-                if !arr.is_null(i) && cmp(&arr.value(i).to_string(), val) {
-                    *m = true;
-                }
-            }
+            let fv: f64 = match val.parse() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let fa: Float64Array = std::iter::repeat(Some(fv)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
+        }
+        ADT::Date32 => {
+            let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+            let days = match parse_date_to_days(val) {
+                Some(d) => d,
+                None => return,
+            };
+            let fa: Date32Array = std::iter::repeat(Some(days)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
         }
         ADT::Utf8 => {
             let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
-            for (i, m) in mask.iter_mut().enumerate() {
-                if !arr.is_null(i) && cmp(arr.value(i), val) {
-                    *m = true;
-                }
-            }
+            let fa: StringArray = std::iter::repeat(Some(val)).take(arr.len()).collect();
+            cmp_op!(arr, fa, op)
         }
-        _ => {}
-    }
-}
+        _ => return,
+    };
 
-pub(crate) fn parse_sql_fallback(sql: &str) -> fe_sql_parser::Statement {
-    let trimmed = sql.trim();
-    let upper = trimmed.to_uppercase();
-
-    if upper.starts_with("SET") {
-        if let Some(eq_pos) = upper.find('=') {
-            let var_name = trimmed[3..eq_pos].trim().to_uppercase();
-            let value = trimmed[eq_pos + 1..].trim().trim_matches('\'').trim_matches('"').to_string();
-            return fe_sql_parser::Statement::SetVariable(fe_sql_parser::ast::SetVariableStmt {
-                variable: var_name,
-                value: fe_sql_parser::ast::Expr::Literal(fe_sql_parser::ast::LiteralValue::String(value)),
-                is_global: false,
-            });
+    for (i, m) in mask.iter_mut().enumerate() {
+        if !col.is_null(i) && result.value(i) {
+            *m = true;
         }
     }
-    fe_sql_parser::Statement::Query(fe_sql_parser::ast::QueryStmt {
-        select_list: vec![],
-        from: None,
-        r#where: None,
-        group_by: vec![],
-        having: None,
-        order_by: vec![],
-        limit: None,
-        offset: None,
-        with: None,
-    })
 }
 
 #[cfg(test)]
@@ -540,15 +577,5 @@ mod tests {
         assert_eq!(literal_to_string(&LiteralValue::Float64(3.14)), "3.14");
         assert_eq!(literal_to_string(&LiteralValue::String("hello".into())), "hello");
         assert_eq!(literal_to_string(&LiteralValue::Boolean(true)), "true");
-    }
-
-    #[test]
-    fn test_parse_sql_fallback_set() {
-        if let fe_sql_parser::Statement::SetVariable(stmt) = parse_sql_fallback("SET autocommit = 1") {
-            assert_eq!(stmt.variable, "AUTOCOMMIT");
-            assert!(matches!(stmt.value, fe_sql_parser::ast::Expr::Literal(fe_sql_parser::ast::LiteralValue::String(ref s)) if s == "1"));
-        } else {
-            panic!("Expected SetVariable");
-        }
     }
 }

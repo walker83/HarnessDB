@@ -543,6 +543,17 @@ fn convert_insert_set_to_values(sql: &str) -> Result<String, ParseError> {
     Ok(format!("INSERT INTO {} {} VALUES {}", table_name, cols_str, vals_str))
 }
 
+/// Split a potentially dot-qualified name into (database, object_name).
+fn split_qualified_name(name: &str) -> (Option<String>, String) {
+    let parts: Vec<&str> = name.split('.').collect();
+    if parts.len() == 2 {
+        (Some(parts[0].to_string()), parts[1].to_string())
+    } else {
+        (None, name.to_string())
+    }
+}
+
+
 fn parse_create_repository(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
     let after_create = sql.strip_prefix("CREATE REPOSITORY")
@@ -628,12 +639,8 @@ fn parse_show_create_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
         })?;
 
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (db, view_name) = if parts.len() == 2 {
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        (String::new(), name_str)
-    };
+    let (db, view_name) = split_qualified_name(&name_str);
+    let db = db.unwrap_or_default();
 
     Ok(vec![Statement::ShowCreateView(db, view_name)])
 }
@@ -665,12 +672,8 @@ fn parse_show_partitions(sql: &str) -> Result<Vec<Statement>, ParseError> {
     };
 
     let name_str = table_name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (db, table) = if parts.len() == 2 {
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        (String::new(), name_str)
-    };
+    let (db, table) = split_qualified_name(&name_str);
+    let db = db.unwrap_or_default();
 
     Ok(vec![Statement::ShowPartitions(db, table)])
 }
@@ -770,12 +773,8 @@ fn parse_show_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
                 message: "Expected table name".to_string(),
             })?;
         let name_str = name.to_string().to_lowercase();
-        let parts: Vec<&str> = name_str.split('.').collect();
-        if parts.len() == 2 {
-            (parts[0].to_string(), parts[1].to_string())
-        } else {
-            (String::new(), name_str)
-        }
+        let (db, table_name) = split_qualified_name(&name_str);
+        (db.unwrap_or_default(), table_name)
     } else {
         return Err(ParseError::SyntaxError {
             position: 0,
@@ -837,12 +836,8 @@ fn parse_show_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
     };
 
     let name_str = table_name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (db, view_name) = if parts.len() == 2 {
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        (String::new(), name_str)
-    };
+    let (db, view_name) = split_qualified_name(&name_str);
+    let db = db.unwrap_or_default();
 
     Ok(vec![Statement::ShowView(db, view_name)])
 }
@@ -1021,12 +1016,7 @@ fn parse_create_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErro
 
     let rest = rest.trim();
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, view_name) = if parts.len() == 2 {
-        (Some(parts[0].to_string()), parts[1].to_string())
-    } else {
-        (None, name_str)
-    };
+    let (database, view_name) = split_qualified_name(&name_str);
 
     let mut columns = Vec::new();
     let mut query = String::new();
@@ -1106,12 +1096,7 @@ fn parse_drop_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError>
         })?;
 
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, view_name) = if parts.len() == 2 {
-        (Some(parts[0].to_string()), parts[1].to_string())
-    } else {
-        (None, name_str)
-    };
+    let (database, view_name) = split_qualified_name(&name_str);
 
     Ok(vec![Statement::DropMaterializedView(DropMaterializedViewStmt {
         database,
@@ -1136,12 +1121,7 @@ fn parse_alter_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseError
         })?;
 
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, view_name) = if parts.len() == 2 {
-        (Some(parts[0].to_string()), parts[1].to_string())
-    } else {
-        (None, name_str)
-    };
+    let (database, view_name) = split_qualified_name(&name_str);
 
     let rest = rest.trim();
     let operation = if rest.to_uppercase().starts_with("PAUSE REFRESH") {
@@ -1182,12 +1162,7 @@ fn parse_refresh_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErr
         })?;
 
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, view_name) = if parts.len() == 2 {
-        (Some(parts[0].to_string()), parts[1].to_string())
-    } else {
-        (None, name_str)
-    };
+    let (database, view_name) = split_qualified_name(&name_str);
 
     let refresh_type = if rest.trim().to_uppercase().starts_with("COMPLETE") {
         RefreshType::Complete
@@ -1615,12 +1590,7 @@ fn convert_statement(
         }
         sqlparser::ast::Statement::CreateTable(stmt) => {
             let name_str = stmt.name.to_string();
-            let parts: Vec<&str> = name_str.split('.').collect();
-            let (database, table_name) = if parts.len() == 2 {
-                (Some(parts[0].to_string()), parts[1].to_string())
-            } else {
-                (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
-            };
+            let (database, table_name) = split_qualified_name(&name_str);
             let col_defs: Vec<ColumnDef> = stmt.columns.iter().map(|c| ColumnDef {
                 name: c.name.value.clone(),
                 data_type: c.data_type.to_string(),
@@ -1675,20 +1645,12 @@ fn convert_statement(
                     }))
                 }
                 _ => {
-                    if name.contains('.') {
-                        let parts: Vec<&str> = name.splitn(2, '.').collect();
-                        Ok(Statement::DropTable(DropTableStmt {
-                            database: Some(parts[0].to_string()),
-                            name: parts[1].to_string(),
-                            if_exists,
-                        }))
-                    } else {
-                        Ok(Statement::DropTable(DropTableStmt {
-                            database: None,
-                            name,
-                            if_exists,
-                        }))
-                    }
+                    let (database, table_name) = split_qualified_name(&name);
+                    Ok(Statement::DropTable(DropTableStmt {
+                        database,
+                        name: table_name,
+                        if_exists,
+                    }))
                 }
             }
         }
@@ -1734,24 +1696,16 @@ fn convert_statement(
             table_name, ..
         } => {
             let name_str = table_name.to_string();
-            let parts: Vec<&str> = name_str.split('.').collect();
-            let (db, tbl) = if parts.len() == 2 {
-                (parts[0].to_string(), parts[1].to_string())
-            } else {
-                (String::new(), parts[0].to_string())
-            };
+            let (db, tbl) = split_qualified_name(&name_str);
+            let db = db.unwrap_or_default();
             Ok(Statement::Describe(db, tbl))
         }
         sqlparser::ast::Statement::ShowCreate {
             obj_name, ..
         } => {
             let name_str = obj_name.to_string();
-            let parts: Vec<&str> = name_str.split('.').collect();
-            let (db, tbl) = if parts.len() == 2 {
-                (parts[0].to_string(), parts[1].to_string())
-            } else {
-                (String::new(), parts[0].to_string())
-            };
+            let (db, tbl) = split_qualified_name(&name_str);
+            let db = db.unwrap_or_default();
             Ok(Statement::ShowCreateTable(db, tbl))
         }
         sqlparser::ast::Statement::SetVariable {
@@ -1781,12 +1735,7 @@ fn convert_statement(
             let first_table = table_names.first();
             if let Some(table) = first_table {
                 let name_str = table.name.to_string();
-                let parts: Vec<&str> = name_str.split('.').collect();
-                let (database, table) = if parts.len() == 2 {
-                    (Some(parts[0].to_string()), parts[1].to_string())
-                } else {
-                    (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
-                };
+                let (database, table) = split_qualified_name(&name_str);
                 Ok(Statement::TruncateTable {
                     database,
                     table,
@@ -1809,12 +1758,7 @@ fn convert_statement(
             ..
         } => {
             let name_str = name.to_string();
-            let parts: Vec<&str> = name_str.split('.').collect();
-            let (database, view_name) = if parts.len() == 2 {
-                (Some(parts[0].to_string()), parts[1].to_string())
-            } else {
-                (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
-            };
+            let (database, view_name) = split_qualified_name(&name_str);
             let col_names: Vec<String> = columns.iter().map(|c: &sqlparser::ast::ViewColumnDef| c.name.value.clone()).collect();
             Ok(Statement::CreateView {
                 database,
@@ -1898,12 +1842,7 @@ fn convert_statement(
             ..
         } => {
             let name_str = name.to_string();
-            let parts: Vec<&str> = name_str.split('.').collect();
-            let (database, table_name) = if parts.len() == 2 {
-                (Some(parts[0].to_string()), parts[1].to_string())
-            } else {
-                (None, parts.first().map(|s| s.to_string()).unwrap_or_default())
-            };
+            let (database, table_name) = split_qualified_name(&name_str);
             let alter_ops: Vec<AlterOperation> = operations.into_iter().filter_map(|op| {
                 match op {
                     sqlparser::ast::AlterTableOperation::AddColumn { column_def, .. } => {
@@ -1985,6 +1924,8 @@ fn convert_query(
                 sqlparser::ast::SetOperator::Intersect => UnionOperator::Intersect,
             };
             let _ = (union_op, set_quantifier);
+            // TODO: UNION/INTERSECT/EXCEPT not yet supported through this path.
+            // The right side of the set operation is silently discarded below.
             let _ = right_query;
             let order_by = query.order_by.map(|ob| ob.exprs).unwrap_or_default();
             Ok(QueryStmt {
@@ -2018,7 +1959,8 @@ fn convert_set_expr(expr: sqlparser::ast::SetExpr) -> Result<QueryStmt, ParseErr
         sqlparser::ast::SetExpr::Select(select) => convert_select(*select, vec![], None, None, None),
         sqlparser::ast::SetExpr::Query(query) => convert_query(*query),
         sqlparser::ast::SetExpr::SetOperation { .. } => {
-            // For UNION/INTERSECT/EXCEPT, return an empty result for testing
+            // TODO: UNION/INTERSECT/EXCEPT not yet supported through this path.
+            // Returning an empty QueryStmt silently discards the right-hand side.
             Ok(QueryStmt {
                 select_list: vec![],
                 from: None,
@@ -2629,8 +2571,7 @@ fn parse_create_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let (table_name, rest) = extract_identifier(rest)
         .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
     let name_str = table_name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, table) = split_qualified_name(&name_str);
     let rest = rest.trim();
     let mut columns = vec![];
     let mut index_type = None;
@@ -2664,8 +2605,7 @@ fn parse_drop_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let rest = rest.trim().strip_prefix("ON").ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected ON".to_string() })?.trim();
     let (table_name, _) = extract_identifier(rest).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
     let name_str = table_name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, table) = split_qualified_name(&name_str);
     Ok(vec![Statement::DropIndex(DropIndexStmt { index_name: index_name.to_string(), database, table, if_exists })])
 }
 
@@ -2714,15 +2654,13 @@ fn parse_alter_colocate_group(sql: &str) -> Result<Vec<Statement>, ParseError> {
         let after_add = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
         let (table_name, _) = extract_identifier(after_add).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
         let name_str = table_name.to_string();
-        let parts: Vec<&str> = name_str.split('.').collect();
-        let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+        let (database, table) = split_qualified_name(&name_str);
         ColocateGroupOperation::AddTable { database, table }
     } else if rest_upper.starts_with("REMOVE TABLE") {
         let after_rm = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
         let (table_name, _) = extract_identifier(after_rm).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
         let name_str = table_name.to_string();
-        let parts: Vec<&str> = name_str.split('.').collect();
-        let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+        let (database, table) = split_qualified_name(&name_str);
         ColocateGroupOperation::RemoveTable { database, table }
     } else if rest_upper.starts_with("SET PROPERTIES") {
         let after_set = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
@@ -2754,8 +2692,7 @@ fn parse_drop_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let rest = if if_exists { after.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() } else { after };
     let (name, _) = extract_identifier(rest).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected view name".to_string() })?;
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, view_name) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, view_name) = split_qualified_name(&name_str);
     Ok(vec![Statement::DropView(DropViewStmt { database, name: view_name, if_exists })])
 }
 
@@ -2765,8 +2702,7 @@ fn parse_alter_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .trim();
     let (name, rest) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected view name".to_string() })?;
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, view_name) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, view_name) = split_qualified_name(&name_str);
     let rest = rest.trim();
     let query = if rest.to_uppercase().starts_with("AS ") { rest[3..].trim().to_string() } else { rest.to_string() };
     Ok(vec![Statement::AlterView(AlterViewStmt { database, name: view_name, query })])
@@ -2778,8 +2714,7 @@ fn parse_alter_table_doris(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .trim();
     let (name, rest) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
     let name_str = name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, table_name) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, table_name) = split_qualified_name(&name_str);
     let rest = rest.trim();
     let rest_upper = rest.to_uppercase();
 
@@ -2961,8 +2896,7 @@ fn parse_analyze_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .trim();
     let (table_name, rest) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
     let name_str = table_name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, table) = split_qualified_name(&name_str);
     let rest = rest.trim();
     let mut columns = vec![];
     let mut sample_rate = None;
@@ -2984,8 +2918,7 @@ fn parse_drop_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .trim();
     let (table_name, rest) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
     let name_str = table_name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, table) = split_qualified_name(&name_str);
     let mut columns = vec![];
     if rest.trim().to_uppercase().starts_with("COLUMNS") {
         let after_cols = rest.trim().trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
@@ -3209,8 +3142,7 @@ fn parse_create_row_policy(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let after_on = if rest_upper.starts_with("ON") { rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() } else { rest };
     let (table_name, rest) = extract_identifier(after_on).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
     let name_str = table_name.to_string();
-    let parts: Vec<&str> = name_str.split('.').collect();
-    let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) };
+    let (database, table) = split_qualified_name(&name_str);
     let rest = rest.trim();
     let rest_upper = rest.to_uppercase();
     let after_as = if rest_upper.starts_with("AS") { rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() } else { rest };
@@ -3236,8 +3168,8 @@ fn parse_drop_row_policy(sql: &str) -> Result<Vec<Statement>, ParseError> {
         let after_on = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
         let (table_name, _) = extract_identifier(after_on).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
         let name_str = table_name.to_string();
-        let parts: Vec<&str> = name_str.split('.').collect();
-        if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, name_str) }
+        let (db_part, tbl_part) = split_qualified_name(&name_str);
+        (db_part, tbl_part)
     } else { (None, String::new()) };
     let _ = if_exists;
     Ok(vec![Statement::DropRowPolicy { name: name.to_string(), database, table }])

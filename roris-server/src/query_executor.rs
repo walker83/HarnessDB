@@ -18,7 +18,6 @@ impl RorisQueryHandler {
             Statement::ShowCreateDatabase(db) => self.show_create_database(db),
             Statement::ShowCreateView(db, view) => self.show_create_view(db.clone(), view.clone()),
             Statement::Describe(db, table) => self.describe(db.clone(), table.clone()),
-            Statement::ShowColumns(db, table) => self.show_columns(db.clone(), table.clone()),
             Statement::UseDatabase(db) => self.use_database(db),
             Statement::CreateDatabase(stmt) => self.create_database(stmt),
             Statement::CreateTable(stmt) => self.create_table(stmt),
@@ -47,7 +46,6 @@ impl RorisQueryHandler {
             Statement::ShowAlterTable(db) => self.show_alter_table(db.clone()),
             Statement::ShowBackends => self.show_backends(),
             Statement::ShowFrontends => self.show_frontends(),
-            Statement::ShowAlterTableMv(db) => self.show_alter_table_mv(db.clone()),
             Statement::ShowTableId => self.show_table_id(),
             Statement::ShowPartitionId => self.show_partition_id(),
             Statement::ShowDynamicPartitionTables => self.show_dynamic_partition_tables(),
@@ -191,43 +189,6 @@ impl RorisQueryHandler {
                 ))
             }
             None => Err(format!("Table '{}.{}' not found", target_db, table)),
-        }
-    }
-
-    pub(crate) fn show_columns(&self, db: Option<String>, table: Option<String>) -> Result<QueryResult, String> {
-        let catalog = &self.catalog;
-        let current_db = self.current_database.read();
-        let target_db = db.as_deref().unwrap_or(&current_db);
-
-        match table {
-            Some(tbl) => self.describe(target_db.to_string(), tbl),
-            None => {
-                match catalog.list_tables(target_db) {
-                    Some(tables) => {
-                        let mut rows = Vec::new();
-                        for table_name in &tables {
-                            if let Some(tbl) = catalog.get_table(target_db, table_name) {
-                                for col in &tbl.columns {
-                                    rows.push(vec![
-                                        Some(table_name.clone()),
-                                        Some(col.name.clone()),
-                                        Some(format!("{:?}", col.data_type)),
-                                    ]);
-                                }
-                            }
-                        }
-                        Ok(QueryResult::with_rows(
-                            vec![
-                                ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
-                                ColumnDef { name: "Field".to_string(), col_type: ColumnType::String },
-                                ColumnDef { name: "Type".to_string(), col_type: ColumnType::String },
-                            ],
-                            rows,
-                        ))
-                    }
-                    None => Err(format!("Database '{}' not found", target_db)),
-                }
-            }
         }
     }
 
@@ -534,13 +495,6 @@ impl RorisQueryHandler {
                 ColumnDef { name: "Disk".to_string(), col_type: ColumnType::String },
             ],
             rows,
-        ))
-    }
-
-    pub(crate) fn show_alter_table_mv(&self, _db: Option<String>) -> Result<QueryResult, String> {
-        Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "Message".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some("No ALTER MATERIALIZED VIEW operations in progress".to_string())]],
         ))
     }
 

@@ -21,4 +21,5 @@ tracing = { workspace = true }
 dashmap = { workspace = true }
 
 fe-catalog = { workspace = true }
+fe-datafusion = { workspace = true }
 types = { workspace = true }

@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn test_put_and_get_database() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         let db = make_test_database("mydb", 1);
         store.put_database("mydb", &db).unwrap();
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn test_delete_database() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         let db = make_test_database("mydb", 1);
         store.put_database("mydb", &db).unwrap();
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn test_list_databases() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         store.put_database("db1", &make_test_database("db1", 1)).unwrap();
         store.put_database("db2", &make_test_database("db2", 2)).unwrap();
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn test_put_and_get_table() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
         let table = make_test_table("users", 2);
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn test_delete_table() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
         let table = make_test_table("users", 2);
@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn test_list_tables() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
         store.put_table("mydb", "t1", &make_test_table("t1", 2)).unwrap();
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn test_next_id() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         let id1 = store.next_id().unwrap();
         let id2 = store.next_id().unwrap();
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_set_next_id() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         store.set_next_id(100).unwrap();
         let val = store.get_next_id().unwrap();
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn test_delete_database_cascades_tables() {
         let dir = tempdir().unwrap();
-        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap());
+        let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
         store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
         store.put_table("mydb", "t1", &make_test_table("t1", 2)).unwrap();

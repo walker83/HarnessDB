@@ -1,6 +1,5 @@
 pub mod catalog;
 pub mod table_provider;
-pub mod types_compat;
 
 pub use catalog::{ParquetCatalogProvider, ParquetSchemaProvider};
 pub use table_provider::ParquetTableProvider;

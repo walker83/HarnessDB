@@ -17,8 +17,6 @@ parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 axum = { workspace = true }
-tonic = { workspace = true }
-proto = { workspace = true }
 
 fe-sql-parser = { workspace = true }
 fe-catalog = { workspace = true }
@@ -28,7 +26,6 @@ fe-datafusion = { workspace = true }
 fe-storage = { workspace = true }
 mysql-protocol = { workspace = true }
 common = { workspace = true }
-rpc = { workspace = true }
 types = { workspace = true }
 datafusion = { workspace = true }
 chrono = { workspace = true }

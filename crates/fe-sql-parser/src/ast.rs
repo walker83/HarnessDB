@@ -28,14 +28,12 @@ pub enum Statement {
     ShowAlterTable(Option<String>),
     ShowBackends,
     ShowFrontends,
-    ShowAlterTableMv(Option<String>),
     ShowTableId,
     ShowPartitionId,
     ShowDynamicPartitionTables,
     ShowView(String, String),
     ShowCreateMaterializedView(String),
     Describe(String, String),
-    ShowColumns(Option<String>, Option<String>),
     Explain(ExplainStmt),
     UseDatabase(String),
     SetVariable(SetVariableStmt),
@@ -258,14 +256,6 @@ pub struct UniqueKeyDef {
 pub struct PartitionDef {
     pub partition_type: String,
     pub columns: Vec<String>,
-    pub ranges: Vec<PartitionRange>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PartitionRange {
-    pub name: String,
-    pub start: String,
-    pub end: String,
 }
 
 #[derive(Debug, Clone)]

@@ -11,4 +11,3 @@ fe-sql-parser = { workspace = true }
 fe-catalog = { workspace = true }
 mysql-protocol = { workspace = true }
 bytes = { workspace = true }
-data-io = { workspace = true }

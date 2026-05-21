@@ -21,3 +21,7 @@ arrow-cast = { workspace = true }
 fe-catalog = { workspace = true }
 types = { workspace = true }
 common = { workspace = true }
+
+[features]
+default = []
+bench = []
