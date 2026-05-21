@@ -1699,15 +1699,18 @@ name = "fe-storage"
 version = "0.1.5"
 dependencies = [
  "arrow",
+ "arrow-arith",
  "arrow-array",
  "arrow-buffer",
  "arrow-cast",
  "arrow-data",
+ "arrow-ord",
  "arrow-schema",
  "arrow-select",
  "async-trait",
  "dashmap",
  "datafusion",
+ "datafusion-datasource",
  "fe-catalog",
  "fe-datafusion",
  "parquet",

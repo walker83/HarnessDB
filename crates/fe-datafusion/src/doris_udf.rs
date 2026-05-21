@@ -26,16 +26,46 @@ use datafusion::scalar::ScalarValue;
 /// date_trunc - truncate date to specified precision
 /// Usage: date_trunc('month', date_col) -> truncated date
 pub fn create_date_trunc_udf() -> ScalarUDF {
-    use datafusion::logical_expr::create_udf;
-    use arrow_array::Date32Array;
+    #[derive(Debug)]
+    struct DateTruncUdf {
+        signature: Signature,
+    }
 
-    create_udf(
-        "date_trunc",
-        vec![DataType::Utf8, DataType::Date32],
-        DataType::Date32,
-        Volatility::Immutable,
-        Arc::new(|args: &[ColumnarValue]| {
-            let args = ColumnarValue::values_to_arrays(args)?;
+    impl DateTruncUdf {
+        fn new() -> Self {
+            Self {
+                signature: Signature::exact(
+                    vec![DataType::Utf8, DataType::Date32],
+                    Volatility::Immutable,
+                ),
+            }
+        }
+    }
+
+    impl ScalarUDFImpl for DateTruncUdf {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn name(&self) -> &str {
+            "date_trunc"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.signature
+        }
+
+        fn return_type(&self, _arg_types: &[DataType]) -> datafusion::error::Result<DataType> {
+            Ok(DataType::Date32)
+        }
+
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
+            use arrow_array::Date32Array;
+
+            let args = ColumnarValue::values_to_arrays(&args.args)?;
             let precision = args[0]
                 .as_any()
                 .downcast_ref::<arrow_array::StringArray>()
@@ -64,8 +94,10 @@ pub fn create_date_trunc_udf() -> ScalarUDF {
             Ok(ColumnarValue::Array(
                 Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
             ))
-        }),
-    )
+        }
+    }
+
+    ScalarUDF::new_from_impl(DateTruncUdf::new())
 }
 
 /// Truncate a date to the specified precision using correct calendar arithmetic.
@@ -86,16 +118,46 @@ fn truncate_date(days: i32, precision: &str) -> Option<i32> {
 
 /// days_add - add days to a date
 pub fn create_days_add_udf() -> ScalarUDF {
-    use datafusion::logical_expr::create_udf;
-    use arrow_array::{Date32Array, Int64Array};
+    #[derive(Debug)]
+    struct DaysAddUdf {
+        signature: Signature,
+    }
 
-    create_udf(
-        "days_add",
-        vec![DataType::Date32, DataType::Int64],
-        DataType::Date32,
-        Volatility::Immutable,
-        Arc::new(|args: &[ColumnarValue]| {
-            let args = ColumnarValue::values_to_arrays(args)?;
+    impl DaysAddUdf {
+        fn new() -> Self {
+            Self {
+                signature: Signature::exact(
+                    vec![DataType::Date32, DataType::Int64],
+                    Volatility::Immutable,
+                ),
+            }
+        }
+    }
+
+    impl ScalarUDFImpl for DaysAddUdf {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn name(&self) -> &str {
+            "days_add"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.signature
+        }
+
+        fn return_type(&self, _arg_types: &[DataType]) -> datafusion::error::Result<DataType> {
+            Ok(DataType::Date32)
+        }
+
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
+            use arrow_array::{Date32Array, Int64Array};
+
+            let args = ColumnarValue::values_to_arrays(&args.args)?;
             let dates = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(
                 || {
                     DataFusionError::Internal(
@@ -124,22 +186,54 @@ pub fn create_days_add_udf() -> ScalarUDF {
             Ok(ColumnarValue::Array(
                 Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
             ))
-        }),
-    )
+        }
+    }
+
+    ScalarUDF::new_from_impl(DaysAddUdf::new())
 }
 
 /// months_add - add months to a date
 pub fn create_months_add_udf() -> ScalarUDF {
-    use datafusion::logical_expr::create_udf;
-    use arrow_array::{Date32Array, Int64Array};
+    #[derive(Debug)]
+    struct MonthsAddUdf {
+        signature: Signature,
+    }
 
-    create_udf(
-        "months_add",
-        vec![DataType::Date32, DataType::Int64],
-        DataType::Date32,
-        Volatility::Immutable,
-        Arc::new(|args: &[ColumnarValue]| {
-            let args = ColumnarValue::values_to_arrays(args)?;
+    impl MonthsAddUdf {
+        fn new() -> Self {
+            Self {
+                signature: Signature::exact(
+                    vec![DataType::Date32, DataType::Int64],
+                    Volatility::Immutable,
+                ),
+            }
+        }
+    }
+
+    impl ScalarUDFImpl for MonthsAddUdf {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn name(&self) -> &str {
+            "months_add"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.signature
+        }
+
+        fn return_type(&self, _arg_types: &[DataType]) -> datafusion::error::Result<DataType> {
+            Ok(DataType::Date32)
+        }
+
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
+            use arrow_array::{Date32Array, Int64Array};
+
+            let args = ColumnarValue::values_to_arrays(&args.args)?;
             let dates = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(
                 || {
                     DataFusionError::Internal(
@@ -167,8 +261,10 @@ pub fn create_months_add_udf() -> ScalarUDF {
             Ok(ColumnarValue::Array(
                 Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
             ))
-        }),
-    )
+        }
+    }
+
+    ScalarUDF::new_from_impl(MonthsAddUdf::new())
 }
 
 /// Add months to a date using correct calendar arithmetic.
@@ -204,19 +300,49 @@ fn max_day_of_month(year: i32, month: u32) -> u32 {
 
 /// hours_add - add hours to a datetime
 pub fn create_hours_add_udf() -> ScalarUDF {
-    use datafusion::logical_expr::create_udf;
-    use arrow_array::{TimestampSecondArray, Int64Array};
+    #[derive(Debug)]
+    struct HoursAddUdf {
+        signature: Signature,
+    }
 
-    create_udf(
-        "hours_add",
-        vec![
-            DataType::Timestamp(arrow_schema::TimeUnit::Second, None),
-            DataType::Int64,
-        ],
-        DataType::Timestamp(arrow_schema::TimeUnit::Second, None),
-        Volatility::Immutable,
-        Arc::new(|args: &[ColumnarValue]| {
-            let args = ColumnarValue::values_to_arrays(args)?;
+    impl HoursAddUdf {
+        fn new() -> Self {
+            Self {
+                signature: Signature::exact(
+                    vec![
+                        DataType::Timestamp(arrow_schema::TimeUnit::Second, None),
+                        DataType::Int64,
+                    ],
+                    Volatility::Immutable,
+                ),
+            }
+        }
+    }
+
+    impl ScalarUDFImpl for HoursAddUdf {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn name(&self) -> &str {
+            "hours_add"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.signature
+        }
+
+        fn return_type(&self, _arg_types: &[DataType]) -> datafusion::error::Result<DataType> {
+            Ok(DataType::Timestamp(arrow_schema::TimeUnit::Second, None))
+        }
+
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
+            use arrow_array::{Int64Array, TimestampSecondArray};
+
+            let args = ColumnarValue::values_to_arrays(&args.args)?;
             let timestamps = args[0]
                 .as_any()
                 .downcast_ref::<TimestampSecondArray>()
@@ -245,8 +371,10 @@ pub fn create_hours_add_udf() -> ScalarUDF {
             Ok(ColumnarValue::Array(
                 Arc::new(TimestampSecondArray::from(result)) as Arc<dyn arrow_array::Array>,
             ))
-        }),
-    )
+        }
+    }
+
+    ScalarUDF::new_from_impl(HoursAddUdf::new())
 }
 
 // ---------------------------------------------------------------------------
@@ -346,16 +474,46 @@ pub fn create_concat_ws_udf() -> ScalarUDF {
 
 /// substring_index - substring before/after delimiter
 pub fn create_substring_index_udf() -> ScalarUDF {
-    use datafusion::logical_expr::create_udf;
-    use arrow_array::{Int64Array, StringArray};
+    #[derive(Debug)]
+    struct SubstringIndexUdf {
+        signature: Signature,
+    }
 
-    create_udf(
-        "substring_index",
-        vec![DataType::Utf8, DataType::Utf8, DataType::Int64],
-        DataType::Utf8,
-        Volatility::Immutable,
-        Arc::new(|args: &[ColumnarValue]| {
-            let args = ColumnarValue::values_to_arrays(args)?;
+    impl SubstringIndexUdf {
+        fn new() -> Self {
+            Self {
+                signature: Signature::exact(
+                    vec![DataType::Utf8, DataType::Utf8, DataType::Int64],
+                    Volatility::Immutable,
+                ),
+            }
+        }
+    }
+
+    impl ScalarUDFImpl for SubstringIndexUdf {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn name(&self) -> &str {
+            "substring_index"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.signature
+        }
+
+        fn return_type(&self, _arg_types: &[DataType]) -> datafusion::error::Result<DataType> {
+            Ok(DataType::Utf8)
+        }
+
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
+            use arrow_array::{Int64Array, StringArray};
+
+            let args = ColumnarValue::values_to_arrays(&args.args)?;
             let str_arr = args[0]
                 .as_any()
                 .downcast_ref::<StringArray>()
@@ -411,8 +569,10 @@ pub fn create_substring_index_udf() -> ScalarUDF {
             Ok(ColumnarValue::Array(
                 Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
             ))
-        }),
-    )
+        }
+    }
+
+    ScalarUDF::new_from_impl(SubstringIndexUdf::new())
 }
 
 // ---------------------------------------------------------------------------

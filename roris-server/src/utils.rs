@@ -233,6 +233,96 @@ pub(crate) fn update_column_in_batch(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val_str) } else { Some(arr.value(i)) })
             ))
         }
+        ADT::Int8 => {
+            let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+            let val = val_str.parse::<i8>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int8Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Int16 => {
+            let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
+            let val = val_str.parse::<i16>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int16Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::UInt8 => {
+            let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+            let val = val_str.parse::<u8>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt8Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::UInt16 => {
+            let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+            let val = val_str.parse::<u16>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt16Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::UInt32 => {
+            let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+            let val = val_str.parse::<u32>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt32Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::UInt64 => {
+            let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+            let val = val_str.parse::<u64>().map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt64Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Boolean => {
+            let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+            let val = match val_str.to_lowercase().as_str() {
+                "true" | "1" | "yes" => true,
+                _ => false,
+            };
+            Arc::new(BooleanArray::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Date32 => {
+            let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+            let val = parse_date_to_days(val_str).ok_or_else(|| format!("Invalid date: {}", val_str))?;
+            Arc::new(Date32Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Timestamp(TimeUnit::Second, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            let val = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            Arc::new(TimestampSecondArray::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Timestamp(TimeUnit::Millisecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            let val = seconds * 1000;
+            Arc::new(TimestampMillisecondArray::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Timestamp(TimeUnit::Microsecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            let val = seconds * 1_000_000;
+            Arc::new(TimestampMicrosecondArray::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
+        ADT::Timestamp(TimeUnit::Nanosecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            let val = seconds * 1_000_000_000;
+            Arc::new(TimestampNanosecondArray::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ))
+        }
         _ => return Err(format!("Unsupported column type for UPDATE: {}", col.data_type())),
     };
 
@@ -295,6 +385,119 @@ pub(crate) fn build_arrow_array(col_type: &DataType, values: &[Option<String>]) 
     }
 }
 
+/// Build an Arrow array directly from parser expressions, using the target Arrow DataType.
+/// This avoids the string intermediate round-trip (Expr -> String -> typed parse).
+pub(crate) fn build_arrow_array_from_exprs(
+    arrow_type: &ADT,
+    exprs: &[&fe_sql_parser::ast::Expr],
+) -> ArrayRef {
+    use fe_sql_parser::ast::{Expr, LiteralValue};
+
+    match arrow_type {
+        ADT::Int8 => {
+            let arr: Int8Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i8),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Int16 => {
+            let arr: Int16Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i16),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Int32 => {
+            let arr: Int32Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Int64 => {
+            let arr: Int64Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Float32 => {
+            let arr: Float32Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Float64(f)) => Some(*f as f32),
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f32),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Float64 => {
+            let arr: Float64Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Float64(f)) => Some(*f),
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f64),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Boolean => {
+            let arr: BooleanArray = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Boolean(b)) => Some(*b),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Date32 => {
+            let arr: Date32Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Date(s)) => parse_date_to_days(s),
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Timestamp(TimeUnit::Second, _) => {
+            let arr: TimestampSecondArray = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Date(s)) => parse_datetime_to_seconds(s),
+                Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Utf8 => {
+            let arr: StringArray = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::String(s)) => Some(s.clone()),
+                Expr::Literal(LiteralValue::Int64(n)) => Some(n.to_string()),
+                Expr::Literal(LiteralValue::Float64(f)) => Some(f.to_string()),
+                Expr::Literal(LiteralValue::Boolean(b)) => Some(b.to_string()),
+                Expr::Literal(LiteralValue::Date(d)) => Some(d.clone()),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        _ => {
+            // Fallback: build a StringArray for unsupported types
+            let arr: StringArray = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::String(s)) => Some(s.clone()),
+                Expr::Literal(LiteralValue::Int64(n)) => Some(n.to_string()),
+                Expr::Literal(LiteralValue::Float64(f)) => Some(f.to_string()),
+                Expr::Literal(LiteralValue::Boolean(b)) => Some(b.to_string()),
+                Expr::Literal(LiteralValue::Date(d)) => Some(d.clone()),
+                Expr::Literal(LiteralValue::Null) => None,
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+    }
+}
+
 pub(crate) fn parse_date_to_days(s: &str) -> Option<i32> {
     let s = s.trim().trim_start_matches("'").trim_end_matches("'")
               .trim_start_matches("\"").trim_end_matches("\"");
@@ -329,35 +532,56 @@ pub(crate) fn parse_datetime_to_seconds(s: &str) -> Option<i64> {
     Some(days as i64 * 86400)
 }
 
-/// Evaluate a simple WHERE filter against a RecordBatch.
+/// Evaluate a WHERE filter against a RecordBatch.
 /// Returns a mask where `true` means the row **matches** the condition.
+/// Recursively handles AND/OR compound conditions.
 pub(crate) fn evaluate_where_filter(
     batch: &datafusion::arrow::record_batch::RecordBatch,
     where_expr: &fe_sql_parser::ast::Expr,
 ) -> Result<Vec<bool>, String> {
     use fe_sql_parser::ast::{Expr, LiteralValue};
     let num_rows = batch.num_rows();
-    let mut matches = vec![false; num_rows];
 
-    if let Expr::BinaryOp { left, op, right } = where_expr {
-        let col_name = match left.as_ref() {
-            Expr::ColumnRef { table: _, column } => column.clone(),
-            _ => return Ok(matches),
-        };
-        let col_idx = batch.schema().index_of(&col_name).map_err(|e| format!("{}", e))?;
-        let col = batch.column(col_idx);
+    match where_expr {
+        Expr::BinaryOp { left, op, right } => {
+            match op {
+                BinaryOp::And => {
+                    let left_mask = evaluate_where_filter(batch, left)?;
+                    let right_mask = evaluate_where_filter(batch, right)?;
+                    Ok(left_mask.iter().zip(right_mask.iter()).map(|(l, r)| *l && *r).collect())
+                }
+                BinaryOp::Or => {
+                    let left_mask = evaluate_where_filter(batch, left)?;
+                    let right_mask = evaluate_where_filter(batch, right)?;
+                    Ok(left_mask.iter().zip(right_mask.iter()).map(|(l, r)| *l || *r).collect())
+                }
+                // Comparison ops: column vs literal
+                _ => {
+                    let mut matches = vec![false; num_rows];
+                    let col_name = match left.as_ref() {
+                        Expr::ColumnRef { table: _, column } => column.clone(),
+                        _ => return Ok(matches),
+                    };
+                    let col_idx = match batch.schema().index_of(&col_name) {
+                        Ok(idx) => idx,
+                        Err(_) => return Ok(matches),
+                    };
+                    let col = batch.column(col_idx);
 
-        let val_str = match right.as_ref() {
-            Expr::Literal(LiteralValue::Int64(n)) => n.to_string(),
-            Expr::Literal(LiteralValue::Float64(f)) => f.to_string(),
-            Expr::Literal(LiteralValue::String(s)) => s.clone(),
-            _ => return Ok(matches),
-        };
+                    let val_str = match right.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => n.to_string(),
+                        Expr::Literal(LiteralValue::Float64(f)) => f.to_string(),
+                        Expr::Literal(LiteralValue::String(s)) => s.clone(),
+                        _ => return Ok(matches),
+                    };
 
-        apply_cmp(&mut matches, col, &val_str, op);
+                    apply_cmp(&mut matches, col, &val_str, op);
+                    Ok(matches)
+                }
+            }
+        }
+        _ => Ok(vec![false; num_rows])
     }
-
-    Ok(matches)
 }
 
 /// Compare array column with a scalar value using Arrow typed compute kernels.

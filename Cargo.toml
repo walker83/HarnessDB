@@ -75,6 +75,7 @@ sqlparser = "0.53"
 
 # Query engine
 datafusion = { version = "47" }
+datafusion-datasource = { version = "47" }
 arrow = { version = "55", default-features = false, features = ["prettyprint"] }
 arrow-schema = { version = "55", default-features = false }
 # Arrow sub-crates (match version that datafusion depends on)
@@ -83,6 +84,8 @@ arrow-buffer = { version = "55" }
 arrow-data = { version = "55" }
 arrow-cast = { version = "55" }
 arrow-select = { version = "55" }
+arrow-ord = { version = "55" }
+arrow-arith = { version = "55" }
 
 # Storage
 rocksdb = "0.23"

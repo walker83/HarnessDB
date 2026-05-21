@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use types::DataType as RorisDataType;
 
 pub fn to_arrow_data_type(dt: &RorisDataType) -> arrow_schema::DataType {
@@ -8,9 +9,13 @@ pub fn to_arrow_data_type(dt: &RorisDataType) -> arrow_schema::DataType {
         RorisDataType::Int16 => arrow_schema::DataType::Int16,
         RorisDataType::Int32 => arrow_schema::DataType::Int32,
         RorisDataType::Int64 => arrow_schema::DataType::Int64,
+        // Int128 stored as Decimal128(38, 0) for wide compatibility
         RorisDataType::Int128 => arrow_schema::DataType::Decimal128(38, 0),
         RorisDataType::Float32 => arrow_schema::DataType::Float32,
         RorisDataType::Float64 => arrow_schema::DataType::Float64,
+        RorisDataType::Decimal(d) => {
+            arrow_schema::DataType::Decimal128(d.precision, d.scale as i8)
+        }
         RorisDataType::Date => arrow_schema::DataType::Date32,
         RorisDataType::DateTime => arrow_schema::DataType::Timestamp(
             arrow_schema::TimeUnit::Second,
@@ -20,7 +25,51 @@ pub fn to_arrow_data_type(dt: &RorisDataType) -> arrow_schema::DataType {
         | RorisDataType::Varchar(_)
         | RorisDataType::Char(_) => arrow_schema::DataType::Utf8,
         RorisDataType::Binary => arrow_schema::DataType::Binary,
-        _ => arrow_schema::DataType::Utf8,
+        // JSON stored as UTF-8 string
+        RorisDataType::Json => arrow_schema::DataType::Utf8,
+        RorisDataType::Array(inner) => arrow_schema::DataType::List(Arc::new(
+            arrow_schema::Field::new("item", to_arrow_data_type(inner), true),
+        )),
+        RorisDataType::Map(key, value) => {
+            let key_field =
+                arrow_schema::Field::new("key", to_arrow_data_type(key), false);
+            let value_field =
+                arrow_schema::Field::new("value", to_arrow_data_type(value), true);
+            let entries = arrow_schema::DataType::Struct(arrow_schema::Fields::from(vec![
+                key_field,
+                value_field,
+            ]));
+            arrow_schema::DataType::Map(
+                Arc::new(arrow_schema::Field::new("entries", entries, false)),
+                false,
+            )
+        }
+        RorisDataType::Struct(fields) => {
+            let arrow_fields: Vec<arrow_schema::Field> = fields
+                .iter()
+                .map(|f| {
+                    arrow_schema::Field::new(
+                        &f.name,
+                        to_arrow_data_type(&f.data_type),
+                        f.nullable,
+                    )
+                })
+                .collect();
+            arrow_schema::DataType::Struct(arrow_schema::Fields::from(arrow_fields))
+        }
+        RorisDataType::Float32Vector(dim) => arrow_schema::DataType::FixedSizeList(
+            Arc::new(arrow_schema::Field::new(
+                "item",
+                arrow_schema::DataType::Float32,
+                false,
+            )),
+            *dim as i32,
+        ),
+        #[allow(unreachable_patterns)]
+        _ => {
+            tracing::warn!("Unknown Roris data type: {:?}, falling back to Utf8", dt);
+            arrow_schema::DataType::Utf8
+        }
     }
 }
 
@@ -38,8 +87,49 @@ pub fn from_arrow_data_type(dt: &arrow_schema::DataType) -> RorisDataType {
         arrow_schema::DataType::Timestamp(_, _) => RorisDataType::DateTime,
         arrow_schema::DataType::Utf8 => RorisDataType::String,
         arrow_schema::DataType::Binary => RorisDataType::Binary,
-        arrow_schema::DataType::Decimal128(_, _) => RorisDataType::Int128,
-        _ => RorisDataType::String,
+        arrow_schema::DataType::Decimal128(p, s) => {
+            RorisDataType::Decimal(types::data_type::DecimalType {
+                precision: *p,
+                scale: *s as u8,
+            })
+        }
+        arrow_schema::DataType::List(field) => {
+            RorisDataType::Array(Box::new(from_arrow_data_type(field.data_type())))
+        }
+        arrow_schema::DataType::Map(entries_field, _) => {
+            if let arrow_schema::DataType::Struct(struct_fields) = entries_field.data_type() {
+                let key_field = &struct_fields[0];
+                let value_field = &struct_fields[1];
+                RorisDataType::Map(
+                    Box::new(from_arrow_data_type(key_field.data_type())),
+                    Box::new(from_arrow_data_type(value_field.data_type())),
+                )
+            } else {
+                tracing::warn!(
+                    "Unexpected Map entries type: {:?}",
+                    entries_field.data_type()
+                );
+                RorisDataType::String
+            }
+        }
+        arrow_schema::DataType::Struct(arrow_fields) => {
+            let fields: Vec<types::data_type::Field> = arrow_fields
+                .iter()
+                .map(|f| types::data_type::Field {
+                    name: f.name().to_string(),
+                    data_type: from_arrow_data_type(f.data_type()),
+                    nullable: f.is_nullable(),
+                })
+                .collect();
+            RorisDataType::Struct(fields)
+        }
+        other => {
+            tracing::warn!(
+                "Unknown Arrow data type: {:?}, falling back to String",
+                other
+            );
+            RorisDataType::String
+        }
     }
 }
 

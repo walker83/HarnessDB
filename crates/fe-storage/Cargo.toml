@@ -12,7 +12,10 @@ arrow-data = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-cast = { workspace = true }
 arrow-select = { workspace = true }
+arrow-ord = { workspace = true }
+arrow-arith = { workspace = true }
 datafusion = { workspace = true }
+datafusion-datasource = { workspace = true }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }

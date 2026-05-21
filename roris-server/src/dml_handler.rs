@@ -9,7 +9,7 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_parser::ast::DeleteStmt;
 
 use crate::handler_struct::RorisQueryHandler;
-use crate::utils::{build_arrow_array, evaluate_where_filter, expr_to_string_value, update_column_in_batch};
+use crate::utils::{build_arrow_array_from_exprs, evaluate_where_filter, expr_to_string_value, update_column_in_batch};
 
 impl RorisQueryHandler {
     pub(crate) fn insert(&self, stmt: &fe_sql_parser::ast::InsertStmt) -> Result<QueryResult, String> {
@@ -58,22 +58,23 @@ impl RorisQueryHandler {
 
         for col_idx in 0..num_cols {
             let col_meta = &table_meta.columns[col_idx];
-            let col_type = &col_meta.data_type;
+            let arrow_type = fe_datafusion::types::to_arrow_data_type(&col_meta.data_type);
 
-            let values: Vec<Option<String>> = if positional {
-                // No column list specified — values map by position
-                stmt.values.iter().map(|row| {
-                    row.get(col_idx).and_then(|expr| expr_to_string_value(expr))
-                }).collect()
-            } else if let Some(value_idx) = column_value_map.get(&col_meta.name) {
-                stmt.values.iter().map(|row| {
-                    row.get(*value_idx).and_then(|expr| expr_to_string_value(expr))
-                }).collect()
+            // Handle columns not in explicit column list — fill with nulls
+            if !positional && !column_value_map.contains_key(&col_meta.name) {
+                let arr = new_null_array(&arrow_type, stmt.values.len());
+                arrays.push(arr);
+                continue;
+            }
+
+            let exprs: Vec<&fe_sql_parser::ast::Expr> = if positional {
+                stmt.values.iter().filter_map(|row| row.get(col_idx)).collect()
             } else {
-                stmt.values.iter().map(|_| None).collect()
+                let value_idx = column_value_map[&col_meta.name];
+                stmt.values.iter().filter_map(|row| row.get(value_idx)).collect()
             };
 
-            let arr = build_arrow_array(col_type, &values);
+            let arr = build_arrow_array_from_exprs(&arrow_type, &exprs);
             arrays.push(arr);
         }
 
