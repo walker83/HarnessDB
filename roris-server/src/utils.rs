@@ -67,7 +67,8 @@ pub(crate) fn record_batches_to_query_result_with_df_schema(
 
     let columns: Vec<ColumnDef> = schema.fields().iter().map(|f| {
         let col_type = match f.data_type() {
-            ADT::Int8 | ADT::Int16 | ADT::Int32 | ADT::Int64 => ColumnType::Int,
+            ADT::Int8 | ADT::Int16 | ADT::Int32 | ADT::Int64 |
+            ADT::UInt8 | ADT::UInt16 | ADT::UInt32 | ADT::UInt64 => ColumnType::Int,
             ADT::Float32 => ColumnType::Float,
             ADT::Float64 => ColumnType::Double,
             ADT::Boolean => ColumnType::Int,
@@ -124,6 +125,22 @@ pub(crate) fn arrow_value_to_string(col: &datafusion::arrow::array::ArrayRef, id
             let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
             Some(arr.value(idx).to_string())
         }
+        ADT::UInt8 => {
+            let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::UInt16 => {
+            let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::UInt32 => {
+            let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::UInt64 => {
+            let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
         ADT::Float32 => {
             let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
             Some(arr.value(idx).to_string())
@@ -134,6 +151,14 @@ pub(crate) fn arrow_value_to_string(col: &datafusion::arrow::array::ArrayRef, id
         }
         ADT::Utf8 => {
             let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::LargeUtf8 => {
+            let arr = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            Some(arr.value(idx).to_string())
+        }
+        ADT::Utf8View => {
+            let arr = col.as_any().downcast_ref::<StringViewArray>().unwrap();
             Some(arr.value(idx).to_string())
         }
         ADT::Date32 => {
@@ -172,8 +197,20 @@ pub(crate) fn arrow_value_to_string(col: &datafusion::arrow::array::ArrayRef, id
             }
         }
         _ => {
-            let arr = col.as_any().downcast_ref::<StringArray>();
-            arr.map(|a| a.value(idx).to_string())
+            // Fallback: try to cast to string using Arrow's display utilities
+            use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
+            let formatter = ArrayFormatter::try_new(col.as_ref(), &FormatOptions::default());
+            match formatter {
+                Ok(f) => {
+                    let s = f.value(idx).to_string();
+                    if s.is_empty() && col.is_null(idx) {
+                        None
+                    } else {
+                        Some(s)
+                    }
+                }
+                Err(_) => None,
+            }
         }
     }
 }
@@ -336,6 +373,44 @@ pub(crate) fn update_column_in_batch(
     Ok(())
 }
 
+/// Merge two columns: use `new_col` values where `update_mask[i] == true`,
+/// otherwise keep `old_col` values. Handles type casting when the DataFusion
+/// result has a different (but compatible) type than the target column.
+pub(crate) fn merge_columns(
+    old_col: &ArrayRef,
+    new_col: &ArrayRef,
+    update_mask: &[bool],
+) -> Result<ArrayRef, String> {
+    let len = old_col.len();
+    if new_col.len() != len {
+        return Err(format!(
+            "Column length mismatch: old={}, new={}",
+            len,
+            new_col.len()
+        ));
+    }
+
+    use datafusion::arrow::compute::cast;
+
+    // Cast new_col to match old_col's data type if they differ
+    let new_col_typed = if new_col.data_type() != old_col.data_type() {
+        cast(new_col, old_col.data_type())
+            .map_err(|e| format!("Failed to cast SET result to column type {:?}: {}", old_col.data_type(), e))?
+    } else {
+        new_col.clone()
+    };
+
+    // Use Arrow's compute kernel to merge: if update_mask is true, take from new; else from old
+    // Build index arrays for take()
+    let indices: UInt32Array = (0..len as u32).collect();
+    let _ = &indices; // not needed, we'll do it element-wise
+
+    // Use a simpler approach: build a boolean selection and use if_then_else
+    let mask_array = BooleanArray::from(update_mask.to_vec());
+    datafusion::arrow::compute::kernels::zip::zip(&mask_array, &new_col_typed, old_col)
+        .map_err(|e| format!("Failed to merge columns: {}", e))
+}
+
 pub(crate) fn build_arrow_array(col_type: &DataType, values: &[Option<String>]) -> datafusion::arrow::array::ArrayRef {
     match col_type {
         DataType::Int8 => {
@@ -485,6 +560,7 @@ pub(crate) fn build_arrow_array_from_exprs(
         ADT::Date32 => {
             let arr: Date32Array = exprs.iter().map(|e| match e {
                 Expr::Literal(LiteralValue::Date(s)) => parse_date_to_days(s),
+                Expr::Literal(LiteralValue::String(s)) => parse_date_to_days(s),
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
                 Expr::Literal(LiteralValue::Null) => None,
                 _ => None,
@@ -494,6 +570,7 @@ pub(crate) fn build_arrow_array_from_exprs(
         ADT::Timestamp(TimeUnit::Second, _) => {
             let arr: TimestampSecondArray = exprs.iter().map(|e| match e {
                 Expr::Literal(LiteralValue::Date(s)) => parse_datetime_to_seconds(s),
+                Expr::Literal(LiteralValue::String(s)) => parse_datetime_to_seconds(s),
                 Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
                 Expr::Literal(LiteralValue::Null) => None,
                 _ => None,

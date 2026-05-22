@@ -576,6 +576,137 @@ pub fn create_substring_index_udf() -> ScalarUDF {
 }
 
 // ---------------------------------------------------------------------------
+// String Functions (additional)
+// ---------------------------------------------------------------------------
+
+/// substring - extract substring from string (MySQL-compatible)
+/// Usage: substring(str, pos) or substring(str, pos, len)
+/// pos is 1-based. Negative pos counts from end of string.
+pub fn create_substring_udf() -> ScalarUDF {
+    #[derive(Debug)]
+    struct SubstringUdf {
+        signature: Signature,
+    }
+
+    impl SubstringUdf {
+        fn new() -> Self {
+            Self {
+                signature: Signature::one_of(
+                    vec![
+                        datafusion::logical_expr::TypeSignature::Exact(vec![DataType::Utf8, DataType::Int64]),
+                        datafusion::logical_expr::TypeSignature::Exact(vec![DataType::Utf8, DataType::Int64, DataType::Int64]),
+                    ],
+                    Volatility::Immutable,
+                ),
+            }
+        }
+    }
+
+    impl ScalarUDFImpl for SubstringUdf {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn name(&self) -> &str {
+            "substring"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.signature
+        }
+
+        fn return_type(&self, _arg_types: &[DataType]) -> datafusion::error::Result<DataType> {
+            Ok(DataType::Utf8)
+        }
+
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
+            use arrow_array::{Int64Array, StringArray};
+
+            let raw_args = ColumnarValue::values_to_arrays(&args.args)?;
+            let str_arr = raw_args[0]
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("substring: arg0 must be StringArray".to_string())
+                })?;
+            let pos_arr = raw_args[1]
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("substring: arg1 must be Int64Array".to_string())
+                })?;
+            let len_arr = if raw_args.len() > 2 {
+                Some(
+                    raw_args[2]
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal(
+                                "substring: arg2 must be Int64Array".to_string(),
+                            )
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            let result: Vec<Option<String>> = (0..str_arr.len())
+                .map(|i| {
+                    if str_arr.is_null(i) || pos_arr.is_null(i) {
+                        return None;
+                    }
+                    let s = str_arr.value(i);
+                    let pos = pos_arr.value(i);
+                    let chars: Vec<char> = s.chars().collect();
+                    let slen = chars.len() as i64;
+
+                    // MySQL: pos is 1-based, negative counts from end
+                    let start = if pos > 0 {
+                        (pos - 1).max(0) as usize
+                    } else if pos < 0 {
+                        (slen + pos).max(0) as usize
+                    } else {
+                        0 // pos=0 returns empty in MySQL
+                    };
+
+                    if start >= chars.len() {
+                        return Some(String::new());
+                    }
+
+                    let end = if let Some(la) = len_arr {
+                        if la.is_null(i) {
+                            return None;
+                        }
+                        let len = la.value(i);
+                        if len < 0 {
+                            return Some(String::new());
+                        }
+                        (start + len as usize).min(chars.len())
+                    } else {
+                        chars.len()
+                    };
+
+                    if start >= end {
+                        Some(String::new())
+                    } else {
+                        Some(chars[start..end].iter().collect())
+                    }
+                })
+                .collect();
+
+            Ok(ColumnarValue::Array(
+                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+            ))
+        }
+    }
+
+    ScalarUDF::new_from_impl(SubstringUdf::new())
+}
+
+// ---------------------------------------------------------------------------
 // Aggregate Functions (Doris-specific)
 // ---------------------------------------------------------------------------
 
@@ -750,6 +881,7 @@ pub fn register_doris_udfs(ctx: &mut datafusion::prelude::SessionContext) {
     // String functions
     ctx.register_udf(create_concat_ws_udf());
     ctx.register_udf(create_substring_index_udf());
+    ctx.register_udf(create_substring_udf());
 
     // Aggregate functions
     ctx.register_udaf(create_bitmap_count_udf());

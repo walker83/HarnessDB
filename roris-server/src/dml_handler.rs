@@ -12,7 +12,7 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_parser::ast::{self, DeleteStmt};
 
 use crate::handler_struct::RorisQueryHandler;
-use crate::utils::{build_arrow_array_from_exprs, expr_to_string_value, update_column_in_batch};
+use crate::utils::{build_arrow_array_from_exprs, expr_to_string_value, update_column_in_batch, merge_columns};
 
 impl RorisQueryHandler {
     pub(crate) fn insert(&self, stmt: &ast::InsertStmt) -> Result<QueryResult, String> {
@@ -518,6 +518,69 @@ pub(crate) fn evaluate_where_with_datafusion(
     Ok(matching)
 }
 
+/// Evaluate a SET expression for every row in the batch using DataFusion.
+/// Returns an ArrayRef containing the computed value for each row.
+///
+/// The approach:
+/// 1. Convert the SET expression AST back to SQL using `expr_to_sql`
+/// 2. Register the RecordBatch as a MemTable
+/// 3. Execute `SELECT <expr> AS __new_val FROM __tmp` via DataFusion
+/// 4. Collect and return the result column
+pub(crate) fn evaluate_set_expr_with_datafusion(
+    batch: &RecordBatch,
+    set_expr: &ast::Expr,
+) -> Result<ArrayRef, String> {
+    let schema = batch.schema();
+    let num_rows = batch.num_rows();
+
+    // Build the SELECT expression SQL from the AST
+    let expr_sql = expr_to_sql(set_expr);
+
+    // Create a fresh SessionContext and register the batch as a MemTable
+    let ctx = SessionContext::new();
+    let mem_table = MemTable::try_new(schema.clone(), vec![vec![batch.clone()]])
+        .map_err(|e| format!("Failed to create MemTable: {}", e))?;
+    ctx.register_table("__tmp", Arc::new(mem_table))
+        .map_err(|e| format!("Failed to register table: {}", e))?;
+
+    let sql = format!("SELECT {} AS __new_val FROM __tmp", expr_sql);
+
+    // Execute in a spawned thread with its own tokio runtime
+    let result = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let df = ctx.sql(&sql).await?;
+            let batches = df.collect().await?;
+            Ok::<_, datafusion::error::DataFusionError>(batches)
+        })
+    }).join();
+
+    let result_batches = match result {
+        Ok(Ok(batches)) => batches,
+        Ok(Err(e)) => return Err(format!("SET expression evaluation via DataFusion failed: {}", e)),
+        Err(_) => return Err("SET expression evaluation thread panicked".to_string()),
+    };
+
+    if result_batches.is_empty() || num_rows == 0 {
+        return Err("SET expression evaluation returned no batches".to_string());
+    }
+
+    // Concatenate all result batches into one column
+    let mut arrays: Vec<ArrayRef> = Vec::new();
+    for b in &result_batches {
+        arrays.push(b.column(0).clone());
+    }
+
+    let combined = if arrays.len() == 1 {
+        arrays.into_iter().next().unwrap()
+    } else {
+        datafusion::arrow::compute::concat(&arrays.iter().map(|a| a.as_ref()).collect::<Vec<_>>())
+            .map_err(|e| format!("Failed to concat result arrays: {}", e))?
+    };
+
+    Ok(combined)
+}
+
 impl RorisQueryHandler {
     pub(crate) fn update(&self, stmt: &ast::UpdateStmt) -> Result<QueryResult, String> {
         let parts: Vec<&str> = stmt.table.split('.').collect();
@@ -549,10 +612,26 @@ impl RorisQueryHandler {
             for set_clause in &set_clauses {
                 let col_idx = updated_batch.schema().index_of(&set_clause.column)
                     .map_err(|e| fe_storage::StorageError::Other(e.to_string()))?;
-                let val_str = expr_to_string_value(&set_clause.value)
-                    .ok_or_else(|| fe_storage::StorageError::Other(format!("Unsupported assignment value: {:?}", set_clause.value)))?;
-                update_column_in_batch(&mut updated_batch, col_idx, &val_str, &update_mask)
-                    .map_err(|e| fe_storage::StorageError::Other(e))?;
+
+                // Try fast path: literal value
+                if let Some(val_str) = expr_to_string_value(&set_clause.value) {
+                    update_column_in_batch(&mut updated_batch, col_idx, &val_str, &update_mask)
+                        .map_err(|e| fe_storage::StorageError::Other(e))?;
+                } else {
+                    // Expression path: evaluate per-row via DataFusion
+                    let new_values = evaluate_set_expr_with_datafusion(&updated_batch, &set_clause.value)
+                        .map_err(|e| fe_storage::StorageError::Other(format!("Failed to evaluate SET expression: {}", e)))?;
+
+                    // Replace column values where update_mask is true
+                    let old_col = updated_batch.column(col_idx);
+                    let merged = merge_columns(old_col, &new_values, &update_mask)
+                        .map_err(|e| fe_storage::StorageError::Other(e))?;
+
+                    let mut new_columns: Vec<ArrayRef> = updated_batch.columns().to_vec();
+                    new_columns[col_idx] = merged;
+                    updated_batch = RecordBatch::try_new(updated_batch.schema(), new_columns)
+                        .map_err(|e| fe_storage::StorageError::Other(format!("Failed to create updated batch: {}", e)))?;
+                }
             }
             Ok((updated_batch, total_updated))
         }).map_err(|e| format!("Update failed: {}", e))?;
