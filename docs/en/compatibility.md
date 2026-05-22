@@ -1,6 +1,6 @@
 # RorisDB — Doris Compatibility
 
-> Version 0.2.0
+> Version 0.3.0
 
 RorisDB aims for **SQL-level compatibility** with Apache Doris while using a completely different internal architecture (DataFusion + Parquet instead of custom storage engine).
 
@@ -165,6 +165,7 @@ For users coming from Apache Doris:
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| 0.3.0 | 2026-05-23 | DataFusion 48 upgrade, 481 E2E tests, SQL bug fixes, startup simplification (-1833 lines) |
 | 0.2.0 | 2026-05-21 | DataFusion/Arrow migration, type system completion, pushdown |
 | 0.1.5 | 2026-05-21 | Massive code cleanup (-5500 lines), bug fixes |
 | 0.1.0–0.1.4 | 2026-05 | Initial development, parser, protocol, catalog |

@@ -1,6 +1,6 @@
 # RorisDB 架构设计
 
-> 版本 0.2.0 | 单机 OLAP，基于 DataFusion + Parquet
+> 版本 0.3.0 | 单机 OLAP，基于 DataFusion + Parquet
 
 ## 概述
 

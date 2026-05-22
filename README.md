@@ -6,7 +6,7 @@
 
 [![Apache-2.0 License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024--edition-orange.svg)](https://www.rust-lang.org)
-[![Version](https://img.shields.io/badge/Version-0.2.0-green.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.3.0-green.svg)]()
 [![Documentation](https://img.shields.io/badge/Docs-English-blue)](docs/en/)
 [![中文文档](https://img.shields.io/badge/Docs-中文-green)](docs/zh/)
 

@@ -415,7 +415,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "be-rocks"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rocksdb",
  "serde",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "serde",
@@ -1634,7 +1634,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fe-catalog"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "be-rocks",
@@ -1654,7 +1654,7 @@ dependencies = [
 
 [[package]]
 name = "fe-common"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "common",
  "serde",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "fe-datafusion"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "fe-monitor"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "fe-sql-parser"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "common",
  "datafusion",
@@ -1708,7 +1708,7 @@ dependencies = [
 
 [[package]]
 name = "fe-storage"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow",
  "arrow-arith",
@@ -2306,7 +2306,7 @@ checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
 name = "integration-tests"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "common",
@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "mysql-protocol"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "roris-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4075,7 +4075,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tpch-bench"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4181,7 +4181,7 @@ checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
 
 [[package]]
 name = "types"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "criterion",
