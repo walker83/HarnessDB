@@ -19,7 +19,7 @@ MySQL 客户端
 │   fe-catalog         │  元数据管理
 │   fe-datafusion      │  UDF、类型转换
 │   fe-storage         │  Parquet 读写、TableProvider
-│   fe-monitor         │  HTTP 服务器、指标
+│   fe-monitor         │  审计日志
 ├─────────────────────┤
 │   DataFusion 48      │  查询引擎（优化器 + 执行器）
 │   Arrow 55           │  列式内存格式
@@ -140,13 +140,7 @@ struct Table {
 
 ## 监控（`fe-monitor`）
 
-- **HTTP 服务器**（Axum，端口 8030）：
-  - `/api/health` — 健康检查
-  - `/api/metrics` — Prometheus 指标
-  - `/api/query_profiles` — 活跃查询分析
-  - `/api/audit_log` — 查询审计日志
-- **指标**：查询计数、延迟直方图、内存使用
-- **Information Schema**：`information_schema.tables`、`columns`、`schemata`
+- **审计日志**：查询审计日志，含慢查询跟踪
 
 ## 数据类型映射
 

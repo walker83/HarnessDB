@@ -17,9 +17,6 @@ use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 30010;
-const HTTP_PORT: u16 = MYSQL_PORT - 10000;
-const RPC_PORT: u16 = MYSQL_PORT + 1000;
-const METRICS_PORT: u16 = MYSQL_PORT + 10;
 
 static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -41,10 +38,7 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--http-port").arg(HTTP_PORT.to_string())
-            .arg("--rpc-port").arg(RPC_PORT.to_string())
             .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--metrics-port").arg(METRICS_PORT.to_string())
             .arg("--meta-dir").arg(&meta_dir)
             .arg("--data-dir").arg(&data_dir)
             .stdout(Stdio::null())

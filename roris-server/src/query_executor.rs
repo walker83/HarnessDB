@@ -478,7 +478,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_frontends(&self) -> Result<QueryResult, String> {
         let frontends = vec![
-            ("fe1".to_string(), "127.0.0.1".to_string(), "8030".to_string(), "true".to_string(), "false".to_string(), "0".to_string()),
+            ("fe1".to_string(), "127.0.0.1".to_string(), "9030".to_string(), "true".to_string(), "false".to_string(), "0".to_string()),
         ];
         let rows: Vec<Vec<Option<String>>> = frontends.into_iter()
             .map(|(name, ip, port, alive, join, disk)| {

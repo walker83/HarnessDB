@@ -13,7 +13,6 @@ use tokio::time::{interval, Duration};
 use fe_common::edit_log::EditLog;
 use fe_catalog::CatalogManager;
 use fe_monitor::MonitoringManager;
-use fe_monitor::http_server::MonitoringHttpServer;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_parser::{parse_sql, is_dml_sql};
@@ -24,20 +23,8 @@ use utils::{record_batches_to_query_result_with_df_schema};
 #[derive(Parser)]
 #[command(name = "roris-fe", about = "Roris Frontend Server")]
 struct Args {
-    #[arg(long, default_value = "conf/fe.conf")]
-    config: String,
-
-    #[arg(long, default_value = "8030")]
-    http_port: u16,
-
-    #[arg(long, default_value = "9020")]
-    rpc_port: u16,
-
     #[arg(long, default_value = "data/fe/doris-meta")]
     meta_dir: String,
-
-    #[arg(long, default_value = "8040")]
-    metrics_port: u16,
 
     #[arg(long, default_value = "9030")]
     mysql_port: u16,
@@ -140,12 +127,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
-    tracing::info!("Roris FE starting...");
-    tracing::info!("Config file: {}", args.config);
-    tracing::info!("HTTP port: {}, RPC port: {}", args.http_port, args.rpc_port);
-    tracing::info!("Meta directory: {}", args.meta_dir);
-    tracing::info!("Metrics port: {}", args.metrics_port);
-    tracing::info!("MySQL port: {}", args.mysql_port);
+    tracing::info!("RorisDB starting...");
+    tracing::info!("MySQL port: {}, data: {}", args.mysql_port, args.data_dir);
 
     let catalog = Arc::new(CatalogManager::with_path(&args.meta_dir));
     {
@@ -166,16 +149,7 @@ async fn main() -> Result<()> {
         tracing::info!("Edit log applied to catalog");
     }
 
-    let monitoring = Arc::new(MonitoringManager::new(catalog.clone()));
-    tracing::info!("Monitoring manager initialized");
-
-    let http_server = MonitoringHttpServer::new(args.metrics_port, monitoring.clone());
-    tokio::spawn(async move {
-        if let Err(e) = http_server.start().await {
-            tracing::error!("Monitoring HTTP server failed: {}", e);
-        }
-    });
-    tracing::info!("Monitoring HTTP server started on port {}", args.metrics_port);
+    let monitoring = Arc::new(MonitoringManager::new());
 
     let query_handler = RorisQueryHandler::new(catalog.clone(), args.data_dir.clone());
     let mysql_config = ServerConfig {
@@ -185,16 +159,13 @@ async fn main() -> Result<()> {
         auth_timeout_secs: 30,
     };
     let mysql_server = MysqlServer::new(mysql_config, Arc::new(query_handler));
-    tracing::info!("MySQL server starting on port {}", args.mysql_port);
 
     tokio::spawn(async move {
-        tracing::info!("MySQL server task started");
         match mysql_server.run().await {
             Ok(()) => tracing::info!("MySQL server stopped"),
             Err(e) => tracing::error!("MySQL server failed: {}", e),
         }
     });
-    tracing::info!("MySQL server spawn completed on port {}", args.mysql_port);
 
     let edit_log_clone = edit_log.clone();
     tokio::spawn(async move {
@@ -210,7 +181,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    tracing::info!("Roris FE started successfully");
+    tracing::info!("RorisDB started on port {}", args.mysql_port);
 
     let catalog_clone = catalog.clone();
     tokio::spawn(async move {

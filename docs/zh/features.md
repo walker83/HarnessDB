@@ -141,11 +141,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| HTTP 健康检查 | ✅ | `GET /api/health` |
-| Prometheus 指标 | ✅ | `GET /api/metrics` |
 | 审计日志 | ✅ | 查询日志记录 |
-| 查询分析 | ✅ | 执行计时 |
-| `information_schema` | ✅ | `tables`、`columns`、`schemata` |
 
 ## 用户管理
 

@@ -37,8 +37,11 @@ RorisDB is a **Doris-compatible single-node OLAP database** for learning and exp
 # Build
 cargo build --release
 
-# Run
-./target/release/roris-fe --http-port 8030
+# Run (default MySQL port 9030)
+./target/release/roris-fe
+
+# Or with custom port
+./target/release/roris-fe --mysql-port 3306
 
 # Connect with any MySQL client
 mysql -h 127.0.0.1 -P 9030 -uroot
@@ -88,8 +91,8 @@ SELECT name, age FROM users WHERE age > 20 ORDER BY age;
         ▼              ▼              ▼              ▼
 ┌──────────────┐ ┌──────────┐ ┌──────────────┐ ┌──────────┐
 │  fe-catalog  │ │fe-storage│ │ fe-datafusion│ │fe-monitor│
-│  (metadata)  │ │ (Parquet)│ │  (UDFs +    │ │ (HTTP +  │
-│              │ │          │ │   types)    │ │ metrics) │
+│  (metadata)  │ │ (Parquet)│ │  (UDFs +    │ │ (audit   │
+│              │ │          │ │   types)    │ │   log)   │
 └──────────────┘ └────┬─────┘ └──────────────┘ └──────────┘
                       │
                       ▼
@@ -139,7 +142,7 @@ SELECT name, age FROM users WHERE age > 20 ORDER BY age;
 | Feature | Description |
 |---------|-------------|
 | **Protocol** | MySQL wire protocol (handshake, `mysql_native_password`, `COM_QUERY`) |
-| **Monitoring** | HTTP server (`:8030`), Prometheus metrics, audit log, query profiles |
+| **Monitoring** | Audit log |
 | **Metadata** | JSON catalog (`catalog.json`) + optional RocksDB backend |
 | **UDFs** | Doris-compatible: `date_trunc`, `months_add`, `concat_ws`, `substring_index`, `bitmap_count` |
 
@@ -154,7 +157,7 @@ RorisDB/
 │   ├── fe-datafusion/     # DataFusion integration, UDFs, type conversion
 │   ├── fe-storage/        # Parquet storage + DataFusion TableProvider
 │   ├── fe-common/         # EditLog, shared FE utilities
-│   ├── fe-monitor/        # HTTP server, metrics, audit log
+│   ├── fe-monitor/        # Audit log
 │   ├── mysql-protocol/    # MySQL wire protocol implementation
 │   ├── be-rocks/          # RocksDB metadata backend
 │   ├── types/             # DataType, Block, Vector, Bitmap, Schema
@@ -170,14 +173,12 @@ RorisDB/
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Query Engine | Apache DataFusion | 47 |
+| Query Engine | Apache DataFusion | 48 |
 | Columnar Format | Apache Arrow | 55 |
 | Storage Format | Apache Parquet | 55 |
 | SQL Parser | sqlparser-rs | 0.53 |
 | Async Runtime | Tokio | 1.x |
 | Metadata | RocksDB / JSON | 0.23 |
-| HTTP Server | Axum | 0.7 |
-| Metrics | Prometheus | 0.13 |
 
 ## Known Limitations
 

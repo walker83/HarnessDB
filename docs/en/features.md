@@ -141,11 +141,7 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| HTTP health check | ✅ | `GET /api/health` |
-| Prometheus metrics | ✅ | `GET /api/metrics` |
 | Audit log | ✅ | Query logging |
-| Query profiles | ✅ | Execution timing |
-| `information_schema` | ✅ | `tables`, `columns`, `schemata` |
 
 ## User Management
 

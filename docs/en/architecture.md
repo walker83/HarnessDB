@@ -19,7 +19,7 @@ MySQL Client
 │   fe-catalog         │  Metadata management
 │   fe-datafusion      │  UDFs, type conversion
 │   fe-storage         │  Parquet I/O, TableProvider
-│   fe-monitor         │  HTTP server, metrics
+│   fe-monitor         │  Audit log
 ├─────────────────────┤
 │   DataFusion 48      │  Query engine (optimizer + executor)
 │   Arrow 55           │  Columnar in-memory format
@@ -140,13 +140,7 @@ Full MySQL wire protocol implementation:
 
 ## Monitoring (`fe-monitor`)
 
-- **HTTP server** (Axum, port 8030):
-  - `/api/health` — Health check
-  - `/api/metrics` — Prometheus metrics
-  - `/api/query_profiles` — Active query profiles
-  - `/api/audit_log` — Query audit log
-- **Metrics**: Query count, latency histograms, memory usage
-- **Information Schema**: `information_schema.tables`, `columns`, `schemata`
+- **Audit log**: Query audit log with slow query tracking
 
 ## Data Type Mapping
 

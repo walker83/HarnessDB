@@ -9,9 +9,6 @@ use std::path::Path;
 // Test Configuration
 // ===========================================================================
 const MYSQL_PORT: u16 = 19930;
-const HTTP_PORT: u16 = 18030;
-const RPC_PORT: u16 = 19020;
-const METRICS_PORT: u16 = 18040;
 
 // ===========================================================================
 // Server lifecycle management
@@ -37,14 +34,8 @@ impl E2eServer {
 
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--http-port")
-            .arg(HTTP_PORT.to_string())
-            .arg("--rpc-port")
-            .arg(RPC_PORT.to_string())
             .arg("--mysql-port")
             .arg(MYSQL_PORT.to_string())
-            .arg("--metrics-port")
-            .arg(METRICS_PORT.to_string())
             .arg("--meta-dir")
             .arg(&meta_dir)
             .arg("--data-dir")

@@ -6,15 +6,6 @@ edition.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-stream = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 tracing = { workspace = true }
-axum = "0.7"
-prometheus = "0.13"
-
-# Internal dependencies
-common = { workspace = true }
-fe-catalog = { workspace = true }
-types = { workspace = true }

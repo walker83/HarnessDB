@@ -18,7 +18,11 @@ Builds binary: `target/release/roris-fe`.
 ## Run
 
 ```bash
-./target/release/roris-fe --http-port 8030
+# Default: MySQL port 9030, data dir data/fe/storage
+./target/release/roris-fe
+
+# Custom port and data directory
+./target/release/roris-fe --mysql-port 3306 --data-dir /path/to/data
 ```
 
 Connect via MySQL client: `mysql -h 127.0.0.1 -P 9030 -uroot`
@@ -46,7 +50,7 @@ RorisDB is a single-node OLAP database using DataFusion as the query engine with
 - **fe-storage** - Parquet storage layer (DataFusion TableProvider, filter/projection pushdown)
 - **fe-datafusion** - Type conversion (Roris ↔ Arrow), UDFs, Block↔Arrow conversion
 - **fe-common** - Shared FE utilities (EditLog)
-- **fe-monitor** - HTTP monitoring server, Prometheus metrics, audit log
+- **fe-monitor** - Audit log
 - **mysql-protocol** - MySQL wire protocol server (handshake, auth, COM_QUERY)
 
 ### Metadata
@@ -72,6 +76,6 @@ RorisDB is a single-node OLAP database using DataFusion as the query engine with
 ### Tech Stack
 - DataFusion 48, Arrow 55, Parquet 55
 - sqlparser 0.53, Tokio 1.x
-- RocksDB 0.23, Axum 0.7, Prometheus 0.13
+- RocksDB 0.23
 
 ### Crate Count: 11
