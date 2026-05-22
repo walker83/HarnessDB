@@ -21,7 +21,7 @@ MySQL Client
 │   fe-storage         │  Parquet I/O, TableProvider
 │   fe-monitor         │  HTTP server, metrics
 ├─────────────────────┤
-│   DataFusion 47      │  Query engine (optimizer + executor)
+│   DataFusion 48      │  Query engine (optimizer + executor)
 │   Arrow 55           │  Columnar in-memory format
 │   Parquet 55         │  Columnar on-disk format
 └─────────────────────┘

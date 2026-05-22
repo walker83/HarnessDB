@@ -70,7 +70,7 @@ RorisDB is a single-node OLAP database using DataFusion as the query engine with
 - ZSTD compression with page-level statistics
 
 ### Tech Stack
-- DataFusion 47, Arrow 55, Parquet 55
+- DataFusion 48, Arrow 55, Parquet 55
 - sqlparser 0.53, Tokio 1.x
 - RocksDB 0.23, Axum 0.7, Prometheus 0.13
 

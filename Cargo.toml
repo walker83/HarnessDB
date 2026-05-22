@@ -74,8 +74,8 @@ chrono = "0.4"
 sqlparser = "0.53"
 
 # Query engine
-datafusion = { version = "47" }
-datafusion-datasource = { version = "47" }
+datafusion = { version = "48" }
+datafusion-datasource = { version = "48" }
 arrow = { version = "55", default-features = false, features = ["prettyprint"] }
 arrow-schema = { version = "55", default-features = false }
 # Arrow sub-crates (match version that datafusion depends on)

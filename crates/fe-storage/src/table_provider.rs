@@ -172,12 +172,12 @@ fn extract_simple_filter(expr: &Expr) -> Option<(String, Operator, ScalarValue)>
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
             // column op literal
             if let Expr::Column(col) = left.as_ref() {
-                if let Expr::Literal(val) = right.as_ref() {
+                if let Expr::Literal(val, _) = right.as_ref() {
                     return Some((col.name.clone(), *op, val.clone()));
                 }
             }
             // literal op column (reverse — swap op semantics)
-            if let Expr::Literal(val) = left.as_ref() {
+            if let Expr::Literal(val, _) = left.as_ref() {
                 if let Expr::Column(col) = right.as_ref() {
                     let reversed_op = match op {
                         Operator::Gt => Operator::Lt,

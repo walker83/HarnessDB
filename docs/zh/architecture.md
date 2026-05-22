@@ -21,7 +21,7 @@ MySQL 客户端
 │   fe-storage         │  Parquet 读写、TableProvider
 │   fe-monitor         │  HTTP 服务器、指标
 ├─────────────────────┤
-│   DataFusion 47      │  查询引擎（优化器 + 执行器）
+│   DataFusion 48      │  查询引擎（优化器 + 执行器）
 │   Arrow 55           │  列式内存格式
 │   Parquet 55         │  列式磁盘格式
 └─────────────────────┘

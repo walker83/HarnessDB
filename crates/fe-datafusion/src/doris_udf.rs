@@ -849,17 +849,17 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
 
         /// Tell DataFusion that the intermediate state is a list of values matching
         /// the input type, rather than a flat Int64.
-        fn state_fields(&self, args: StateFieldsArgs) -> datafusion::error::Result<Vec<Field>> {
+        fn state_fields(&self, args: StateFieldsArgs) -> datafusion::error::Result<Vec<Arc<Field>>> {
             let input_type = args
-                .input_types
+                .input_fields
                 .first()
-                .cloned()
+                .map(|f| f.data_type().clone())
                 .unwrap_or(DataType::Null);
-            Ok(vec![Field::new(
+            Ok(vec![Arc::new(Field::new(
                 format_state_name(args.name, "value"),
                 DataType::List(Arc::new(Field::new("item", input_type, true))),
                 true,
-            )])
+            ))])
         }
     }
 
