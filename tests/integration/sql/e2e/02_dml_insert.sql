@@ -1174,7 +1174,6 @@ CREATE TABLE t6_sel_computed (
     category_label VARCHAR(50),
     tax DECIMAL(10,2)
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
--- Note: expressions in INSERT SELECT may not work reliably
 INSERT INTO t6_sel_computed
 SELECT id, amount * 2, category || '_cat', amount * 0.08 FROM t6_source;
 SELECT * FROM t6_sel_computed ORDER BY id;
@@ -1444,7 +1443,6 @@ CREATE TABLE t6_sel_arith (
     minus INT,
     mult INT
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
--- Note: expressions in INSERT SELECT may not work reliably
 INSERT INTO t6_sel_arith
 SELECT id, amount + 100, amount - 50, amount * 2
 FROM t6_source

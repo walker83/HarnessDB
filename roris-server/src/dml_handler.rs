@@ -492,9 +492,11 @@ pub(crate) fn evaluate_where_with_datafusion(
     let where_sql = expr_to_sql(where_expr);
 
     // Clone the session context and register the batch as a MemTable
-    let ctx = session_ctx.clone();
     let mem_table = MemTable::try_new(indexed_schema, vec![vec![indexed_batch]])
         .map_err(|e| format!("Failed to create MemTable: {}", e))?;
+
+    // Use a fresh SessionContext to avoid schema provider conflicts
+    let ctx = SessionContext::new();
     ctx.register_table("__tmp", Arc::new(mem_table))
         .map_err(|e| format!("Failed to register table: {}", e))?;
 
@@ -551,9 +553,11 @@ pub(crate) fn evaluate_set_expr_with_datafusion(
     let expr_sql = expr_to_sql(set_expr);
 
     // Clone the session context and register the batch as a MemTable
-    let ctx = session_ctx.clone();
     let mem_table = MemTable::try_new(schema.clone(), vec![vec![batch.clone()]])
         .map_err(|e| format!("Failed to create MemTable: {}", e))?;
+
+    // Use a fresh SessionContext to avoid schema provider conflicts
+    let ctx = SessionContext::new();
     ctx.register_table("__tmp", Arc::new(mem_table))
         .map_err(|e| format!("Failed to register table: {}", e))?;
 

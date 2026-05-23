@@ -303,12 +303,14 @@ pub fn create_group_concat_udf() -> AggregateUDF {
     #[derive(Debug)]
     struct GroupConcatAccumulator {
         values: Vec<String>,
+        seen: std::collections::HashSet<String>,
     }
 
     impl GroupConcatAccumulator {
         fn new() -> Self {
             Self {
                 values: Vec::new(),
+                seen: std::collections::HashSet::new(),
             }
         }
     }
@@ -329,7 +331,10 @@ pub fn create_group_concat_udf() -> AggregateUDF {
             })?;
             for i in 0..str_arr.len() {
                 if !str_arr.is_null(i) {
-                    self.values.push(str_arr.value(i).to_string());
+                    let v = str_arr.value(i).to_string();
+                    if self.seen.insert(v.clone()) {
+                        self.values.push(v);
+                    }
                 }
             }
             Ok(())
@@ -365,7 +370,10 @@ pub fn create_group_concat_udf() -> AggregateUDF {
                 )?;
                 for j in 0..str_inner.len() {
                     if !str_inner.is_null(j) {
-                        self.values.push(str_inner.value(j).to_string());
+                        let v = str_inner.value(j).to_string();
+                        if self.seen.insert(v.clone()) {
+                            self.values.push(v);
+                        }
                     }
                 }
             }

@@ -1054,6 +1054,7 @@ mod tests {
     #[test]
     fn test_rocks_backend() {
         let dir = format!("/tmp/rovisdb_test_rocks_{}", std::process::id());
+        let _ = std::fs::remove_dir_all(&dir); // Clean any stale data
         let config = CatalogConfig {
             catalog_path: dir.clone(),
             use_rocks_meta: true,
@@ -1064,7 +1065,11 @@ mod tests {
 
         mgr.create_database("rocks_db").unwrap();
         mgr.create_table("rocks_db", make_table(1, "rocks_table")).unwrap();
+
         mgr.save().unwrap();
+
+        // Drop mgr to release the RocksDB lock before reopening
+        drop(mgr);
 
         // Reopen and verify
         let config2 = CatalogConfig {

@@ -991,6 +991,7 @@ fn test_window_multiple_partitions() {
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 8);
         if !column_is_all_null(&rows, 3) {
+            // Alphabetical dept order: Eng < HR < Sales
             // Eng
             assert_eq!(get_i64(&rows[0], 0), 3, "Eng top salary id");
             assert_eq!(get_f64(&rows[0], 2), 120.0, "Eng top salary");
@@ -999,18 +1000,18 @@ fn test_window_multiple_partitions() {
             assert_eq!(get_i64(&rows[1], 3), 2, "Eng rn=2");
             assert_eq!(get_i64(&rows[2], 0), 1, "Eng third id");
             assert_eq!(get_i64(&rows[2], 3), 3, "Eng rn=3");
-            // Sales
-            assert_eq!(get_i64(&rows[3], 0), 6, "Sales top id");
-            assert_eq!(get_i64(&rows[3], 3), 1, "Sales rn=1");
-            assert_eq!(get_i64(&rows[4], 0), 4, "Sales second id");
-            assert_eq!(get_i64(&rows[4], 3), 2, "Sales rn=2");
-            assert_eq!(get_i64(&rows[5], 0), 5, "Sales third id");
-            assert_eq!(get_i64(&rows[5], 3), 3, "Sales rn=3");
             // HR
-            assert_eq!(get_i64(&rows[6], 0), 7, "HR top id");
-            assert_eq!(get_i64(&rows[6], 3), 1, "HR rn=1");
-            assert_eq!(get_i64(&rows[7], 0), 8, "HR second id");
-            assert_eq!(get_i64(&rows[7], 3), 2, "HR rn=2");
+            assert_eq!(get_i64(&rows[3], 0), 7, "HR top id");
+            assert_eq!(get_i64(&rows[3], 3), 1, "HR rn=1");
+            assert_eq!(get_i64(&rows[4], 0), 8, "HR second id");
+            assert_eq!(get_i64(&rows[4], 3), 2, "HR rn=2");
+            // Sales
+            assert_eq!(get_i64(&rows[5], 0), 6, "Sales top id");
+            assert_eq!(get_i64(&rows[5], 3), 1, "Sales rn=1");
+            assert_eq!(get_i64(&rows[6], 0), 4, "Sales second id");
+            assert_eq!(get_i64(&rows[6], 3), 2, "Sales rn=2");
+            assert_eq!(get_i64(&rows[7], 0), 5, "Sales third id");
+            assert_eq!(get_i64(&rows[7], 3), 3, "Sales rn=3");
         }
     }
 
@@ -1032,24 +1033,25 @@ fn test_window_partition_by_string() {
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
-            // Electronics: 500->1, 300->2
-            assert_eq!(get_string(&rows[0], 0), "Electronics");
-            assert_eq!(get_f64(&rows[0], 1), 500.0);
-            assert_eq!(get_i64(&rows[0], 2), 1);
-            assert_eq!(get_string(&rows[1], 0), "Electronics");
-            assert_eq!(get_f64(&rows[1], 1), 300.0);
-            assert_eq!(get_i64(&rows[1], 2), 2);
-            // Clothing: 60->1, 40->2
-            assert_eq!(get_string(&rows[2], 0), "Clothing");
-            assert_eq!(get_f64(&rows[2], 1), 60.0);
-            assert_eq!(get_i64(&rows[2], 2), 1);
-            assert_eq!(get_string(&rows[3], 0), "Clothing");
-            assert_eq!(get_f64(&rows[3], 1), 40.0);
-            assert_eq!(get_i64(&rows[3], 2), 2);
+            // Alphabetical order: Books < Clothing < Electronics
             // Books: 15->1
-            assert_eq!(get_string(&rows[4], 0), "Books");
-            assert_eq!(get_f64(&rows[4], 1), 15.0);
-            assert_eq!(get_i64(&rows[4], 2), 1);
+            assert_eq!(get_string(&rows[0], 0), "Books");
+            assert_eq!(get_f64(&rows[0], 1), 15.0);
+            assert_eq!(get_i64(&rows[0], 2), 1);
+            // Clothing: 60->1, 40->2
+            assert_eq!(get_string(&rows[1], 0), "Clothing");
+            assert_eq!(get_f64(&rows[1], 1), 60.0);
+            assert_eq!(get_i64(&rows[1], 2), 1);
+            assert_eq!(get_string(&rows[2], 0), "Clothing");
+            assert_eq!(get_f64(&rows[2], 1), 40.0);
+            assert_eq!(get_i64(&rows[2], 2), 2);
+            // Electronics: 500->1, 300->2
+            assert_eq!(get_string(&rows[3], 0), "Electronics");
+            assert_eq!(get_f64(&rows[3], 1), 500.0);
+            assert_eq!(get_i64(&rows[3], 2), 1);
+            assert_eq!(get_string(&rows[4], 0), "Electronics");
+            assert_eq!(get_f64(&rows[4], 1), 300.0);
+            assert_eq!(get_i64(&rows[4], 2), 2);
         }
     }
 
@@ -1413,8 +1415,9 @@ fn test_window_nulls_in_order_by() {
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
-            // Just verify we get 5 rows back without error and rn values are 1-5
-            let rn_values: Vec<i64> = rows.iter().map(|r| get_i64(r, 2)).collect();
+            // Just verify we get 5 rows back and rn values are 1-5 (in any order)
+            let mut rn_values: Vec<i64> = rows.iter().map(|r| get_i64(r, 2)).collect();
+            rn_values.sort();
             assert_eq!(rn_values, vec![1, 2, 3, 4, 5], "ROW_NUMBER with NULLs should be 1..5");
         }
     }

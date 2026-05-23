@@ -380,7 +380,6 @@ DROP TABLE t_up37;
 
 -- ============================================================================
 -- 1.8 UPDATE with arithmetic expressions in SET
--- Note: arithmetic expressions in UPDATE SET (val = val + N) may not work correctly
 -- ============================================================================
 
 -- Test 1.38: UPDATE with SET col = col + 1 (addition)
@@ -565,7 +564,6 @@ SELECT * FROM t_up56 ORDER BY id;
 DROP TABLE t_up56;
 
 -- Test 1.57: UPDATE DOUBLE with arithmetic
--- Note: arithmetic expressions in UPDATE SET (score = score * 2) may not work correctly
 -- Expected: score doubled for matching rows
 CREATE TABLE t_up57 (id INT, score DOUBLE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up57 VALUES (1, 10.5), (2, 20.0), (3, 30.0);
@@ -593,7 +591,6 @@ SELECT * FROM t_up59 ORDER BY id;
 DROP TABLE t_up59;
 
 -- Test 1.60: UPDATE FLOAT column with expression
--- Note: arithmetic expressions in UPDATE SET (rate = rate + 1.0) may not work correctly
 -- Expected: float value incremented
 CREATE TABLE t_up60 (id INT, rate FLOAT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up60 VALUES (1, 1.5), (2, 2.5), (3, 3.5);
@@ -844,7 +841,6 @@ SELECT * FROM t_up82 ORDER BY id;
 DROP TABLE t_up82;
 
 -- Test 1.83: UPDATE with multiple computed columns
--- Note: arithmetic expressions in UPDATE SET (x = x + 1) may not work correctly
 -- Expected: both columns computed independently
 CREATE TABLE t_up83 (id INT, x INT, y INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up83 VALUES (1, 10, 20), (2, 30, 40);
@@ -908,7 +904,6 @@ SELECT * FROM t_up89 ORDER BY id;
 DROP TABLE t_up89;
 
 -- Test 1.90: UPDATE with decimal arithmetic
--- Note: arithmetic expressions in UPDATE SET (price = price * 1.1) may not work correctly
 -- Expected: decimal multiplication
 CREATE TABLE t_up90 (id INT, price DECIMAL(10, 2)) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up90 VALUES (1, 10.00), (2, 20.50), (3, 30.00);
@@ -936,7 +931,6 @@ SELECT * FROM t_up92 ORDER BY id;
 DROP TABLE t_up92;
 
 -- Test 1.93: UPDATE with chained comparison in WHERE (redundant)
--- Note: arithmetic expressions in UPDATE SET (val = val + 5) may not work correctly
 -- Expected: works correctly
 CREATE TABLE t_up93 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up93 VALUES (1, 10), (2, 20), (3, 30);
@@ -964,7 +958,6 @@ SELECT * FROM t_up95 ORDER BY id;
 DROP TABLE t_up95;
 
 -- Test 1.96: UPDATE with division by 2 (integer result)
--- Note: arithmetic expressions in UPDATE SET (val = val / 2) may not work correctly
 -- Expected: integer division truncation (if applicable)
 CREATE TABLE t_up96 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up96 VALUES (1, 9), (2, 10), (3, 11);
@@ -974,7 +967,6 @@ SELECT * FROM t_up96 ORDER BY id;
 DROP TABLE t_up96;
 
 -- Test 1.97: UPDATE with modulus expression
--- Note: arithmetic expressions in UPDATE SET (val = val % 10) may not work correctly
 -- Expected: val % 10 computed
 CREATE TABLE t_up97 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up97 VALUES (1, 23), (2, 47), (3, 50);
@@ -2003,7 +1995,6 @@ SELECT * FROM t_comb1 ORDER BY id;
 DROP TABLE t_comb1;
 
 -- Test 3.2: DELETE then UPDATE remaining rows
--- Note: arithmetic expressions in UPDATE SET (val = val * 10) may not work correctly
 -- Expected: delete removes rows, then update modifies survivors
 CREATE TABLE t_comb2 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_comb2 VALUES (1, 10), (2, 20), (3, 30);
@@ -2026,7 +2017,6 @@ SELECT * FROM t_comb3 ORDER BY id;
 DROP TABLE t_comb3;
 
 -- Test 3.4: INSERT, UPDATE twice, DELETE, verify COUNT
--- Note: arithmetic expressions in UPDATE SET (val = val + 5, val = val * 2) may not work correctly
 -- Expected: final state after chained operations
 CREATE TABLE t_comb4 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_comb4 VALUES (1, 10), (2, 20), (3, 30);
@@ -2043,7 +2033,6 @@ CREATE TABLE t_comb5 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_comb5 VALUES (1, 10), (2, 20), (3, 30), (4, 40);
 UPDATE t_comb5 SET val = 0 WHERE id <= 2;
 DELETE FROM t_comb5 WHERE val = 0;
--- Note: arithmetic expressions in UPDATE SET (val = val * 10) may not work correctly
 UPDATE t_comb5 SET val = val * 10;
 DELETE FROM t_comb5 WHERE val > 350;
 SELECT * FROM t_comb5 ORDER BY id;
@@ -2051,7 +2040,6 @@ SELECT * FROM t_comb5 ORDER BY id;
 DROP TABLE t_comb5;
 
 -- Test 3.6: UPDATE + DELETE + re-INSERT with same ids
--- Note: arithmetic expressions in UPDATE SET (val = val + 1) may not work correctly
 -- Expected: ids can be re-used after delete
 CREATE TABLE t_comb6 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_comb6 VALUES (1, 100), (2, 200);
@@ -2073,7 +2061,6 @@ SELECT COUNT(*) FROM t_comb7;
 DROP TABLE t_comb7;
 
 -- Test 3.8: DELETE WHERE, then UPDATE, then DELETE WHERE on different column
--- Note: arithmetic expressions in UPDATE SET (val = val + 50) may not work correctly
 -- Expected: mixed operations
 CREATE TABLE t_comb8 (id INT, status VARCHAR(20), val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_comb8 VALUES (1, 'active', 100), (2, 'inactive', 50), (3, 'active', 200), (4, 'inactive', 75);
@@ -2100,7 +2087,6 @@ DROP TABLE t_comb9_main;
 DROP TABLE t_comb9_ref;
 
 -- Test 3.10: Complex workflow: large dataset, multiple operations
--- Note: arithmetic expressions in UPDATE SET (price = price * 1.1, quantity = quantity + 5) may not work correctly
 -- Expected: all operations succeed with correct final state
 CREATE TABLE t_comb10 (id INT, category VARCHAR(20), quantity INT, price DECIMAL(10, 2)) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_comb10 VALUES (1, 'A', 10, 100.00), (2, 'A', 20, 200.00), (3, 'B', 15, 150.00), (4, 'B', 5, 50.00), (5, 'C', 25, 250.00);

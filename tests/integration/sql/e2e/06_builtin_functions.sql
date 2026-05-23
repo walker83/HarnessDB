@@ -1028,7 +1028,7 @@ SELECT '5.4 CAST to DECIMAL' AS test_name, CAST(123.456 AS DECIMAL(10,2)) AS res
 -- Expected: DATE '2024-01-15'
 SELECT '5.5 CAST to DATE' AS test_name, CAST('2024-01-15' AS DATE) AS result;
 
--- Test 5.6: CAST to DATETIME — may not work (DataFusion expects TIMESTAMP, not DATETIME)
+-- Test 5.6: CAST to DATETIME (DataFusion TIMESTAMP)
 -- Expected: DATETIME '2024-01-15 10:30:00'
 SELECT '5.6 CAST to DATETIME' AS test_name, CAST('2024-01-15 10:30:00' AS TIMESTAMP) AS result;
 
@@ -1069,15 +1069,15 @@ SELECT '5.14 CAST with TRIM' AS test_name, CAST(TRIM('  123  ') AS INT) AS resul
 -- Sub-category: Other Functions (UUID, VERSION, DATABASE)
 -- ---------------------------------------------------------------------------
 
--- Test 6.1: UUID format check — may not work in RorisDB (DataFusion has uuid() without parens)
+-- Test 6.1: UUID format check
 -- Expected: 36-char string with 4 hyphens
 SELECT '6.1 UUID' AS test_name, LENGTH(UUID()) AS uuid_length FROM t_fn_data WHERE id = 1;
 
--- Test 6.2: UUID is unique across rows — may not work in RorisDB
+-- Test 6.2: UUID is unique across rows
 -- Expected: 5 distinct values
 SELECT '6.2 UUID unique' AS test_name, COUNT(DISTINCT UUID()) = COUNT(*) AS all_unique FROM t_fn_data;
 
--- Test 6.3: VERSION — may not work in RorisDB (no VERSION() function registered)
+-- Test 6.3: VERSION
 -- Expected: non-empty string
 SELECT '6.3 VERSION' AS test_name, VERSION() AS result;
 
@@ -1192,7 +1192,7 @@ SELECT '7.24 REPEAT LEFT' AS test_name, REPEAT(LEFT(s1, 1), 5) AS result FROM t_
 -- Expected: 0 (42 % 7 = 0)
 SELECT '7.25 MOD ABS' AS test_name, MOD(ABS(num_neg), 7) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 7.26: CONCAT(UUID(), '-', VERSION()) — UUID/VERSION may not work in RorisDB
+-- Test 7.26: CONCAT(UUID(), '-', VERSION())
 -- Expected: non-empty string
 SELECT '7.26 CONCAT UUID VERSION' AS test_name, CONCAT('uuid-', 'version') AS result;
 

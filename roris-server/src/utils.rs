@@ -101,7 +101,8 @@ pub(crate) fn record_batches_to_query_result_with_df_schema(
 }
 
 pub(crate) fn arrow_value_to_string(col: &datafusion::arrow::array::ArrayRef, idx: usize) -> Option<String> {
-    if col.is_null(idx) {
+    // NullArray (data type Null) has no validity bitmap; all elements are null
+    if matches!(col.data_type(), ADT::Null) || col.is_null(idx) {
         return None;
     }
 
@@ -522,7 +523,7 @@ pub(crate) fn build_arrow_array_from_exprs(
             }).collect();
             Arc::new(arr)
         }
-        ADT::Decimal128(_, _) => {
+        ADT::Decimal128(precision, scale) => {
             // LARGEINT maps to Decimal128; build from Int64/Float64 literals
             let arr: Decimal128Array = exprs.iter().map(|e| match e {
                 Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(*n)),
@@ -535,6 +536,10 @@ pub(crate) fn build_arrow_array_from_exprs(
                 },
                 _ => None,
             }).collect();
+            let arr = match arr.clone().with_precision_and_scale(*precision, *scale) {
+                Ok(a) => a,
+                Err(_) => arr,
+            };
             Arc::new(arr)
         }
         ADT::Float32 => {

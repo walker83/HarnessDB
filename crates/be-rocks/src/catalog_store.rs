@@ -191,7 +191,7 @@ impl CatalogStore {
         self.store.delete_cf(CF_CATALOG, key.as_bytes())?;
 
         // Also delete all tables in this database
-        let prefix = format!("{}{}{}", KEY_DB, name, KEY_TABLE);
+        let prefix = format!("{}{}:{}", KEY_DB, name, KEY_TABLE);
         self.delete_keys_with_prefix(CF_CATALOG, prefix.as_bytes())?;
 
         debug!("Deleted database: {}", name);
@@ -203,16 +203,20 @@ impl CatalogStore {
         let prefix = KEY_DB.as_bytes();
         let keys = self.list_keys_with_prefix(CF_CATALOG, prefix)?;
         keys.iter()
-            .map(|k| {
-                String::from_utf8(k[prefix.len()..].to_vec())
-                    .map_err(|e| RocksStoreError::InvalidKey(e.to_string()))
+            .filter_map(|k| {
+                let name = String::from_utf8(k[prefix.len()..].to_vec())
+                    .map_err(|e| RocksStoreError::InvalidKey(e.to_string()));
+                match name {
+                    Ok(n) if !n.contains(KEY_TABLE) => Some(Ok(n)),
+                    _ => None, // Skip table keys (db:{name}:table:{tbl})
+                }
             })
             .collect()
     }
 
     /// Put a table (typed).
     pub fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()> {
-        let key = format!("{}{}{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
+        let key = format!("{}{}:{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
         let value = serialize(table)?;
         self.store.put_cf(CF_CATALOG, key.as_bytes(), &value)?;
         debug!("Put table: {}.{}", db_name, table_name);
@@ -221,7 +225,7 @@ impl CatalogStore {
 
     /// Put a table as raw bytes (for cross-crate compatibility).
     pub fn put_table_raw(&self, db_name: &str, table_name: &str, data: &[u8]) -> Result<()> {
-        let key = format!("{}{}{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
+        let key = format!("{}{}:{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
         self.store.put_cf(CF_CATALOG, key.as_bytes(), data)?;
         debug!("Put table raw: {}.{}", db_name, table_name);
         Ok(())
@@ -229,14 +233,14 @@ impl CatalogStore {
 
     /// Get a table by database and name (typed).
     pub fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
-        let key = format!("{}{}{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
+        let key = format!("{}{}:{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
         let value = self.store.get_cf(CF_CATALOG, key.as_bytes())?;
         value.map(|v| deserialize(&v)).transpose()
     }
 
     /// Get a table as raw bytes (for cross-crate compatibility).
     pub fn get_table_raw(&self, db_name: &str, table_name: &str) -> Result<Option<Vec<u8>>> {
-        let key = format!("{}{}{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
+        let key = format!("{}{}:{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
         self.store.get_cf(CF_CATALOG, key.as_bytes())
     }
 
@@ -272,7 +276,7 @@ impl CatalogStore {
 
     /// Delete a table by database and name.
     pub fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
-        let key = format!("{}{}{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
+        let key = format!("{}{}:{}{}", KEY_DB, db_name, KEY_TABLE, table_name);
         self.store.delete_cf(CF_CATALOG, key.as_bytes())?;
         debug!("Deleted table: {}.{}", db_name, table_name);
         Ok(())
@@ -280,7 +284,7 @@ impl CatalogStore {
 
     /// List all table names in a database.
     pub fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
-        let prefix = format!("{}{}{}", KEY_DB, db_name, KEY_TABLE);
+        let prefix = format!("{}{}:{}", KEY_DB, db_name, KEY_TABLE);
         let keys = self.list_keys_with_prefix(CF_CATALOG, prefix.as_bytes())?;
         keys.iter()
             .map(|k| {
