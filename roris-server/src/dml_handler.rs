@@ -286,6 +286,18 @@ fn query_stmt_to_sql(query: &ast::QueryStmt) -> String {
         sql.push_str(&format!(" OFFSET {}", offset));
     }
 
+    // UNION / EXCEPT / INTERSECT
+    if let Some(ref set_op) = query.set_op {
+        let op_str = match set_op.op {
+            ast::UnionOperator::Union => "UNION",
+            ast::UnionOperator::Except => "EXCEPT",
+            ast::UnionOperator::Intersect => "INTERSECT",
+        };
+        sql.push_str(&format!(" {} ", op_str));
+        if set_op.all { sql.push_str("ALL "); }
+        sql.push_str(&query_stmt_to_sql(&set_op.right));
+    }
+
     sql
 }
 
@@ -459,6 +471,7 @@ fn table_ref_to_sql(t: &ast::TableRef) -> String {
 pub(crate) fn evaluate_where_with_datafusion(
     batch: &RecordBatch,
     where_expr: &ast::Expr,
+    session_ctx: &SessionContext,
 ) -> Result<Vec<bool>, String> {
     let schema = batch.schema();
     let num_rows = batch.num_rows();
@@ -478,8 +491,8 @@ pub(crate) fn evaluate_where_with_datafusion(
     // Build the WHERE clause SQL from the AST
     let where_sql = expr_to_sql(where_expr);
 
-    // Create a fresh SessionContext and register the batch as a MemTable
-    let ctx = SessionContext::new();
+    // Clone the session context and register the batch as a MemTable
+    let ctx = session_ctx.clone();
     let mem_table = MemTable::try_new(indexed_schema, vec![vec![indexed_batch]])
         .map_err(|e| format!("Failed to create MemTable: {}", e))?;
     ctx.register_table("__tmp", Arc::new(mem_table))
@@ -529,6 +542,7 @@ pub(crate) fn evaluate_where_with_datafusion(
 pub(crate) fn evaluate_set_expr_with_datafusion(
     batch: &RecordBatch,
     set_expr: &ast::Expr,
+    session_ctx: &SessionContext,
 ) -> Result<ArrayRef, String> {
     let schema = batch.schema();
     let num_rows = batch.num_rows();
@@ -536,8 +550,8 @@ pub(crate) fn evaluate_set_expr_with_datafusion(
     // Build the SELECT expression SQL from the AST
     let expr_sql = expr_to_sql(set_expr);
 
-    // Create a fresh SessionContext and register the batch as a MemTable
-    let ctx = SessionContext::new();
+    // Clone the session context and register the batch as a MemTable
+    let ctx = session_ctx.clone();
     let mem_table = MemTable::try_new(schema.clone(), vec![vec![batch.clone()]])
         .map_err(|e| format!("Failed to create MemTable: {}", e))?;
     ctx.register_table("__tmp", Arc::new(mem_table))
@@ -598,11 +612,12 @@ impl RorisQueryHandler {
 
         let set_clauses = stmt.set_clauses.clone();
         let selection = stmt.selection.clone();
+        let session_ctx = self.session_ctx.clone();
 
         let total_updated = self.storage.update(&database, &table_name, |batch| {
             let mut total_updated = 0usize;
             let update_mask: Vec<bool> = if let Some(ref sel) = selection {
-                evaluate_where_with_datafusion(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
+                evaluate_where_with_datafusion(&batch, sel, &session_ctx).map_err(|e| fe_storage::StorageError::Other(e))?
             } else {
                 vec![true; batch.num_rows()]
             };
@@ -619,7 +634,7 @@ impl RorisQueryHandler {
                         .map_err(|e| fe_storage::StorageError::Other(e))?;
                 } else {
                     // Expression path: evaluate per-row via DataFusion
-                    let new_values = evaluate_set_expr_with_datafusion(&updated_batch, &set_clause.value)
+                    let new_values = evaluate_set_expr_with_datafusion(&updated_batch, &set_clause.value, &session_ctx)
                         .map_err(|e| fe_storage::StorageError::Other(format!("Failed to evaluate SET expression: {}", e)))?;
 
                     // Replace column values where update_mask is true
@@ -675,10 +690,70 @@ impl RorisQueryHandler {
         };
 
         let selection = stmt.selection.clone();
+        let order_by = stmt.order_by.clone();
+        let delete_limit = stmt.limit;
+        let session_ctx = self.session_ctx.clone();
 
         let total_deleted = self.storage.delete(&database, &table_name, |batch| {
             if let Some(ref sel) = selection {
-                let match_mask = evaluate_where_with_datafusion(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?;
+                let mut match_mask = evaluate_where_with_datafusion(&batch, sel, &session_ctx)
+                    .map_err(|e| fe_storage::StorageError::Other(e))?;
+
+                // Apply ORDER BY + LIMIT to the match_mask
+                if !order_by.is_empty() || delete_limit.is_some() {
+                    // Collect matching row indices
+                    let matching_indices: Vec<usize> = match_mask.iter()
+                        .enumerate()
+                        .filter(|(_, m)| **m)
+                        .map(|(i, _)| i)
+                        .collect();
+
+                    if !matching_indices.is_empty() {
+                        let mut sorted_indices = matching_indices;
+
+                        // If ORDER BY is specified, sort the indices using Arrow sort
+                        if !order_by.is_empty() {
+                            use datafusion::arrow::compute::kernels::sort::{SortColumn, SortOptions};
+
+                            let sort_columns: Vec<SortColumn> = order_by.iter().map(|item| {
+                                let col_name = match &item.expr {
+                                    ast::Expr::ColumnRef { column, .. } => column.clone(),
+                                    _ => String::new(),
+                                };
+                                let col_idx = batch.schema().index_of(&col_name).unwrap_or(0);
+                                SortColumn {
+                                    values: batch.column(col_idx).clone(),
+                                    options: Some(SortOptions {
+                                        descending: !item.ascending,
+                                        nulls_first: item.nulls_first,
+                                    }),
+                                }
+                            }).collect();
+
+                            // Get sort order for all rows using lexsort
+                            let sort_indices = datafusion::arrow::compute::lexsort_to_indices(&sort_columns, None)
+                                .map_err(|e| fe_storage::StorageError::Arrow(e.to_string()))?;
+
+                            // Filter to only matching rows, preserving sort order
+                            sorted_indices = (0..sort_indices.len())
+                                .map(|i| sort_indices.value(i) as usize)
+                                .filter(|&row_idx| match_mask[row_idx])
+                                .collect();
+                        }
+
+                        // If LIMIT is specified, truncate to first N
+                        if let Some(limit_n) = delete_limit {
+                            sorted_indices.truncate(limit_n);
+                        }
+
+                        // Rebuild match_mask: only the sorted+limited indices are "to delete"
+                        match_mask = vec![false; match_mask.len()];
+                        for &idx in &sorted_indices {
+                            match_mask[idx] = true;
+                        }
+                    }
+                }
+
                 let deleted_count = match_mask.iter().filter(|&&m| m).count();
                 // keep rows that do NOT match
                 let keep_mask: Vec<bool> = match_mask.iter().map(|&m| !m).collect();

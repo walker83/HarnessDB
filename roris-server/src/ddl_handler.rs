@@ -338,11 +338,17 @@ impl RorisQueryHandler {
                                 agg_type: col_def.agg_type.clone(),
                                 comment: col_def.comment.clone().unwrap_or_default(),
                             };
+                            // Build Field for the new column BEFORE adding to table
+                            let new_field = datafusion::arrow::datatypes::Field::new(
+                                &col_def.name,
+                                fe_datafusion::types::to_arrow_data_type(&parse_data_type(&col_def.data_type)),
+                                col_def.nullable,
+                            );
                             table.columns.push(new_col);
                             catalog.create_table(db, table).map_err(|e| e.to_string())?;
-                            // Update DataFusion schema
-                            if let Err(e) = self.update_df_table_schema_inner(db, &stmt.table) {
-                                tracing::warn!("Failed to update DataFusion schema: {}", e);
+                            // Rewrite Parquet data to include the new column (NULL for existing rows)
+                            if let Err(e) = self.storage.rewrite_parquet_add_column(db, &stmt.table, &new_field) {
+                                tracing::warn!("Failed to rewrite parquet adding column: {}", e);
                             }
                         }
                         fe_sql_parser::ast::AlterOperation::DropColumn(col_name) => {
@@ -350,11 +356,12 @@ impl RorisQueryHandler {
                                 .ok_or_else(|| format!("Table {}.{} not found", db, stmt.table))?;
                             let idx = table.columns.iter().position(|c| c.name == *col_name);
                             if let Some(idx) = idx {
+                                // Rewrite Parquet data BEFORE removing column from catalog
+                                if let Err(e) = self.storage.rewrite_parquet_drop_column(db, &stmt.table, idx) {
+                                    tracing::warn!("Failed to rewrite parquet dropping column: {}", e);
+                                }
                                 table.columns.remove(idx);
                                 catalog.create_table(db, table).map_err(|e| e.to_string())?;
-                                if let Err(e) = self.update_df_table_schema_inner(db, &stmt.table) {
-                                    tracing::warn!("Failed to update DataFusion schema: {}", e);
-                                }
                             } else {
                                 return Err(format!("Unknown column '{}'", col_name));
                             }
@@ -394,10 +401,17 @@ impl RorisQueryHandler {
                             catalog.drop_table(db, &old_name).map_err(|e| e.to_string())?;
                             // Then create with new name
                             catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            // Rename the data directory
+                            let old_data_dir = self.storage.table_dir(db, &old_name);
+                            let new_data_dir = self.storage.table_dir(db, new_name);
+                            if old_data_dir.exists() {
+                                std::fs::rename(&old_data_dir, &new_data_dir)
+                                    .map_err(|e| format!("Failed to rename data dir: {}", e))?;
+                            }
                             // Update DataFusion catalog
                             if let Some(df_cat) = self.session_ctx.catalog("roris") {
                                 if let Some(roris_cat) = df_cat.as_any().downcast_ref::<fe_storage::ParquetCatalogProvider>() {
-                                    // Get the old schema and create with new name
+                                    // Get old schema (CatalogManager still has old entry at this point)
                                     if let Some(schema) = roris_cat.get_table_schema(db, &old_name) {
                                         roris_cat.create_table(db, new_name, schema);
                                         roris_cat.drop_table(db, &old_name);

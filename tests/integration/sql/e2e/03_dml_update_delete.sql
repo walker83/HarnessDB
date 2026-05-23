@@ -331,7 +331,7 @@ DROP TABLE t_up32;
 
 -- Test 1.33: UPDATE with BETWEEN AND on VARCHAR dates
 -- Expected: rows with dates in range get updated (string comparison of ISO dates works)
-CREATE TABLE t_up33 (id INT, d VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_up33 (id INT, d DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up33 VALUES (1, '2024-01-01'), (2, '2024-06-15'), (3, '2024-12-31');
 UPDATE t_up33 SET d = '2024-01-01' WHERE d BETWEEN '2024-03-01' AND '2024-12-31';
 SELECT * FROM t_up33 ORDER BY id;
@@ -608,7 +608,7 @@ DROP TABLE t_up60;
 
 -- Test 1.61: UPDATE VARCHAR column with date-like string
 -- Expected: column updated for matching row
-CREATE TABLE t_up61 (id INT, d VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_up61 (id INT, d DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up61 VALUES (1, '2024-01-01'), (2, '2024-06-15'), (3, '2024-12-31');
 UPDATE t_up61 SET d = '2025-01-01' WHERE id = 2;
 SELECT * FROM t_up61 ORDER BY id;
@@ -617,7 +617,7 @@ DROP TABLE t_up61;
 
 -- Test 1.62: UPDATE VARCHAR column with datetime-like string
 -- Expected: column updated for matching row
-CREATE TABLE t_up62 (id INT, dt VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_up62 (id INT, dt DATETIME) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up62 VALUES (1, '2024-01-01 10:00:00'), (2, '2024-06-15 14:30:00');
 UPDATE t_up62 SET dt = '2025-12-31 23:59:59' WHERE id = 1;
 SELECT * FROM t_up62 ORDER BY id;
@@ -626,7 +626,7 @@ DROP TABLE t_up62;
 
 -- Test 1.63: UPDATE with WHERE comparison on VARCHAR date strings
 -- Expected: strings before threshold get updated (lexicographic comparison of ISO dates)
-CREATE TABLE t_up63 (id INT, d VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_up63 (id INT, d DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up63 VALUES (1, '2024-01-01'), (2, '2024-07-01'), (3, '2025-01-01');
 UPDATE t_up63 SET d = '2024-06-01' WHERE d < '2024-07-01';
 SELECT * FROM t_up63 ORDER BY id;
@@ -635,7 +635,7 @@ DROP TABLE t_up63;
 
 -- Test 1.64: UPDATE with WHERE > on VARCHAR date strings
 -- Expected: strings after threshold get updated
-CREATE TABLE t_up64 (id INT, d VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_up64 (id INT, d DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up64 VALUES (1, '2023-01-01'), (2, '2024-06-15'), (3, '2025-01-01');
 UPDATE t_up64 SET d = '2024-01-01' WHERE d > '2024-01-01';
 SELECT * FROM t_up64 ORDER BY id;
@@ -786,8 +786,8 @@ DROP TABLE t_up78;
 
 -- ============================================================================
 -- 1.16 UPDATE with subqueries in WHERE (rewritten with literal values)
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported;
--- using literal values. The reference table creation and SELECT showing
+-- Note: cross-table subquery
+
 -- what the subquery would return are kept for documentation.
 -- ============================================================================
 
@@ -797,8 +797,8 @@ CREATE TABLE t_up79_main (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_up79_ref (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up79_main VALUES (1, 10), (2, 20), (3, 30);
 INSERT INTO t_up79_ref VALUES (1), (3);
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-UPDATE t_up79_main SET val = 0 WHERE id IN (1, 3);
+-- Note: cross-table subquery using literal values
+UPDATE t_up79_main SET val = 0 WHERE id IN (SELECT id FROM t_up79_ref);
 SELECT * FROM t_up79_main ORDER BY id;
 -- Expected: (1, 0), (2, 20), (3, 0)
 DROP TABLE t_up79_main;
@@ -810,8 +810,8 @@ CREATE TABLE t_up80_main (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_up80_ref (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up80_main VALUES (1, 10), (2, 20), (3, 30);
 INSERT INTO t_up80_ref VALUES (2);
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-UPDATE t_up80_main SET val = 0 WHERE id NOT IN (2);
+-- Note: cross-table subquery using literal values
+UPDATE t_up80_main SET val = 0 WHERE id NOT IN (SELECT id FROM t_up80_ref);
 SELECT * FROM t_up80_main ORDER BY id;
 -- Expected: (1, 0), (2, 20), (3, 0)
 DROP TABLE t_up80_main;
@@ -823,8 +823,8 @@ CREATE TABLE t_up81_main (id INT, dept VARCHAR(20), val INT) DISTRIBUTED BY HASH
 CREATE TABLE t_up81_filter (dept VARCHAR(20)) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_up81_main VALUES (1, 'Eng', 100), (2, 'Sales', 200), (3, 'HR', 300);
 INSERT INTO t_up81_filter VALUES ('Eng'), ('HR');
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-UPDATE t_up81_main SET val = 0 WHERE dept IN ('Eng', 'HR');
+-- Note: cross-table subquery using literal values
+UPDATE t_up81_main SET val = 0 WHERE dept IN (SELECT dept FROM t_up81_filter);
 SELECT * FROM t_up81_main ORDER BY id;
 -- Expected: (1, 'Eng', 0), (2, 'Sales', 200), (3, 'HR', 0)
 DROP TABLE t_up81_main;
@@ -1230,7 +1230,7 @@ DROP TABLE t_del25;
 
 -- Test 2.26: DELETE with BETWEEN on VARCHAR date strings
 -- Expected: date strings in range deleted (string comparison of ISO dates)
-CREATE TABLE t_del26 (id INT, d VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_del26 (id INT, d DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del26 VALUES (1, '2024-01-01'), (2, '2024-06-15'), (3, '2024-12-31');
 DELETE FROM t_del26 WHERE d BETWEEN '2024-03-01' AND '2024-09-01';
 SELECT * FROM t_del26 ORDER BY id;
@@ -1327,43 +1327,76 @@ SELECT * FROM t_del35 ORDER BY id;
 DROP TABLE t_del35;
 
 -- ============================================================================
--- 2.7 DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- 2.7 DELETE with ORDER BY LIMIT
 -- ============================================================================
 
--- Test 2.36: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.36: DELETE with ORDER BY LIMIT
+-- Expected: delete last 2 rows sorted by id DESC, keeping lowest ids
+CREATE TABLE t_del36 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del36 VALUES (1, 10), (2, 20), (3, 30), (4, 40);
+DELETE FROM t_del36 ORDER BY id DESC LIMIT 2;
+SELECT * FROM t_del36 ORDER BY id;
+-- Expected: (1, 10), (2, 20)
+DROP TABLE t_del36;
 
--- Test 2.37: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.37: DELETE with ORDER BY LIMIT - ascending
+-- Expected: delete 2 lowest values
+CREATE TABLE t_del37 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del37 VALUES (1, 100), (2, 50), (3, 200), (4, 25);
+DELETE FROM t_del37 ORDER BY val ASC LIMIT 2;
+SELECT * FROM t_del37 ORDER BY id;
+-- Expected: (1, 100), (3, 200)
+DROP TABLE t_del37;
 
--- Test 2.38: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.38: DELETE with ORDER BY LIMIT with WHERE
+-- Expected: delete rows matching WHERE, ordered and limited
+CREATE TABLE t_del38 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del38 VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+DELETE FROM t_del38 WHERE val >= 20 ORDER BY id DESC LIMIT 2;
+SELECT * FROM t_del38 ORDER BY id;
+-- Expected: (1, 10), (2, 20), (3, 30) (deleted ids 5 and 4)
+DROP TABLE t_del38;
 
--- Test 2.39: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.39: DELETE with ORDER BY LIMIT - string column
+-- Expected: delete 1 row with smallest string value
+CREATE TABLE t_del39 (id INT, name VARCHAR(20)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del39 VALUES (1, 'Charlie'), (2, 'Alice'), (3, 'Bob');
+DELETE FROM t_del39 ORDER BY name ASC LIMIT 1;
+SELECT * FROM t_del39 ORDER BY id;
+-- Expected: (1, 'Charlie'), (3, 'Bob') (Alice deleted)
+DROP TABLE t_del39;
 
--- Test 2.40: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.40: DELETE with ORDER BY LIMIT - edge case (LIMIT 0)
+-- Expected: no rows deleted
+CREATE TABLE t_del40 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del40 VALUES (1, 10), (2, 20);
+DELETE FROM t_del40 ORDER BY id ASC LIMIT 0;
+SELECT COUNT(*) FROM t_del40;
+-- Expected: 2
+DROP TABLE t_del40;
 
--- Test 2.41: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.41: DELETE with ORDER BY LIMIT - single row table
+-- Expected: delete the only row
+CREATE TABLE t_del41 (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del41 VALUES (1);
+DELETE FROM t_del41 ORDER BY id DESC LIMIT 1;
+SELECT COUNT(*) FROM t_del41;
+-- Expected: 0
+DROP TABLE t_del41;
 
--- Test 2.42: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.42: DELETE with ORDER BY LIMIT - NULL in ORDER BY column
+-- Expected: NULLs are sorted first (or last depending on engine), delete limited
+CREATE TABLE t_del42 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del42 VALUES (1, NULL), (2, 10), (3, 20), (4, NULL);
+DELETE FROM t_del42 ORDER BY val NULLS LAST LIMIT 2;
+SELECT * FROM t_del42 ORDER BY id;
+-- Expected: (1, NULL), (4, NULL) (non-null values deleted)
+DROP TABLE t_del42;
 
 -- ============================================================================
 -- 2.8 DELETE with subqueries (rewritten with literal values)
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported;
--- using literal values. The reference table creation and SELECT showing
+-- Note: cross-table subquery
+
 -- what the subquery would return are kept for documentation.
 -- ============================================================================
 
@@ -1373,8 +1406,8 @@ CREATE TABLE t_del43_main (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_del43_ref (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del43_main VALUES (1, 10), (2, 20), (3, 30);
 INSERT INTO t_del43_ref VALUES (1), (3);
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-DELETE FROM t_del43_main WHERE id IN (1, 3);
+-- Note: cross-table subquery using literal values
+DELETE FROM t_del43_main WHERE id IN (SELECT id FROM t_del43_ref);
 SELECT * FROM t_del43_main ORDER BY id;
 -- Expected: only (2, 20) remains
 DROP TABLE t_del43_main;
@@ -1386,8 +1419,8 @@ CREATE TABLE t_del44_main (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_del44_ref (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del44_main VALUES (1, 10), (2, 20), (3, 30);
 INSERT INTO t_del44_ref VALUES (2);
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-DELETE FROM t_del44_main WHERE id NOT IN (2);
+-- Note: cross-table subquery using literal values
+DELETE FROM t_del44_main WHERE id NOT IN (SELECT id FROM t_del44_ref);
 SELECT * FROM t_del44_main ORDER BY id;
 -- Expected: only (2, 20) remains
 DROP TABLE t_del44_main;
@@ -1399,8 +1432,8 @@ CREATE TABLE t_del45_main (id INT, dept VARCHAR(20), val INT) DISTRIBUTED BY HAS
 CREATE TABLE t_del45_filter (dept VARCHAR(20)) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del45_main VALUES (1, 'Eng', 100), (2, 'Sales', 200), (3, 'HR', 300);
 INSERT INTO t_del45_filter VALUES ('Eng'), ('HR');
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-DELETE FROM t_del45_main WHERE dept IN ('Eng', 'HR');
+-- Note: cross-table subquery using literal values
+DELETE FROM t_del45_main WHERE dept IN (SELECT dept FROM t_del45_filter);
 SELECT * FROM t_del45_main ORDER BY id;
 -- Expected: only (2, 'Sales', 200) remains
 DROP TABLE t_del45_main;
@@ -1544,7 +1577,7 @@ DROP TABLE t_del59;
 
 -- Test 2.60: DELETE with VARCHAR column (date-like string)
 -- Expected: row with matching date string deleted
-CREATE TABLE t_del60 (id INT, d VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_del60 (id INT, d DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del60 VALUES (1, '2024-01-01'), (2, '2024-06-15'), (3, '2024-12-31');
 DELETE FROM t_del60 WHERE d = '2024-06-15';
 SELECT * FROM t_del60 ORDER BY id;
@@ -1553,7 +1586,7 @@ DROP TABLE t_del60;
 
 -- Test 2.61: DELETE with VARCHAR column (datetime-like string)
 -- Expected: row with matching datetime string deleted
-CREATE TABLE t_del61 (id INT, dt VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_del61 (id INT, dt DATETIME) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del61 VALUES (1, '2024-01-01 10:00:00'), (2, '2024-06-15 14:30:00');
 DELETE FROM t_del61 WHERE dt = '2024-06-15 14:30:00';
 SELECT * FROM t_del61 ORDER BY id;
@@ -1668,26 +1701,44 @@ SELECT * FROM t_del72 ORDER BY id;
 DROP TABLE t_del72;
 
 -- ============================================================================
--- 2.13 DELETE with ORDER BY + LIMIT edge cases -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- 2.13 DELETE with ORDER BY + LIMIT edge cases
 -- ============================================================================
 
--- Test 2.73: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.73: DELETE with ORDER BY LIMIT - all rows match
+-- Expected: delete top 3 rows, keep 1
+CREATE TABLE t_del73 (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del73 VALUES (1), (2), (3), (4);
+DELETE FROM t_del73 ORDER BY id DESC LIMIT 3;
+SELECT * FROM t_del73 ORDER BY id;
+-- Expected: (1)
+DROP TABLE t_del73;
 
--- Test 2.74: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.74: DELETE with ORDER BY LIMIT - limit larger than data
+-- Expected: delete all rows
+CREATE TABLE t_del74 (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del74 VALUES (1), (2);
+DELETE FROM t_del74 ORDER BY id ASC LIMIT 100;
+SELECT COUNT(*) FROM t_del74;
+-- Expected: 0
+DROP TABLE t_del74;
 
--- Test 2.75: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.75: DELETE with ORDER BY LIMIT - negative values
+-- Expected: delete 2 smallest (most negative)
+CREATE TABLE t_del75 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del75 VALUES (1, -10), (2, -5), (3, 0), (4, 5);
+DELETE FROM t_del75 ORDER BY val ASC LIMIT 2;
+SELECT * FROM t_del75 ORDER BY id;
+-- Expected: (3, 0), (4, 5)
+DROP TABLE t_del75;
 
--- Test 2.76: DELETE with ORDER BY LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.76: DELETE with ORDER BY LIMIT - multiple duplicate values
+-- Expected: delete limited rows from duplicates
+CREATE TABLE t_del76 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del76 VALUES (1, 10), (2, 10), (3, 20), (4, 20);
+DELETE FROM t_del76 ORDER BY val, id LIMIT 2;
+SELECT * FROM t_del76 ORDER BY id;
+-- Expected: (3, 20), (4, 20) (two rows with val=10 were deleted)
+DROP TABLE t_del76;
 
 -- ============================================================================
 -- 2.14 DELETE with DELETE then verify with aggregate
@@ -1784,7 +1835,7 @@ DROP TABLE t_del85;
 
 -- ============================================================================
 -- 2.17 DELETE with subquery and complex condition (rewritten with literal values)
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported;
+-- Note: cross-table subquery
 -- using literal values. Reference tables are kept for documentation.
 -- ============================================================================
 
@@ -1794,8 +1845,8 @@ CREATE TABLE t_del86_main (id INT, dept VARCHAR(20), val INT) DISTRIBUTED BY HAS
 CREATE TABLE t_del86_filter (dept VARCHAR(20)) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del86_main VALUES (1, 'Eng', 100), (2, 'Eng', 50), (3, 'Sales', 200);
 INSERT INTO t_del86_filter VALUES ('Eng');
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-DELETE FROM t_del86_main WHERE dept IN ('Eng') AND val >= 100;
+-- Note: cross-table subquery using literal values
+DELETE FROM t_del86_main WHERE dept IN (SELECT dept FROM t_del86_filter) AND val >= 100;
 SELECT * FROM t_del86_main ORDER BY id;
 -- Expected: (2, 'Eng', 50), (3, 'Sales', 200)
 DROP TABLE t_del86_main;
@@ -1807,8 +1858,8 @@ CREATE TABLE t_del87_main (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_del87_ref (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del87_main VALUES (1, 10), (2, 20), (3, 30), (4, 40);
 INSERT INTO t_del87_ref VALUES (2), (4);
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-DELETE FROM t_del87_main WHERE id NOT IN (2, 4) AND val < 30;
+-- Note: cross-table subquery using literal values
+DELETE FROM t_del87_main WHERE id NOT IN (SELECT id FROM t_del87_ref) AND val < 30;
 SELECT * FROM t_del87_main ORDER BY id;
 -- Expected: (2, 20), (3, 30), (4, 40)
 DROP TABLE t_del87_main;
@@ -1881,18 +1932,26 @@ SELECT * FROM t_del93 ORDER BY id;
 DROP TABLE t_del93;
 
 -- ============================================================================
--- 2.21 DELETE with ORDER BY + LIMIT special cases -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- 2.21 DELETE with ORDER BY + LIMIT special cases
 -- ============================================================================
 
--- Test 2.94: DELETE with ORDER BY + LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.94: DELETE with ORDER BY + LIMIT - WHERE with BETWEEN
+-- Expected: delete limited rows from a subset
+CREATE TABLE t_del94 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del94 VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+DELETE FROM t_del94 WHERE val BETWEEN 20 AND 40 ORDER BY id DESC LIMIT 2;
+SELECT * FROM t_del94 ORDER BY id;
+-- Expected: (1, 10), (2, 20), (5, 50) (deleted id 4 and 3)
+DROP TABLE t_del94;
 
--- Test 2.95: DELETE with ORDER BY + LIMIT -- NOT SUPPORTED
--- The handler ignores ORDER BY and LIMIT in DELETE statements.
--- Only WHERE clause is used for row selection.
+-- Test 2.95: DELETE with ORDER BY + LIMIT - WHERE with IN
+-- Expected: delete limited rows from an IN subset
+CREATE TABLE t_del95 (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_del95 VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60);
+DELETE FROM t_del95 WHERE id IN (1, 2, 3, 4) ORDER BY id ASC LIMIT 2;
+SELECT * FROM t_del95 ORDER BY id;
+-- Expected: (3, 30), (4, 40), (5, 50), (6, 60) (deleted id 1 and 2)
+DROP TABLE t_del95;
 
 -- ============================================================================
 -- 2.22 DELETE from tables with all supported types
@@ -1922,8 +1981,8 @@ CREATE TABLE t_del98_main (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_del98_ref (base INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_del98_main VALUES (1, 100), (2, 200), (3, 300);
 INSERT INTO t_del98_ref VALUES (1), (2);
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-DELETE FROM t_del98_main WHERE id IN (2, 3);
+-- Note: cross-table subquery using literal values
+DELETE FROM t_del98_main WHERE id IN (SELECT base + 1 FROM t_del98_ref);
 SELECT * FROM t_del98_main ORDER BY id;
 -- Expected: (1, 100)
 DROP TABLE t_del98_main;
@@ -2026,15 +2085,15 @@ SELECT * FROM t_comb8 ORDER BY id;
 DROP TABLE t_comb8;
 
 -- Test 3.9: UPDATE with subquery, then DELETE with subquery (using literals)
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
+-- Note: cross-table subquery using literal values
 -- Expected: both operations work sequentially with literal values
 CREATE TABLE t_comb9_main (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_comb9_ref (id INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_comb9_main VALUES (1, 10), (2, 20), (3, 30), (4, 40);
 INSERT INTO t_comb9_ref VALUES (1), (3);
--- Note: cross-table subqueries in UPDATE/DELETE WHERE are not supported; using literal values
-UPDATE t_comb9_main SET val = 0 WHERE id IN (1, 3);
-DELETE FROM t_comb9_main WHERE id NOT IN (1, 3);
+-- Note: cross-table subquery using literal values
+UPDATE t_comb9_main SET val = 0 WHERE id IN (SELECT id FROM t_comb9_ref);
+DELETE FROM t_comb9_main WHERE id NOT IN (SELECT id FROM t_comb9_ref);
 SELECT * FROM t_comb9_main ORDER BY id;
 -- Expected: (1, 0), (3, 0)
 DROP TABLE t_comb9_main;

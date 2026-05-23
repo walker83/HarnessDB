@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use datafusion::prelude::{SessionConfig, SessionContext};
 use fe_catalog::CatalogManager;
-use fe_datafusion::register_doris_udfs;
+use fe_datafusion::{register_doris_udfs, register_misc_udfs};
 use fe_storage::{ParquetCatalogProvider, ParquetStorage};
 use parking_lot::RwLock as PlRwLock;
 use mysql_protocol::QueryResult;
@@ -81,6 +81,8 @@ impl RorisQueryHandler {
         let mut session_ctx = SessionContext::new_with_config(config);
         session_ctx.register_catalog("roris", df_catalog);
         register_doris_udfs(&mut session_ctx);
+        register_misc_udfs(&mut session_ctx);
+        fe_datafusion::register_date_udfs(&mut session_ctx);
 
         Self {
             catalog,

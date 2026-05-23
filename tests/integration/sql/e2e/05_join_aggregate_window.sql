@@ -38,7 +38,7 @@ CREATE TABLE employees (
     emp_name VARCHAR(50),
     dept_id INT,
     salary DECIMAL(12, 2),
-    hire_date VARCHAR(30),  -- Note: Using VARCHAR for DATE due to server limitation
+    hire_date DATE,
     manager_id INT
 ) DISTRIBUTED BY HASH(emp_id) BUCKETS 3;
 
@@ -78,7 +78,7 @@ CREATE TABLE sales (
     product VARCHAR(50),
     category VARCHAR(50),
     amount DECIMAL(12, 2),
-    sale_date VARCHAR(30),  -- Note: Using VARCHAR for DATE due to server limitation
+    sale_date DATE,
     region VARCHAR(30)
 ) DISTRIBUTED BY HASH(sale_id) BUCKETS 3;
 

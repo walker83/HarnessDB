@@ -1206,7 +1206,7 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
     // Also handle: UNIQUE(col), UNIQUE name(col) without KEY keyword
     // These can appear before DISTRIBUTED BY
     // Note: Order matters! "UNIQUE KEY" must come before "UNIQUE" to avoid partial matches
-    let key_types = ["UNIQUE KEY", "DUPLICATE KEY", "AGGREGATE KEY", "UNIQUE"];
+    let key_types = ["PRIMARY KEY", "UNIQUE KEY", "DUPLICATE KEY", "AGGREGATE KEY", "UNIQUE"];
     for key_type in &key_types {
         if *key_type == "UNIQUE" {
             // For standalone "UNIQUE", find it only after a comma or opening paren
@@ -1294,6 +1294,16 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
 
                     // Determine keys_type
                     match *key_type {
+                        "PRIMARY KEY" => {
+                            keys_type = KeysType::Primary;
+                            let before_cols = &after_key[..paren_pos];
+                            let name = if before_cols.trim().ends_with("KEY") || before_cols.trim().is_empty() {
+                                None
+                            } else {
+                                Some(before_cols.trim().to_string())
+                            };
+                            unique_keys.push(UniqueKeyDef { name, columns });
+                        }
                         "UNIQUE KEY" => {
                             keys_type = KeysType::Unique;
                             // Extract optional constraint name before column list
@@ -1904,6 +1914,7 @@ fn convert_query(
                 limit: None,
                 offset: None,
                 with: None,
+                set_op: None,
             })),
         })
     });
@@ -1923,10 +1934,7 @@ fn convert_query(
                 sqlparser::ast::SetOperator::Except => UnionOperator::Except,
                 sqlparser::ast::SetOperator::Intersect => UnionOperator::Intersect,
             };
-            let _ = (union_op, set_quantifier);
-            // TODO: UNION/INTERSECT/EXCEPT not yet supported through this path.
-            // The right side of the set operation is silently discarded below.
-            let _ = right_query;
+            let all = matches!(set_quantifier, sqlparser::ast::SetQuantifier::All);
             let order_by = query.order_by.map(|ob| ob.exprs).unwrap_or_default();
             Ok(QueryStmt {
                 select_list: left_query.select_list,
@@ -1948,6 +1956,11 @@ fn convert_query(
                     _ => None,
                 }),
                 with: cte,
+                set_op: Some(SetOperation {
+                    op: union_op,
+                    all,
+                    right: Box::new(right_query),
+                }),
             })
         }
         _ => Err(ParseError::Unsupported("non-SELECT query body".to_string())),
@@ -1958,19 +1971,31 @@ fn convert_set_expr(expr: sqlparser::ast::SetExpr) -> Result<QueryStmt, ParseErr
     match expr {
         sqlparser::ast::SetExpr::Select(select) => convert_select(*select, vec![], None, None, None),
         sqlparser::ast::SetExpr::Query(query) => convert_query(*query),
-        sqlparser::ast::SetExpr::SetOperation { .. } => {
-            // TODO: UNION/INTERSECT/EXCEPT not yet supported through this path.
-            // Returning an empty QueryStmt silently discards the right-hand side.
+        sqlparser::ast::SetExpr::SetOperation { op, set_quantifier, left, right } => {
+            let left_query = convert_set_expr(*left)?;
+            let right_query = convert_set_expr(*right)?;
+            let union_op = match op {
+                sqlparser::ast::SetOperator::Union => UnionOperator::Union,
+                sqlparser::ast::SetOperator::Except => UnionOperator::Except,
+                sqlparser::ast::SetOperator::Intersect => UnionOperator::Intersect,
+            };
+            let all = matches!(set_quantifier, sqlparser::ast::SetQuantifier::All);
+            let order_by: Vec<OrderByItem> = vec![];
             Ok(QueryStmt {
-                select_list: vec![],
-                from: None,
-                r#where: None,
-                group_by: vec![],
-                having: None,
-                order_by: vec![],
+                select_list: left_query.select_list,
+                from: left_query.from,
+                r#where: left_query.r#where,
+                group_by: left_query.group_by,
+                having: left_query.having,
+                order_by,
                 limit: None,
                 offset: None,
                 with: None,
+                set_op: Some(SetOperation {
+                    op: union_op,
+                    all,
+                    right: Box::new(right_query),
+                }),
             })
         }
         _ => Err(ParseError::Unsupported("set operation not supported".to_string())),
@@ -2040,6 +2065,7 @@ fn convert_select(
         limit,
         offset,
         with: cte,
+        set_op: None,
     })
 }
 
@@ -2263,6 +2289,7 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
                 limit: None,
                 offset: None,
                 with: None,
+                set_op: None,
             })),
             negated,
         },
@@ -2277,6 +2304,7 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
                 limit: None,
                 offset: None,
                 with: None,
+                set_op: None,
             });
             if negated {
                 Expr::UnaryOp {
@@ -2298,6 +2326,7 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Expr {
                 limit: None,
                 offset: None,
                 with: None,
+                set_op: None,
             }))
         ),
         sqlparser::ast::Expr::Between { expr, negated, low, high } => Expr::Between {

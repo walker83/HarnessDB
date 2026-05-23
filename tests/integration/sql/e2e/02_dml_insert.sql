@@ -169,7 +169,7 @@ SELECT * FROM t1_text ORDER BY id;
 -- Test 1.13: INSERT VARCHAR(30) as DATE (DATE may return empty strings, use VARCHAR)
 CREATE TABLE t1_date (
     id INT,
-    val VARCHAR(30)
+    val DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t1_date VALUES (1, '2024-01-01');
 INSERT INTO t1_date VALUES (2, '1999-12-31');
@@ -182,7 +182,7 @@ SELECT * FROM t1_date ORDER BY id;
 -- Test 1.14: INSERT VARCHAR(30) as DATETIME (DATETIME may return empty strings, use VARCHAR)
 CREATE TABLE t1_datetime (
     id INT,
-    val VARCHAR(30)
+    val DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t1_datetime VALUES (1, '2024-01-01 00:00:00');
 INSERT INTO t1_datetime VALUES (2, '2024-06-15 12:30:45');
@@ -266,8 +266,8 @@ CREATE TABLE t1_nullable_types (
     j CHAR(10),
     k STRING,
     l TEXT,
-    m VARCHAR(30),
-    n VARCHAR(30),
+    m DATE,
+    n DATETIME,
     o BIGINT
 ) DISTRIBUTED BY HASH(a) BUCKETS 3;
 INSERT INTO t1_nullable_types VALUES (
@@ -345,8 +345,8 @@ SELECT * FROM t1_varchar WHERE id = 6;
 -- Test 1.27: INSERT date boundaries
 CREATE TABLE t1_date_boundary (
     id INT,
-    d VARCHAR(30),
-    dt VARCHAR(30)
+    d DATE,
+    dt DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t1_date_boundary VALUES (1, '1970-01-01', '1970-01-01 00:00:01');
 INSERT INTO t1_date_boundary VALUES (2, '2025-12-31', '2025-12-31 23:59:59');
@@ -455,7 +455,7 @@ CREATE TABLE t2_multi_type (
     a INT,
     b VARCHAR(20),
     c DECIMAL(10,2),
-    d VARCHAR(30)
+    d DATE
 ) DISTRIBUTED BY HASH(a) BUCKETS 3;
 INSERT INTO t2_multi_type (a, c) VALUES (1, 99.99);
 INSERT INTO t2_multi_type (b, d) VALUES ('date_only', '2024-06-01');
@@ -488,8 +488,8 @@ SELECT * FROM t2_perm ORDER BY a;
 -- Test 2.12: INSERT with column spec for VARCHAR(30) (DATE/DATETIME converted to VARCHAR)
 CREATE TABLE t2_date_cols (
     id INT,
-    d VARCHAR(30),
-    dt VARCHAR(30),
+    d DATE,
+    dt DATETIME,
     remark VARCHAR(50)
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t2_date_cols (id, d) VALUES (1, '2024-01-01');
@@ -577,7 +577,7 @@ SELECT * FROM t3_null_date ORDER BY id;
 -- Test 3.6: NULL in DATETIME column
 CREATE TABLE t3_null_datetime (
     id INT,
-    dt VARCHAR(30)
+    dt DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t3_null_datetime VALUES (1, NULL);
 INSERT INTO t3_null_datetime VALUES (2, '2024-06-15 12:30:00');
@@ -670,7 +670,7 @@ CREATE TABLE t3_all_null (
     b VARCHAR(20),
     c DECIMAL(10,2),
     d BOOLEAN,
-    e VARCHAR(30)
+    e DATE
 ) DISTRIBUTED BY HASH(a) BUCKETS 3;
 INSERT INTO t3_all_null VALUES (NULL, NULL, NULL, NULL, NULL);
 INSERT INTO t3_all_null VALUES (1, 'val', 10.5, TRUE, '2024-01-01');
@@ -706,8 +706,8 @@ SELECT * FROM t3_null_batch WHERE id >= 5 ORDER BY id;
 -- Test 3.19: NULL in DATE columns batch
 CREATE TABLE t3_null_date_batch (
     id INT,
-    d VARCHAR(30),
-    dt VARCHAR(30)
+    d DATE,
+    dt DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t3_null_date_batch VALUES (1, NULL, '2024-01-01 00:00:00');
 INSERT INTO t3_null_date_batch VALUES (2, '2024-06-15', NULL);
@@ -952,8 +952,8 @@ SELECT * FROM t5_batch_types ORDER BY id;
 -- Test 5.7: Batch insert with DATE
 CREATE TABLE t5_batch_date (
     id INT,
-    d VARCHAR(30),
-    dt VARCHAR(30)
+    d DATE,
+    dt DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t5_batch_date VALUES
     (1, '2024-01-01', '2024-01-01 00:00:00'),
@@ -1405,13 +1405,37 @@ INSERT INTO t6_sel_where SELECT NULL, NULL, NULL;
 SELECT * FROM t6_sel_where WHERE id IS NULL;
 -- Expected: 1 row with all NULLs
 
--- Test 6.27: INSERT SELECT with UNION -- NOT SUPPORTED
--- UNION inside INSERT INTO SELECT is silently discarded by the parser.
--- Use direct SELECT ... UNION (not inside INSERT) instead.
+-- Test 6.27: INSERT SELECT with UNION
+-- Expected: combined rows from two SELECT queries
+CREATE TABLE t6_sel_union (
+    id INT,
+    category VARCHAR(20),
+    amount INT,
+    score DOUBLE
+) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t6_sel_union
+SELECT * FROM t6_source WHERE category = 'A'
+UNION
+SELECT * FROM t6_source WHERE category = 'B';
+SELECT COUNT(*) FROM t6_sel_union;
+-- Expected: 7 rows
+DROP TABLE t6_sel_union;
 
--- Test 6.28: INSERT SELECT with UNION ALL -- NOT SUPPORTED
--- UNION ALL inside INSERT INTO SELECT is silently discarded by the parser.
--- Use direct SELECT ... UNION ALL (not inside INSERT) instead.
+-- Test 6.28: INSERT SELECT with UNION ALL
+-- Expected: combined rows from two queries including duplicates
+CREATE TABLE t6_sel_union_all (
+    id INT,
+    category VARCHAR(20),
+    amount INT,
+    score DOUBLE
+) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t6_sel_union_all
+SELECT * FROM t6_source WHERE category = 'A'
+UNION ALL
+SELECT * FROM t6_source WHERE category = 'B';
+SELECT COUNT(*) FROM t6_sel_union_all;
+-- Expected: 7 rows (4 A + 3 B)
+DROP TABLE t6_sel_union_all;
 
 -- Test 6.29: INSERT SELECT with arithmetic on selected columns
 CREATE TABLE t6_sel_arith (
@@ -1579,7 +1603,7 @@ SELECT * FROM t7_str_to_big ORDER BY id;
 -- Test 7.9: Insert string date into VARCHAR(30) column (DATE may return empty strings, use VARCHAR)
 CREATE TABLE t7_str_to_date (
     id INT,
-    d VARCHAR(30)
+    d DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t7_str_to_date VALUES (1, '2024-01-01');
 INSERT INTO t7_str_to_date VALUES (2, '2024-12-31');
@@ -1590,7 +1614,7 @@ SELECT * FROM t7_str_to_date ORDER BY id;
 -- Test 7.10: Insert string datetime into VARCHAR(30) column (DATETIME may return empty strings, use VARCHAR)
 CREATE TABLE t7_str_to_dt (
     id INT,
-    dt VARCHAR(30)
+    dt DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t7_str_to_dt VALUES (1, '2024-01-01 12:30:00');
 INSERT INTO t7_str_to_dt VALUES (2, '2024-06-15 00:00:00');
@@ -1663,7 +1687,7 @@ SELECT * FROM t7_str_to_large ORDER BY id;
 -- Test 7.18: Insert INT into DATE column
 CREATE TABLE t7_int_to_date (
     id INT,
-    d VARCHAR(30)
+    d DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t7_int_to_date VALUES (1, '2024-01-01');
 INSERT INTO t7_int_to_date VALUES (2, '2024-06-15');
@@ -1718,8 +1742,8 @@ CREATE TABLE t8_12mixed (
     g DOUBLE,
     h DECIMAL(10,2),
     i VARCHAR(20),
-    j VARCHAR(30),
-    k VARCHAR(30)
+    j DATE,
+    k DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t8_12mixed VALUES (
     1, TRUE, 1, 10, 100, 1000, 1.1, 2.2, 3.33, 'str', '2024-01-01', '2024-01-01 12:00:00'
@@ -1773,7 +1797,7 @@ CREATE TABLE t8_8wide (
     name VARCHAR(50),
     salary DECIMAL(12,2),
     bonus DECIMAL(8,2),
-    hire_date VARCHAR(30),
+    hire_date DATE,
     dept VARCHAR(30),
     active BOOLEAN,
     notes TEXT
@@ -1825,8 +1849,8 @@ CREATE TABLE t8_all_types (
     j CHAR(10),
     k STRING,
     l TEXT,
-    m VARCHAR(30),
-    n VARCHAR(30),
+    m DATE,
+    n DATETIME
     o BIGINT
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t8_all_types VALUES (
@@ -2171,8 +2195,8 @@ SELECT * FROM t10_def WHERE id = 5;
 CREATE TABLE t10_def_date (
     id INT,
     name VARCHAR(50),
-    created_date VARCHAR(30) DEFAULT '2024-01-01',
-    ts VARCHAR(30) DEFAULT '2024-01-01 00:00:00'
+    created_date DATE DEFAULT '2024-01-01',
+    ts DATETIME DEFAULT '2024-01-01 00:00:00'
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t10_def_date (id, name) VALUES (1, 'default_date');
 SELECT * FROM t10_def_date WHERE id = 1;

@@ -81,15 +81,13 @@ SELECT * FROM t_char ORDER BY id;
 -- Expected: (1, ABC), (2, DEF)
 
 -- Test 1.14: SELECT with DATE column
-CREATE TABLE t_date (id INT, dt VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
--- Note: Using VARCHAR for DATE due to server limitation
+CREATE TABLE t_date (id INT, dt DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_date VALUES (1, '2024-01-15'), (2, '2024-06-30'), (3, '2025-12-25');
 SELECT * FROM t_date ORDER BY id;
 -- Expected: 3 rows with dates
 
 -- Test 1.15: SELECT with DATETIME column
-CREATE TABLE t_datetime (id INT, ts VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
--- Note: Using VARCHAR for DATETIME due to server limitation
+CREATE TABLE t_datetime (id INT, ts DATETIME) DISTRIBUTED BY HASH(id) BUCKETS 3;
 INSERT INTO t_datetime VALUES (1, '2024-01-15 10:30:00'), (2, '2024-06-30 23:59:59');
 SELECT * FROM t_datetime ORDER BY id;
 -- Expected: 2 rows with datetimes
@@ -129,7 +127,6 @@ SELECT * FROM t_big ORDER BY id;
 
 -- Test 1.22: SELECT with LARGEINT column
 CREATE TABLE t_large (id INT, val BIGINT) DISTRIBUTED BY HASH(id) BUCKETS 3;
--- Note: Using BIGINT instead of LARGEINT due to server limitation
 INSERT INTO t_large VALUES (1, 12345678901234567890), (2, -9876543210987654321);
 SELECT * FROM t_large ORDER BY id;
 
@@ -2481,8 +2478,8 @@ CREATE TABLE t_all_types (
     dec_col DECIMAL(10,2),
     vc VARCHAR(20),
     txt TEXT,
-    dt VARCHAR(30),  -- Note: Using VARCHAR for DATE due to server limitation
-    dttm VARCHAR(30)  -- Note: Using VARCHAR for DATETIME due to server limitation
+    dt DATE,
+    dttm DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_all_types VALUES (

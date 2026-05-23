@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arrow_array::RecordBatch;
-use arrow_schema::Schema as ArrowSchema;
+use arrow_array::{ArrayRef, new_null_array};
+use arrow_schema::{Field, Schema as ArrowSchema};
 use thiserror::Error;
 use tracing::debug;
 
@@ -49,7 +50,7 @@ impl ParquetStorage {
         Ok(Self { data_dir })
     }
 
-    fn table_dir(&self, db: &str, table: &str) -> PathBuf {
+    pub fn table_dir(&self, db: &str, table: &str) -> PathBuf {
         self.data_dir.join(db).join(table)
     }
 
@@ -163,6 +164,55 @@ impl ParquetStorage {
         self::write::write_parquet_atomic(&path, &kept)?;
         debug!("Deleted {} rows from {}.{}", deleted_count, db, table);
         Ok(deleted_count)
+    }
+
+    /// Rewrite the Parquet file by dropping a column at `col_index`.
+    pub fn rewrite_parquet_drop_column(&self, db: &str, table: &str, col_index: usize) -> Result<()> {
+        let path = self.parquet_path(db, table);
+        if !path.exists() {
+            return Ok(());
+        }
+        let existing = self::read::read_parquet(&path)?;
+        if existing.num_rows() == 0 {
+            return Ok(());
+        }
+        // Project out the column
+        let mut indices: Vec<usize> = (0..existing.num_columns()).collect();
+        if col_index >= indices.len() {
+            return Err(StorageError::Other(format!(
+                "Column index {} out of range (num_columns={})",
+                col_index,
+                indices.len()
+            )));
+        }
+        indices.remove(col_index);
+        let projected = existing
+            .project(&indices)
+            .map_err(|e| StorageError::Arrow(e.to_string()))?;
+        self::write::write_parquet_atomic(&path, &projected)?;
+        Ok(())
+    }
+
+    /// Rewrite the Parquet file by appending a NULL column for existing rows.
+    pub fn rewrite_parquet_add_column(&self, db: &str, table: &str, field: &Field) -> Result<()> {
+        let path = self.parquet_path(db, table);
+        if !path.exists() {
+            return Ok(());
+        }
+        let existing = self::read::read_parquet(&path)?;
+        if existing.num_rows() == 0 {
+            return Ok(());
+        }
+        // Create null array for new column
+        let null_array = new_null_array(field.data_type(), existing.num_rows());
+        let mut fields: Vec<Field> = existing.schema().fields().iter().map(|f| f.as_ref().clone()).collect();
+        fields.push(field.clone());
+        let mut columns: Vec<ArrayRef> = existing.columns().to_vec();
+        columns.push(null_array);
+        let new_batch = RecordBatch::try_new(Arc::new(ArrowSchema::new(fields)), columns)
+            .map_err(|e| StorageError::Arrow(e.to_string()))?;
+        self::write::write_parquet_atomic(&path, &new_batch)?;
+        Ok(())
     }
 
     /// Truncate a table: delete data file and recreate empty.

@@ -144,6 +144,14 @@ pub struct QueryStmt {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
     pub with: Option<Cte>,
+    pub set_op: Option<SetOperation>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetOperation {
+    pub op: UnionOperator,
+    pub all: bool,
+    pub right: Box<QueryStmt>,
 }
 
 #[derive(Debug, Clone)]

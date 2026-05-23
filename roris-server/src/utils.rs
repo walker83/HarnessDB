@@ -25,6 +25,7 @@ pub(crate) fn parse_data_type(s: &str) -> DataType {
         "INT16" | "SMALLINT" => DataType::Int16,
         "INT32" | "INT" => DataType::Int32,
         "INT64" | "BIGINT" => DataType::Int64,
+        "INT128" | "LARGEINT" => DataType::Int128,
         "FLOAT32" | "FLOAT" => DataType::Float32,
         "FLOAT64" | "DOUBLE" => DataType::Float64,
         "STRING" | "VARCHAR" | "TEXT" => DataType::String,
@@ -515,6 +516,21 @@ pub(crate) fn build_arrow_array_from_exprs(
                 Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
                     Expr::Literal(LiteralValue::Int64(n)) => Some(-*n),
                     Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i64)),
+                    _ => None,
+                },
+                _ => None,
+            }).collect();
+            Arc::new(arr)
+        }
+        ADT::Decimal128(_, _) => {
+            // LARGEINT maps to Decimal128; build from Int64/Float64 literals
+            let arr: Decimal128Array = exprs.iter().map(|e| match e {
+                Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(*n)),
+                Expr::Literal(LiteralValue::Float64(f)) => Some(*f as i128),
+                Expr::Literal(LiteralValue::Null) => None,
+                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(-*n)),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i128)),
                     _ => None,
                 },
                 _ => None,

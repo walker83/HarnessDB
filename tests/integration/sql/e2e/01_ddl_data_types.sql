@@ -604,14 +604,13 @@ SELECT description FROM t_text WHERE description LIKE 'Start%' ORDER BY id;
 DROP TABLE t_text;
 
 -- =============================================================================
--- Section 15: DATE Type (stored as VARCHAR due to server limitation)
+-- Section 15: DATE Type
 -- =============================================================================
 
--- Test 15.1: Create table with DATE column as VARCHAR
--- Note: DATE column used as VARCHAR due to server limitation
+-- Test 15.1: Create table with DATE column
 CREATE TABLE t_date (
     id INT,
-    dt VARCHAR(30)
+    dt DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 -- Test 15.2: INSERT standard DATE
@@ -656,14 +655,13 @@ SELECT dt FROM t_date WHERE id = 9;
 DROP TABLE t_date;
 
 -- =============================================================================
--- Section 16: DATETIME Type (stored as VARCHAR due to server limitation)
+-- Section 16: DATETIME Type
 -- =============================================================================
 
--- Test 16.1: Create table with DATETIME column as VARCHAR
--- Note: DATETIME column used as VARCHAR due to server limitation
+-- Test 16.1: Create table with DATETIME column
 CREATE TABLE t_datetime (
     id INT,
-    ts VARCHAR(30)
+    ts DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 -- Test 16.2: INSERT standard DATETIME
@@ -787,8 +785,8 @@ CREATE TABLE t_defaults (
     age INT DEFAULT 18,
     is_active BOOLEAN DEFAULT TRUE,
     score DECIMAL(5,2) DEFAULT 0.00,
-    -- Note: DATE column used as VARCHAR due to server limitation
-    created VARCHAR(30) DEFAULT '2024-01-01'
+   
+    created DATE DEFAULT '2024-01-01'
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 -- Test 18.2: INSERT with no DEFAULT columns (use defaults)
@@ -840,9 +838,9 @@ CREATE TABLE t_default_all_types (
     i DECIMAL(10,2) DEFAULT 99.99,
     j VARCHAR(10) DEFAULT 'text',
     k CHAR(5) DEFAULT 'AB',
-    -- Note: DATE/DATETIME columns used as VARCHAR due to server limitation
-    l VARCHAR(30) DEFAULT '2024-06-01',
-    m VARCHAR(30) DEFAULT '2024-06-01 12:00:00'
+   
+    l DATE DEFAULT '2024-06-01',
+    m DATETIME DEFAULT '2024-06-01 12:00:00'
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_default_all_types (id) VALUES (1);
@@ -962,7 +960,7 @@ SELECT is_active FROM t_alter_add ORDER BY id;
 -- Expected: all NULL (new column has no default)
 
 -- Test 20.8: ADD VARCHAR column for date data (DATE not supported)
-ALTER TABLE t_alter_add ADD COLUMN created_date VARCHAR(30);
+ALTER TABLE t_alter_add ADD COLUMN created_date DATE;
 INSERT INTO t_alter_add VALUES (5, 'Eve', 32, 'eve@test.com', 80000.00, TRUE, '2024-03-15');
 SELECT created_date FROM t_alter_add WHERE id = 5;
 -- Expected: 2024-03-15
@@ -993,16 +991,55 @@ DROP TABLE t_alter_add2;
 DROP TABLE t_alter_add3;
 
 -- ============================================================================
--- Section 21: ALTER TABLE DROP COLUMN — NOT SUPPORTED
--- The parser recognizes this syntax but the handler silently ignores it.
--- These tests are skipped.
+-- Section 21: ALTER TABLE DROP COLUMN
 -- ============================================================================
 
+-- Test 21.1: DROP COLUMN basic
+CREATE TABLE t_drop_col (id INT, name VARCHAR(20), age INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_drop_col VALUES (1, 'Alice', 30), (2, 'Bob', 25);
+ALTER TABLE t_drop_col DROP COLUMN age;
+SELECT id, name FROM t_drop_col ORDER BY id;
+-- Expected: 2 rows: (1, 'Alice'), (2, 'Bob') (only id and name remain)
+DROP TABLE t_drop_col;
+
+-- Test 21.2: DROP COLUMN and verify INSERT still works
+CREATE TABLE t_drop_col2 (id INT, a INT, b INT, c INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_drop_col2 VALUES (1, 10, 20, 30);
+ALTER TABLE t_drop_col2 DROP COLUMN c;
+INSERT INTO t_drop_col2 VALUES (2, 40, 50);
+SELECT * FROM t_drop_col2 ORDER BY id;
+-- Expected: (1, 10, 20), (2, 40, 50)
+DROP TABLE t_drop_col2;
+
+-- Test 21.3: DROP multiple columns
+CREATE TABLE t_drop_col3 (id INT, a INT, b INT, c INT, d INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_drop_col3 VALUES (1, 10, 20, 30, 40);
+ALTER TABLE t_drop_col3 DROP COLUMN b;
+ALTER TABLE t_drop_col3 DROP COLUMN d;
+SELECT * FROM t_drop_col3 ORDER BY id;
+-- Expected: (1, 10, 30)
+DROP TABLE t_drop_col3;
+
 -- ============================================================================
--- Section 22: ALTER TABLE RENAME — NOT SUPPORTED
--- ALTER TABLE RENAME TO is parsed but not reliably executed.
--- These tests are skipped.
+-- Section 22: ALTER TABLE RENAME
 -- ============================================================================
+
+-- Test 22.1: ALTER TABLE RENAME TO basic
+CREATE TABLE t_rename_old (id INT, val VARCHAR(20)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_rename_old VALUES (1, 'test1'), (2, 'test2');
+ALTER TABLE t_rename_old RENAME TO t_rename_new;
+SELECT * FROM t_rename_new ORDER BY id;
+-- Expected: 2 rows: (1, 'test1'), (2, 'test2')
+DROP TABLE t_rename_new;
+
+-- Test 22.2: RENAME with data, verify operations on new name
+CREATE TABLE t_rename_a (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_rename_a VALUES (1, 100), (2, 200);
+ALTER TABLE t_rename_a RENAME TO t_rename_b;
+INSERT INTO t_rename_b VALUES (3, 300);
+SELECT SUM(val) FROM t_rename_b;
+-- Expected: 600
+DROP TABLE t_rename_b;
 
 -- =============================================================================
 -- Section 23: CREATE / DROP DATABASE
@@ -1074,8 +1111,8 @@ SELECT `my-id`, `my.name`, `my@column` FROM `t-special`;
 CREATE TABLE t_reserved (
     `select` INT,
     `from` VARCHAR(10),
-    -- Note: DATE column used as VARCHAR due to server limitation
-    `where` VARCHAR(30)
+   
+    `where` DATE
 ) DISTRIBUTED BY HASH(`select`) BUCKETS 3;
 
 INSERT INTO t_reserved VALUES (1, 'data', '2024-01-01');
@@ -1190,9 +1227,9 @@ CREATE TABLE t_all_types (
     c_char CHAR(20),
     c_string STRING,
     c_text TEXT,
-    -- Note: DATE/DATETIME columns used as VARCHAR due to server limitation
-    c_date VARCHAR(30),
-    c_datetime VARCHAR(30)
+   
+    c_date DATE,
+    c_datetime DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 -- Test 27.2: INSERT all types with values
@@ -1469,8 +1506,7 @@ INSERT INTO t_alter_seq VALUES (1, 'base');
 ALTER TABLE t_alter_seq ADD COLUMN col1 INT;
 ALTER TABLE t_alter_seq ADD COLUMN col2 VARCHAR(20);
 ALTER TABLE t_alter_seq ADD COLUMN col3 DOUBLE;
--- Note: DATE column used as VARCHAR due to server limitation
-ALTER TABLE t_alter_seq ADD COLUMN col4 VARCHAR(30);
+ALTER TABLE t_alter_seq ADD COLUMN col4 DATE;
 
 DESCRIBE t_alter_seq;
 -- Expected: 6 columns total
@@ -1554,9 +1590,9 @@ CREATE TABLE t_describe_all (
     ch CHAR(10),
     str STRING,
     txt TEXT,
-    -- Note: DATE/DATETIME columns used as VARCHAR due to server limitation
-    dt VARCHAR(30),
-    dttm VARCHAR(30)
+   
+    dt DATE,
+    dttm DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 DESCRIBE t_describe_all;
@@ -1665,10 +1701,9 @@ DROP TABLE IF EXISTS t_drop_data;
 -- =============================================================================
 
 -- Test 37.1: DUPLICATE KEY with VARCHAR column (DATE not supported)
--- Note: DATE column used as VARCHAR due to server limitation
 CREATE TABLE t_dup_date (
     id INT,
-    event_date VARCHAR(30),
+    event_date DATE,
     event_name VARCHAR(50)
 ) DUPLICATE KEY(id, event_date)
   DISTRIBUTED BY HASH(id) BUCKETS 3;
@@ -1707,15 +1742,32 @@ SELECT COUNT(*) FROM t_dup_vc;
 DROP TABLE t_dup_vc;
 
 -- ============================================================================
--- Section 38: ALTER TABLE DROP and Re-ADD — NOT SUPPORTED
--- DROP COLUMN is parsed but silently ignored by the handler.
--- These tests are skipped.
+-- Section 38: ALTER TABLE DROP and Re-ADD
 -- ============================================================================
 
+-- Test 38.1: DROP then ADD column with same name
+CREATE TABLE t_drop_readd (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_drop_readd VALUES (1, 100), (2, 200);
+ALTER TABLE t_drop_readd DROP COLUMN val;
+ALTER TABLE t_drop_readd ADD COLUMN val VARCHAR(20);
+INSERT INTO t_drop_readd VALUES (3, 'new_val');
+SELECT * FROM t_drop_readd ORDER BY id;
+-- Expected: (1, NULL), (2, NULL), (3, 'new_val')
+DROP TABLE t_drop_readd;
+
 -- ============================================================================
--- Section 39: Rename Table with Data and Add/Verify — NOT SUPPORTED
--- ALTER TABLE RENAME TO is parsed but not reliably executed.
--- These tests are skipped.
+-- Section 39: Rename Table with Data and Add/Verify
+-- ============================================================================
+
+-- Test 39.1: RENAME, ADD COLUMN, INSERT, verify
+CREATE TABLE t_rename_data (id INT, name VARCHAR(20)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+INSERT INTO t_rename_data VALUES (1, 'original'), (2, 'data');
+ALTER TABLE t_rename_data RENAME TO t_rename_verify;
+ALTER TABLE t_rename_verify ADD COLUMN score INT;
+INSERT INTO t_rename_verify VALUES (3, 'new', 100);
+SELECT * FROM t_rename_verify ORDER BY id;
+-- Expected: (1, 'original', NULL), (2, 'data', NULL), (3, 'new', 100)
+DROP TABLE t_rename_verify;
 -- ============================================================================
 
 -- =============================================================================
@@ -1762,14 +1814,13 @@ SELECT id FROM t_float_comp WHERE a = b;
 DROP TABLE t_float_comp;
 
 -- =============================================================================
--- Section 41: DATE/DATETIME Edge Cases (stored as VARCHAR due to server limitation)
+-- Section 41: DATE/DATETIME Edge Cases
 -- =============================================================================
 
--- Test 41.1: DATE month boundary (stored as VARCHAR due to server limitation)
--- Note: DATE column used as VARCHAR due to server limitation
+-- Test 41.1: DATE month boundary
 CREATE TABLE t_date_boundary (
     id INT,
-    dt VARCHAR(30)
+    dt DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_date_boundary VALUES (1, '2024-01-31');
@@ -1783,11 +1834,10 @@ SELECT COUNT(*) FROM t_date_boundary;
 
 DROP TABLE t_date_boundary;
 
--- Test 41.2: DATETIME time boundary (stored as VARCHAR due to server limitation)
--- Note: DATETIME column used as VARCHAR due to server limitation
+-- Test 41.2: DATETIME time boundary
 CREATE TABLE t_dt_boundary (
     id INT,
-    ts VARCHAR(30)
+    ts DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_dt_boundary VALUES (1, '2024-01-01 00:00:00');
@@ -1799,11 +1849,10 @@ SELECT ts FROM t_dt_boundary ORDER BY ts;
 
 DROP TABLE t_dt_boundary;
 
--- Test 41.3: DATE year boundary (stored as VARCHAR due to server limitation)
--- Note: DATE column used as VARCHAR due to server limitation
+-- Test 41.3: DATE year boundary
 CREATE TABLE t_date_year (
     id INT,
-    dt VARCHAR(30)
+    dt DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_date_year VALUES (1, '2023-12-31');
@@ -1815,14 +1864,13 @@ SELECT MIN(dt), MAX(dt) FROM t_date_year;
 DROP TABLE t_date_year;
 
 -- =============================================================================
--- Section 42: DATETIME with Different Formats (stored as VARCHAR due to server limitation)
+-- Section 42: DATETIME with Different Formats
 -- =============================================================================
 
--- Test 42.1: DATETIME compact format (stored as VARCHAR due to server limitation)
--- Note: DATETIME column used as VARCHAR due to server limitation
+-- Test 42.1: DATETIME compact format
 CREATE TABLE t_dt_compact (
     id INT,
-    ts VARCHAR(30)
+    ts DATETIME
 
 INSERT INTO t_dt_compact VALUES (1, '20240101000000');
 SELECT ts FROM t_dt_compact WHERE id = 1;
@@ -1830,11 +1878,10 @@ SELECT ts FROM t_dt_compact WHERE id = 1;
 
 DROP TABLE t_dt_compact;
 
--- Test 42.2: DATETIME with microseconds (stored as VARCHAR due to server limitation)
--- Note: DATETIME column used as VARCHAR due to server limitation
+-- Test 42.2: DATETIME with microseconds
 CREATE TABLE t_dt_usec (
     id INT,
-    ts VARCHAR(30)
+    ts DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_dt_usec VALUES (1, '2024-06-15 10:30:00.123456');
@@ -1860,10 +1907,9 @@ CREATE TABLE t_multi_b (
     val INT
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
--- Note: DATE column used as VARCHAR due to server limitation
 CREATE TABLE t_multi_c (
     id INT,
-    dt VARCHAR(30)
+    dt DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_multi_a VALUES (1, 'a'), (2, 'b');
@@ -1931,8 +1977,8 @@ CREATE TABLE t_all_notnull (
     a INT NOT NULL DEFAULT 0,
     b VARCHAR(20) NOT NULL DEFAULT 'N/A',
     c BOOLEAN NOT NULL DEFAULT FALSE,
-    -- Note: DATE column used as VARCHAR due to server limitation
-    d VARCHAR(30) NOT NULL DEFAULT '2000-01-01',
+   
+    d DATE NOT NULL DEFAULT '2000-01-01',
     e DECIMAL(10,2) NOT NULL DEFAULT 0.00
 ) DISTRIBUTED BY HASH(a) BUCKETS 3;
 
@@ -2118,14 +2164,13 @@ SELECT SUM(flag) FROM t_bool_expr;
 DROP TABLE t_bool_expr;
 
 -- =============================================================================
--- Section 52: DATE/DATETIME ORDER BY and Comparison (stored as VARCHAR due to server limitation)
+-- Section 52: DATE/DATETIME ORDER BY and Comparison
 -- =============================================================================
 
--- Test 52.1: DATE ORDER BY DESC (stored as VARCHAR due to server limitation)
--- Note: DATE column used as VARCHAR due to server limitation
+-- Test 52.1: DATE ORDER BY DESC
 CREATE TABLE t_date_order (
     id INT,
-    dt VARCHAR(30)
+    dt DATE
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_date_order VALUES
@@ -2140,10 +2185,10 @@ SELECT dt FROM t_date_order ORDER BY dt DESC;
 
 DROP TABLE t_date_order;
 
--- Test 52.2: DATETIME range queries (stored as VARCHAR due to server limitation)
+-- Test 52.2: DATETIME range queries
 CREATE TABLE t_dt_range (
     id INT,
-    ts VARCHAR(30)
+    ts DATETIME
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_dt_range VALUES
@@ -2361,8 +2406,8 @@ CREATE TABLE t_lifecycle (
     name VARCHAR(50) NOT NULL DEFAULT 'unknown',
     score DECIMAL(5,2) DEFAULT 0.00,
     active BOOLEAN DEFAULT TRUE,
-    -- Note: DATE column used as VARCHAR due to server limitation
-    created VARCHAR(30) DEFAULT '2024-01-01'
+   
+    created DATE DEFAULT '2024-01-01'
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_lifecycle VALUES (1, 'Alice', 95.50, TRUE, '2024-06-01');
@@ -2398,8 +2443,7 @@ USE e2e_multi_op;
 
 CREATE TABLE t_a (id INT, val VARCHAR(10)) DISTRIBUTED BY HASH(id) BUCKETS 3;
 CREATE TABLE t_b (id INT, val INT) DISTRIBUTED BY HASH(id) BUCKETS 3;
--- Note: DATE column used as VARCHAR due to server limitation
-CREATE TABLE t_c (id INT, val VARCHAR(30)) DISTRIBUTED BY HASH(id) BUCKETS 3;
+CREATE TABLE t_c (id INT, val DATE) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_a VALUES (1, 'one'), (2, 'two');
 INSERT INTO t_b VALUES (1, 100), (2, 200);
@@ -2427,14 +2471,13 @@ DROP DATABASE e2e_multi_op;
 -- Test 99.3: Very wide table (25 columns)
 -- =============================================================================
 
--- Note: DATE/DATETIME columns used as VARCHAR due to server limitation
 CREATE TABLE t_wide (
     id INT,
     c01 TINYINT,    c02 SMALLINT,   c03 INT,         c04 BIGINT,     c05 BIGINT,
     c06 FLOAT,      c07 DOUBLE,     c08 DECIMAL(12,2), c09 VARCHAR(20), c10 CHAR(5),
-    c11 BOOLEAN,    c12 VARCHAR(30), c13 VARCHAR(30), c14 TEXT,       c15 STRING,
+    c11 BOOLEAN,    c12 DATE, c13 DATETIME, c14 TEXT,       c15 STRING,
     c16 TINYINT,    c17 SMALLINT,   c18 INT,          c19 BIGINT,     c20 DECIMAL(10,2),
-    c21 VARCHAR(30), c22 BOOLEAN,   c23 VARCHAR(30),  c24 VARCHAR(30), c25 STRING
+    c21 VARCHAR(30), c22 BOOLEAN,   c23 DATE,  c24 DATETIME, c25 STRING
 ) DISTRIBUTED BY HASH(id) BUCKETS 3;
 
 INSERT INTO t_wide VALUES (

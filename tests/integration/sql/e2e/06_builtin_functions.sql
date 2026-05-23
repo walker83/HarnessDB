@@ -1,8 +1,7 @@
 -- ============================================================================
 -- E2E Test: Built-in Functions
--- Tests supported built-in functions across string, math, date/time,
--- conditional, conversion, and other categories. Unsupported functions are
--- documented with NOT SUPPORTED markers to serve as future work items.
+-- Tests built-in functions across string, math, date/time,
+-- conditional, conversion, and other categories.
 -- ============================================================================
 
 DROP DATABASE IF EXISTS e2e_functions_test;
@@ -333,29 +332,35 @@ SELECT '1.68 INSTR basic' AS test_name, INSTR(s1, 'World') AS result FROM t_fn_d
 -- Expected: 0
 SELECT '1.69 INSTR not found' AS test_name, INSTR(s1, 'xyz') AS result FROM t_fn_data WHERE id = 1;
 
--- Test 1.70: HEX basic — NOT SUPPORTED in RorisDB (DataFusion has encode/decode but no HEX)
--- SELECT '1.70 HEX basic' AS test_name, HEX(s1) AS result FROM t_fn_data WHERE id = 1;
-SELECT '1.70 HEX basic not supported' AS test_name;
+-- Test 1.70: HEX basic
 
--- Test 1.71: HEX empty string — NOT SUPPORTED
--- SELECT '1.71 HEX empty' AS test_name, HEX(s_empty) AS result FROM t_fn_data WHERE id = 1;
-SELECT '1.71 HEX empty not supported' AS test_name;
+SELECT '1.70 HEX basic' AS test_name, HEX(s1) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 1.72: HEX of numbers — NOT SUPPORTED
--- SELECT '1.72 HEX number' AS test_name, HEX(num1) AS result FROM t_fn_data WHERE id = 1;
-SELECT '1.72 HEX number not supported' AS test_name;
 
--- Test 1.73: UNHEX basic — NOT SUPPORTED
--- SELECT '1.73 UNHEX basic' AS test_name, UNHEX('48656C6C6F') AS result;
-SELECT '1.73 UNHEX basic not supported' AS test_name;
+-- Test 1.71: HEX empty string
 
--- Test 1.74: UNHEX invalid hex — NOT SUPPORTED
--- SELECT '1.74 UNHEX invalid' AS test_name, UNHEX('XYZ') AS result;
-SELECT '1.74 UNHEX invalid not supported' AS test_name;
+SELECT '1.71 HEX empty' AS test_name, HEX(s_empty) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 1.75: UNHEX and HEX round-trip — NOT SUPPORTED
--- SELECT '1.75 HEX/UNHEX roundtrip' AS test_name, UNHEX(HEX('Hello World')) AS result;
-SELECT '1.75 HEX/UNHEX roundtrip not supported' AS test_name;
+
+-- Test 1.72: HEX of numbers
+
+SELECT '1.72 HEX number' AS test_name, HEX(num1) AS result FROM t_fn_data WHERE id = 1;
+
+
+-- Test 1.73: UNHEX basic
+
+SELECT '1.73 UNHEX basic' AS test_name, UNHEX('48656C6C6F') AS result;
+
+
+-- Test 1.74: UNHEX invalid hex
+
+SELECT '1.74 UNHEX invalid' AS test_name, UNHEX('XYZ') AS result;
+
+
+-- Test 1.75: UNHEX and HEX round-trip
+
+SELECT '1.75 HEX/UNHEX roundtrip' AS test_name, UNHEX(HEX('Hello World')) AS result;
+
 
 -- ---------------------------------------------------------------------------
 -- Sub-category: Math Functions
@@ -427,19 +432,19 @@ SELECT '2.16 ROUND halfway' AS test_name, ROUND(123.5, 0) AS result;
 
 -- Test 2.17: TRUNCATE basic (via DataFusion trunc)
 -- Expected: 123
-SELECT '2.17 TRUNCATE basic' AS test_name, trunc(123.456, 0) AS result;
+SELECT '2.17 TRUNCATE basic' AS test_name, truncate(123.456, 0) AS result;
 
 -- Test 2.18: TRUNCATE to 2 decimals
 -- Expected: 123.45
-SELECT '2.18 TRUNCATE decimals' AS test_name, trunc(123.456, 2) AS result;
+SELECT '2.18 TRUNCATE decimals' AS test_name, truncate(123.456, 2) AS result;
 
 -- Test 2.19: TRUNCATE negative places
 -- Expected: 120
-SELECT '2.19 TRUNCATE neg places' AS test_name, trunc(123.456, -1) AS result;
+SELECT '2.19 TRUNCATE neg places' AS test_name, truncate(123.456, -1) AS result;
 
 -- Test 2.20: TRUNCATE with integer
 -- Expected: 42
-SELECT '2.20 TRUNCATE integer' AS test_name, trunc(num1, 0) AS result FROM t_fn_data WHERE id = 3;
+SELECT '2.20 TRUNCATE integer' AS test_name, truncate(num1, 0) AS result FROM t_fn_data WHERE id = 3;
 
 -- Test 2.21: MOD basic
 -- Expected: 1 (100 % 3 = 1)
@@ -591,7 +596,7 @@ SELECT '2.57 CEIL division' AS test_name, CEIL(num1 / num2) AS result FROM t_fn_
 
 -- Test 2.58: TRUNCATE on negative (via DataFusion trunc)
 -- Expected: -123 (truncated toward zero)
-SELECT '2.58 TRUNCATE negative' AS test_name, trunc(-123.456, 0) AS result;
+SELECT '2.58 TRUNCATE negative' AS test_name, truncate(-123.456, 0) AS result;
 
 -- ---------------------------------------------------------------------------
 -- Sub-category: Date/Time Functions
@@ -709,10 +714,10 @@ SELECT '3.27 DATE_ADD day' AS test_name, days_add(CAST(d1 AS DATE), 5) AS result
 -- Expected: '2024-02-15'
 SELECT '3.28 DATE_ADD month' AS test_name, months_add(CAST(d1 AS DATE), 1) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 3.29: DATE_ADD interval year — NOT SUPPORTED in RorisDB
--- No equivalent days_add/months_add for years. Could use CAST(d1 AS DATE) + make_interval(years => 1) if supported.
--- SELECT '3.29 DATE_ADD year' AS test_name, DATE_ADD(d1, INTERVAL 1 YEAR) AS result FROM t_fn_data WHERE id = 1;
-SELECT '3.29 DATE_ADD year not supported' AS test_name;
+-- Test 3.29: DATE_ADD interval year
+
+SELECT '3.29 DATE_ADD year' AS test_name, DATE_ADD(d1, INTERVAL 1 YEAR) AS result FROM t_fn_data WHERE id = 1;
+
 
 -- Test 3.30: DATE_ADD negative interval (via days_add with negative)
 -- Expected: '2023-12-15'
@@ -726,22 +731,25 @@ SELECT '3.31 DATE_SUB basic' AS test_name, days_add(CAST(d1 AS DATE), -15) AS re
 -- Expected: '2023-12-15'
 SELECT '3.32 DATE_SUB month' AS test_name, months_add(CAST(d1 AS DATE), -1) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 3.33: DATEDIFF basic — NOT SUPPORTED in RorisDB
--- No DATEDIFF equivalent registered in DataFusion.
--- SELECT '3.33 DATEDIFF basic' AS test_name, DATEDIFF(d1, d2) AS result FROM t_fn_data WHERE id = 1;
-SELECT '3.33 DATEDIFF basic not supported' AS test_name;
+-- Test 3.33: DATEDIFF basic
 
--- Test 3.34: DATEDIFF same date — NOT SUPPORTED
--- SELECT '3.34 DATEDIFF same' AS test_name, DATEDIFF(d1, d1) AS result FROM t_fn_data WHERE id = 1;
-SELECT '3.34 DATEDIFF same not supported' AS test_name;
+SELECT '3.33 DATEDIFF basic' AS test_name, DATEDIFF(d1, d2) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 3.35: DATEDIFF leap year crossover — NOT SUPPORTED
--- SELECT '3.35 DATEDIFF leap' AS test_name, DATEDIFF(d2, d1) AS result FROM t_fn_data WHERE id = 2;
-SELECT '3.35 DATEDIFF leap not supported' AS test_name;
 
--- Test 3.36: DATEDIFF with NULL — NOT SUPPORTED
--- SELECT '3.36 DATEDIFF NULL' AS test_name, DATEDIFF(d1, d2) AS result FROM t_fn_data WHERE id = 5;
-SELECT '3.36 DATEDIFF NULL not supported' AS test_name;
+-- Test 3.34: DATEDIFF same date
+
+SELECT '3.34 DATEDIFF same' AS test_name, DATEDIFF(d1, d1) AS result FROM t_fn_data WHERE id = 1;
+
+
+-- Test 3.35: DATEDIFF leap year crossover
+
+SELECT '3.35 DATEDIFF leap' AS test_name, DATEDIFF(d2, d1) AS result FROM t_fn_data WHERE id = 2;
+
+
+-- Test 3.36: DATEDIFF with NULL
+
+SELECT '3.36 DATEDIFF NULL' AS test_name, DATEDIFF(d1, d2) AS result FROM t_fn_data WHERE id = 5;
+
 
 -- Test 3.37: DATE_FORMAT basic — may work via DataFusion to_char
 -- Expected: '2024-01-15'
@@ -759,95 +767,110 @@ SELECT '3.39 DATE_FORMAT day name' AS test_name, DATE_FORMAT(CAST(d1 AS DATE), '
 -- Expected: '10:30:00'
 SELECT '3.40 DATE_FORMAT time' AS test_name, DATE_FORMAT(CAST(dt1 AS TIMESTAMP), '%H:%i:%s') AS result FROM t_fn_data WHERE id = 1;
 
--- Test 3.41: STR_TO_DATE — NOT SUPPORTED in RorisDB
--- This function is not registered in DataFusion or as a custom UDF.
--- SELECT '3.41 STR_TO_DATE' AS test_name, STR_TO_DATE('2024-01-15', '%Y-%m-%d') AS result;
-SELECT '3.41 STR_TO_DATE not supported' AS test_name;
+-- Test 3.41: STR_TO_DATE
 
--- Test 3.42: STR_TO_DATE with time — NOT SUPPORTED
--- SELECT '3.42 STR_TO_DATE time' AS test_name, STR_TO_DATE('2024-01-15 10:30:00', '%Y-%m-%d %H:%i:%s') AS result;
-SELECT '3.42 STR_TO_DATE time not supported' AS test_name;
+SELECT '3.41 STR_TO_DATE' AS test_name, STR_TO_DATE('2024-01-15', '%Y-%m-%d') AS result;
 
--- Test 3.43: STR_TO_DATE non-standard format — NOT SUPPORTED
--- SELECT '3.43 STR_TO_DATE alt' AS test_name, STR_TO_DATE('15/01/2024', '%d/%m/%Y') AS result;
-SELECT '3.43 STR_TO_DATE alt not supported' AS test_name;
 
--- Test 3.44: FROM_UNIXTIME — NOT SUPPORTED in RorisDB
--- This function is not registered in DataFusion or as a custom UDF.
--- SELECT '3.44 FROM_UNIXTIME' AS test_name, FROM_UNIXTIME(1705300200) AS result;
-SELECT '3.44 FROM_UNIXTIME not supported' AS test_name;
+-- Test 3.42: STR_TO_DATE with time
 
--- Test 3.45: FROM_UNIXTIME with format — NOT SUPPORTED
--- SELECT '3.45 FROM_UNIXTIME fmt' AS test_name, FROM_UNIXTIME(1705300200, '%Y-%m-%d') AS result;
-SELECT '3.45 FROM_UNIXTIME fmt not supported' AS test_name;
+SELECT '3.42 STR_TO_DATE time' AS test_name, STR_TO_DATE('2024-01-15 10:30:00', '%Y-%m-%d %H:%i:%s') AS result;
 
--- Test 3.46: FROM_UNIXTIME at epoch zero — NOT SUPPORTED
--- SELECT '3.46 FROM_UNIXTIME epoch' AS test_name, FROM_UNIXTIME(0) AS result;
-SELECT '3.46 FROM_UNIXTIME epoch not supported' AS test_name;
 
--- Test 3.47: UNIX_TIMESTAMP — NOT SUPPORTED in RorisDB
--- This function is not registered in DataFusion or as a custom UDF.
--- SELECT '3.47 UNIX_TIMESTAMP' AS test_name, UNIX_TIMESTAMP() AS result;
-SELECT '3.47 UNIX_TIMESTAMP not supported' AS test_name;
+-- Test 3.43: STR_TO_DATE non-standard format
 
--- Test 3.48: UNIX_TIMESTAMP from date string — NOT SUPPORTED
--- SELECT '3.48 UNIX_TIMESTAMP str' AS test_name, UNIX_TIMESTAMP('2024-01-15') AS result;
-SELECT '3.48 UNIX_TIMESTAMP str not supported' AS test_name;
+SELECT '3.43 STR_TO_DATE alt' AS test_name, STR_TO_DATE('15/01/2024', '%d/%m/%Y') AS result;
 
--- Test 3.49: UNIX_TIMESTAMP from DATETIME string — NOT SUPPORTED
--- SELECT '3.49 UNIX_TIMESTAMP datetime str' AS test_name, UNIX_TIMESTAMP('2024-01-15 10:30:00') AS result;
-SELECT '3.49 UNIX_TIMESTAMP datetime str not supported' AS test_name;
 
--- Test 3.50: MAKEDATE — NOT SUPPORTED in RorisDB
--- This function is not registered in DataFusion or as a custom UDF.
--- SELECT '3.50 MAKEDATE basic' AS test_name, MAKEDATE(2024, 15) AS result;
-SELECT '3.50 MAKEDATE basic not supported' AS test_name;
+-- Test 3.44: FROM_UNIXTIME
 
--- Test 3.51: MAKEDATE leap year — NOT SUPPORTED
--- SELECT '3.51 MAKEDATE leap' AS test_name, MAKEDATE(2024, 60) AS result;
-SELECT '3.51 MAKEDATE leap not supported' AS test_name;
+SELECT '3.44 FROM_UNIXTIME' AS test_name, FROM_UNIXTIME(1705300200) AS result;
 
--- Test 3.52: MAKEDATE first day — NOT SUPPORTED
--- SELECT '3.52 MAKEDATE first' AS test_name, MAKEDATE(2024, 1) AS result;
-SELECT '3.52 MAKEDATE first not supported' AS test_name;
 
--- Test 3.53: MAKEDATE last day of year — NOT SUPPORTED
--- SELECT '3.53 MAKEDATE last' AS test_name, MAKEDATE(2024, 366) AS result;
-SELECT '3.53 MAKEDATE last not supported' AS test_name;
+-- Test 3.45: FROM_UNIXTIME with format
 
--- Test 3.54: MAKETIME — NOT SUPPORTED in RorisDB
--- This function is not registered in DataFusion or as a custom UDF.
--- SELECT '3.54 MAKETIME basic' AS test_name, MAKETIME(10, 30, 0) AS result;
-SELECT '3.54 MAKETIME basic not supported' AS test_name;
+SELECT '3.45 FROM_UNIXTIME fmt' AS test_name, FROM_UNIXTIME(1705300200, '%Y-%m-%d') AS result;
 
--- Test 3.55: MAKETIME boundary — NOT SUPPORTED
--- SELECT '3.55 MAKETIME boundary' AS test_name, MAKETIME(23, 59, 59) AS result;
-SELECT '3.55 MAKETIME boundary not supported' AS test_name;
 
--- Test 3.56: MAKETIME zero — NOT SUPPORTED
--- SELECT '3.56 MAKETIME zero' AS test_name, MAKETIME(0, 0, 0) AS result;
-SELECT '3.56 MAKETIME zero not supported' AS test_name;
+-- Test 3.46: FROM_UNIXTIME at epoch zero
 
--- Test 3.57: LAST_DAY — NOT SUPPORTED in RorisDB
--- This function is not registered in DataFusion or as a custom UDF.
--- SELECT '3.57 LAST_DAY basic' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 1;
-SELECT '3.57 LAST_DAY basic not supported' AS test_name;
+SELECT '3.46 FROM_UNIXTIME epoch' AS test_name, FROM_UNIXTIME(0) AS result;
 
--- Test 3.58: LAST_DAY February leap year — NOT SUPPORTED
--- SELECT '3.58 LAST_DAY leap' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 2;
-SELECT '3.58 LAST_DAY leap not supported' AS test_name;
 
--- Test 3.59: LAST_DAY June — NOT SUPPORTED
--- SELECT '3.59 LAST_DAY June' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 3;
-SELECT '3.59 LAST_DAY June not supported' AS test_name;
+-- Test 3.47: UNIX_TIMESTAMP
 
--- Test 3.60: LAST_DAY December — NOT SUPPORTED
--- SELECT '3.60 LAST_DAY Dec' AS test_name, LAST_DAY(d2) AS result FROM t_fn_data WHERE id = 2;
-SELECT '3.60 LAST_DAY Dec not supported' AS test_name;
+SELECT '3.47 UNIX_TIMESTAMP' AS test_name, UNIX_TIMESTAMP() AS result;
 
--- Test 3.61: LAST_DAY with NULL — NOT SUPPORTED
--- SELECT '3.61 LAST_DAY NULL' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 5;
-SELECT '3.61 LAST_DAY NULL not supported' AS test_name;
+
+-- Test 3.48: UNIX_TIMESTAMP from date string
+
+SELECT '3.48 UNIX_TIMESTAMP str' AS test_name, UNIX_TIMESTAMP('2024-01-15') AS result;
+
+
+-- Test 3.49: UNIX_TIMESTAMP from DATETIME string
+
+SELECT '3.49 UNIX_TIMESTAMP datetime str' AS test_name, UNIX_TIMESTAMP('2024-01-15 10:30:00') AS result;
+
+
+-- Test 3.50: MAKEDATE
+
+SELECT '3.50 MAKEDATE basic' AS test_name, MAKEDATE(2024, 15) AS result;
+
+
+-- Test 3.51: MAKEDATE leap year
+
+SELECT '3.51 MAKEDATE leap' AS test_name, MAKEDATE(2024, 60) AS result;
+
+
+-- Test 3.52: MAKEDATE first day
+
+SELECT '3.52 MAKEDATE first' AS test_name, MAKEDATE(2024, 1) AS result;
+
+
+-- Test 3.53: MAKEDATE last day of year
+
+SELECT '3.53 MAKEDATE last' AS test_name, MAKEDATE(2024, 366) AS result;
+
+
+-- Test 3.54: MAKETIME
+
+SELECT '3.54 MAKETIME basic' AS test_name, MAKETIME(10, 30, 0) AS result;
+
+
+-- Test 3.55: MAKETIME boundary
+
+SELECT '3.55 MAKETIME boundary' AS test_name, MAKETIME(23, 59, 59) AS result;
+
+
+-- Test 3.56: MAKETIME zero
+
+SELECT '3.56 MAKETIME zero' AS test_name, MAKETIME(0, 0, 0) AS result;
+
+
+-- Test 3.57: LAST_DAY
+
+SELECT '3.57 LAST_DAY basic' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 1;
+
+
+-- Test 3.58: LAST_DAY February leap year
+
+SELECT '3.58 LAST_DAY leap' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 2;
+
+
+-- Test 3.59: LAST_DAY June
+
+SELECT '3.59 LAST_DAY June' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 3;
+
+
+-- Test 3.60: LAST_DAY December
+
+SELECT '3.60 LAST_DAY Dec' AS test_name, LAST_DAY(d2) AS result FROM t_fn_data WHERE id = 2;
+
+
+-- Test 3.61: LAST_DAY with NULL
+
+SELECT '3.61 LAST_DAY NULL' AS test_name, LAST_DAY(d1) AS result FROM t_fn_data WHERE id = 5;
+
 
 -- Test 3.62: DATE_ADD with INTERVAL WEEK (via days_add UDF, 7 days)
 -- Expected: '2024-01-22'
@@ -861,9 +884,10 @@ SELECT '3.63 DATE_SUB year boundary' AS test_name, months_add(CAST(d1 AS DATE), 
 -- Expected: 2024
 SELECT '3.64 YEAR from DATETIME' AS test_name, date_part('year', CAST(dt1 AS TIMESTAMP)) AS result FROM t_fn_data WHERE id = 4;
 
--- Test 3.65: DATEDIFF across years — NOT SUPPORTED
--- SELECT '3.65 DATEDIFF across years' AS test_name, DATEDIFF(d2, d1) AS result FROM t_fn_data WHERE id = 2;
-SELECT '3.65 DATEDIFF across years not supported' AS test_name;
+-- Test 3.65: DATEDIFF across years
+
+SELECT '3.65 DATEDIFF across years' AS test_name, DATEDIFF(d2, d1) AS result FROM t_fn_data WHERE id = 2;
+
 
 -- ---------------------------------------------------------------------------
 -- Sub-category: Conditional Functions
@@ -1101,9 +1125,10 @@ SELECT '7.8 CEIL ABS DIV' AS test_name, CEIL(ABS(num_neg) / num2) AS result FROM
 -- Expected: '2024-01-20'
 SELECT '7.9 DATE_FORMAT DATE_ADD' AS test_name, DATE_FORMAT(days_add(CAST(d1 AS DATE), 5), '%Y-%m-%d') AS result FROM t_fn_data WHERE id = 1;
 
--- Test 7.10: YEAR(DATE_ADD with INTERVAL YEAR) — NOT SUPPORTED (DATE_ADD YEAR not available)
--- SELECT '7.10 YEAR DATE_ADD' AS test_name, YEAR(DATE_ADD(d1, INTERVAL 1 YEAR)) AS result FROM t_fn_data WHERE id = 1;
-SELECT '7.10 YEAR DATE_ADD year not supported' AS test_name;
+-- Test 7.10: YEAR(DATE_ADD with INTERVAL YEAR)
+
+SELECT '7.10 YEAR DATE_ADD' AS test_name, YEAR(DATE_ADD(d1, INTERVAL 1 YEAR)) AS result FROM t_fn_data WHERE id = 1;
+
 
 -- Test 7.11: IFNULL(CAST(NULL AS INT), 0)
 -- Expected: 0
@@ -1137,13 +1162,15 @@ SELECT '7.17 SUBSTR UPPER REPLACE' AS test_name, SUBSTRING(UPPER(REPLACE(s1, ' '
 -- Expected: 'ab'
 SELECT '7.18 TRIM REPLACE' AS test_name, TRIM(REPLACE('  a  b  ', ' ', '')) AS result;
 
--- Test 7.19: DATEDIFF(LAST_DAY(d1), d1) — NOT SUPPORTED (DATEDIFF and LAST_DAY unavailable)
--- SELECT '7.19 DATEDIFF LAST_DAY' AS test_name, DATEDIFF(LAST_DAY(d1), d1) AS result FROM t_fn_data WHERE id = 1;
-SELECT '7.19 DATEDIFF LAST_DAY not supported' AS test_name;
+-- Test 7.19: DATEDIFF(LAST_DAY(d1), d1)
 
--- Test 7.20: DAY(LAST_DAY(d1)) — NOT SUPPORTED (LAST_DAY unavailable)
--- SELECT '7.20 DAY LAST_DAY' AS test_name, DAY(LAST_DAY(d1)) AS result FROM t_fn_data WHERE id = 1;
-SELECT '7.20 DAY LAST_DAY not supported' AS test_name;
+SELECT '7.19 DATEDIFF LAST_DAY' AS test_name, DATEDIFF(LAST_DAY(d1), d1) AS result FROM t_fn_data WHERE id = 1;
+
+
+-- Test 7.20: DAY(LAST_DAY(d1))
+
+SELECT '7.20 DAY LAST_DAY' AS test_name, DAY(LAST_DAY(d1)) AS result FROM t_fn_data WHERE id = 1;
+
 
 -- Test 7.21: MONTH(DATE_ADD with INTERVAL MONTH via months_add)
 -- Expected: 2 (February)
@@ -1189,7 +1216,7 @@ SELECT '7.30 ROUND neg dec' AS test_name, ROUND(dec_col, -1) AS result FROM t_fn
 
 -- Test 7.31: TRUNCATE with negative on negative number (via DataFusion trunc)
 -- Expected: -120 (or -123 depending on truncation behavior)
-SELECT '7.31 TRUNCATE neg neg' AS test_name, trunc(-123.45, -1) AS result;
+SELECT '7.31 TRUNCATE neg neg' AS test_name, truncate(-123.45, -1) AS result;
 
 -- Test 7.32: POSITION (alias for LOCATE)
 -- Expected: 7
@@ -1271,9 +1298,10 @@ SELECT '7.48 SUBSTRING at end' AS test_name, SUBSTRING(s1, 12) AS result FROM t_
 -- Expected: position of '好'
 SELECT '7.49 LOCATE unicode' AS test_name, LOCATE('好', s_unicode) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 7.50: HEX of large number — NOT SUPPORTED
--- SELECT '7.50 HEX large' AS test_name, HEX(num3) AS result FROM t_fn_data WHERE id = 1;
-SELECT '7.50 HEX large not supported' AS test_name;
+-- Test 7.50: HEX of large number
+
+SELECT '7.50 HEX large' AS test_name, HEX(num3) AS result FROM t_fn_data WHERE id = 1;
+
 
 -- Test 7.51: MOD with MOD
 -- Expected: 100 % (3 % 2) = 100 % 1 = 0
@@ -1293,7 +1321,7 @@ SELECT '7.54 SQRT POWER' AS test_name, SQRT(POWER(5, 2)) AS result;
 
 -- Test 7.55: TRUNCATE nested (via DataFusion trunc)
 -- Expected: 3.14
-SELECT '7.55 TRUNCATE ROUND' AS test_name, trunc(ROUND(3.14159, 4), 2) AS result;
+SELECT '7.55 TRUNCATE ROUND' AS test_name, truncate(ROUND(3.14159, 4), 2) AS result;
 
 -- Test 7.56: CONCAT_WS with empty separator
 -- Expected: 'abc' (no separator)
@@ -1337,25 +1365,29 @@ FROM t_fn_data WHERE id = 1;
 -- Expected: 'Hello World' (concatenated result)
 SELECT '7.65 COALESCE CONCAT' AS test_name, COALESCE(CONCAT(s1, s2), 'fallback') AS result FROM t_fn_data WHERE id = 1;
 
--- Test 7.66: DATE_FORMAT(STR_TO_DATE(...)) — NOT SUPPORTED (STR_TO_DATE unavailable)
--- SELECT '7.66 DATE_FORMAT STR_TO_DATE' AS test_name, DATE_FORMAT(STR_TO_DATE('01/15/2024', '%m/%d/%Y'), '%Y-%m-%d') AS result;
-SELECT '7.66 DATE_FORMAT STR_TO_DATE not supported' AS test_name;
+-- Test 7.66: DATE_FORMAT(STR_TO_DATE(...))
 
--- Test 7.67: FROM_UNIXTIME(UNIX_TIMESTAMP(...)) — NOT SUPPORTED (both unavailable)
--- SELECT '7.67 FROM_UNIXTIME UNIX_TIMESTAMP' AS test_name, FROM_UNIXTIME(UNIX_TIMESTAMP('2024-01-15 00:00:00'), '%Y-%m-%d') AS result;
-SELECT '7.67 FROM_UNIXTIME UNIX_TIMESTAMP not supported' AS test_name;
+SELECT '7.66 DATE_FORMAT STR_TO_DATE' AS test_name, DATE_FORMAT(STR_TO_DATE('01/15/2024', '%m/%d/%Y'), '%Y-%m-%d') AS result;
 
--- Test 7.68: MAKEDATE and LAST_DAY — NOT SUPPORTED (both unavailable)
--- SELECT '7.68 MAKEDATE LAST_DAY' AS test_name, LAST_DAY(MAKEDATE(2024, 32)) AS result;
-SELECT '7.68 MAKEDATE LAST_DAY not supported' AS test_name;
+
+-- Test 7.67: FROM_UNIXTIME(UNIX_TIMESTAMP(...))
+
+SELECT '7.67 FROM_UNIXTIME UNIX_TIMESTAMP' AS test_name, FROM_UNIXTIME(UNIX_TIMESTAMP('2024-01-15 00:00:00'), '%Y-%m-%d') AS result;
+
+
+-- Test 7.68: MAKEDATE and LAST_DAY
+
+SELECT '7.68 MAKEDATE LAST_DAY' AS test_name, LAST_DAY(MAKEDATE(2024, 32)) AS result;
+
 
 -- Test 7.69: LOCATE with 0 start position (treated as 1 in MySQL)
 -- Expected: 7
 SELECT '7.69 LOCATE start 0' AS test_name, LOCATE('World', s1, 0) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 7.70: UNHEX with invalid characters (non-hex) — NOT SUPPORTED
--- SELECT '7.70 UNHEX non-hex' AS test_name, UNHEX('ZZZZ') AS result;
-SELECT '7.70 UNHEX non-hex not supported' AS test_name;
+-- Test 7.70: UNHEX with invalid characters (non-hex)
+
+SELECT '7.70 UNHEX non-hex' AS test_name, UNHEX('ZZZZ') AS result;
+
 
 -- Test 7.71: CHAR_LENGTH vs LENGTH for ASCII (should be equal)
 -- Expected: 11 (same for ASCII strings)
@@ -1431,7 +1463,7 @@ SELECT '7.86 ROUND half neg' AS test_name, ROUND(-0.5) AS result;
 
 -- Test 7.87: TRUNCATE on 0 with negative places (via DataFusion trunc)
 -- Expected: 0
-SELECT '7.87 TRUNCATE zero' AS test_name, trunc(0, -1) AS result;
+SELECT '7.87 TRUNCATE zero' AS test_name, truncate(0, -1) AS result;
 
 -- Test 7.88: ORDER BY with function
 -- Expected: sorted by LENGTH of s1
@@ -1487,9 +1519,10 @@ SELECT '7.98 DATE_ADD zero' AS test_name, days_add(CAST(d1 AS DATE), 0) AS resul
 -- Expected: '2024-01-10'
 SELECT '7.99 DATE_ADD neg interval' AS test_name, days_add(CAST(d1 AS DATE), -5) AS result FROM t_fn_data WHERE id = 1;
 
--- Test 7.100: DATEDIFF of identical dates — NOT SUPPORTED
--- SELECT '7.100 DATEDIFF identical' AS test_name, DATEDIFF(CAST('2024-01-15' AS DATE), CAST('2024-01-15' AS DATE)) AS result;
-SELECT '7.100 DATEDIFF identical not supported' AS test_name;
+-- Test 7.100: DATEDIFF of identical dates
+
+SELECT '7.100 DATEDIFF identical' AS test_name, DATEDIFF(CAST('2024-01-15' AS DATE), CAST('2024-01-15' AS DATE)) AS result;
+
 
 -- ============================================================================
 -- Cleanup
