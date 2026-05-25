@@ -11,6 +11,8 @@ members = [
     "crates/fe-datafusion",
     "crates/fe-storage",
     "crates/fe-monitor",
+    "crates/fe-config",
+    "crates/fe-backup",
     "crates/mysql-protocol",
 
     # Metadata backend
@@ -86,6 +88,16 @@ arrow-arith = { version = "55" }
 # Storage
 rocksdb = "0.23"
 
+# Configuration
+toml = "0.8"
+
+# System information
+sysinfo = "0.33"
+
+# HTTP server (for SQL editor web UI)
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+
 # Cryptography
 sha1 = "0.10"
 sha2 = "0.10"
@@ -108,6 +120,8 @@ types = { path = "crates/types" }
 fe-datafusion = { path = "crates/fe-datafusion" }
 fe-storage = { path = "crates/fe-storage" }
 fe-monitor = { path = "crates/fe-monitor" }
+fe-config = { path = "crates/fe-config" }
+fe-backup = { path = "crates/fe-backup" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 
 # Parquet support

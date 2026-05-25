@@ -606,30 +606,63 @@ impl RorisQueryHandler {
     // ---- Repository / Backup DDL ----
 
     pub(crate) fn create_repository(&self, stmt: &fe_sql_parser::ast::CreateRepositoryStmt) -> Result<QueryResult, String> {
+        // Extract path from properties
+        let path = stmt.properties.iter()
+            .find(|(k, _)| k.to_lowercase() == "location" || k.to_lowercase() == "path")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("");
+
+        if path.is_empty() {
+            return Err("CREATE REPOSITORY requires a location property. Example: CREATE REPOSITORY repo WITH BROKER ON '/path/to/backup'".to_string());
+        }
+
+        self.backup_manager.create_repository(&stmt.name, path)?;
+
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some(format!("CREATE REPOSITORY {} OK", stmt.name))]],
+            vec![vec![Some(format!("CREATE REPOSITORY `{}` at '{}' completed", stmt.name, path))]],
         ))
     }
 
     pub(crate) fn drop_repository(&self, stmt: &fe_sql_parser::ast::DropRepositoryStmt) -> Result<QueryResult, String> {
-        Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some(format!("DROP REPOSITORY {} OK", stmt.name))]],
-        ))
+        match self.backup_manager.drop_repository(&stmt.name) {
+            Ok(()) => Ok(QueryResult::with_rows(
+                vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+                vec![vec![Some(format!("DROP REPOSITORY `{}` completed", stmt.name))]],
+            )),
+            Err(e) => {
+                if stmt.if_exists {
+                    Ok(QueryResult::ok())
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     pub(crate) fn backup_database(&self, stmt: &fe_sql_parser::ast::BackupDatabaseStmt) -> Result<QueryResult, String> {
+        let msg = self.backup_manager.backup_database(
+            &self.catalog,
+            &stmt.database,
+            &stmt.repository,
+            &stmt.backup_name,
+        )?;
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some(format!("BACKUP DATABASE {} TO {} AS {} OK", stmt.database, stmt.repository, stmt.backup_name))]],
+            vec![vec![Some(msg)]],
         ))
     }
 
     pub(crate) fn restore_database(&self, stmt: &fe_sql_parser::ast::RestoreDatabaseStmt) -> Result<QueryResult, String> {
+        let msg = self.backup_manager.restore_database(
+            &self.catalog,
+            &stmt.database,
+            &stmt.repository,
+            &stmt.backup_name,
+        )?;
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some(format!("RESTORE DATABASE {} FROM {} BACKUP {} OK", stmt.database, stmt.repository, stmt.backup_name))]],
+            vec![vec![Some(msg)]],
         ))
     }
 
@@ -730,17 +763,44 @@ impl RorisQueryHandler {
     // ---- Export / Variable ----
 
     pub(crate) fn export_table(&self, stmt: &fe_sql_parser::ast::ExportTableStmt) -> Result<QueryResult, String> {
+        let current_db = self.current_database.read();
+        let db = stmt.database.as_deref().unwrap_or(&current_db);
+        let format = stmt.properties.iter()
+            .find(|(k, _)| k.to_lowercase() == "format")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("parquet");
+
+        let msg = fe_backup::export::export_table(&self.storage, db, &stmt.table, &stmt.path, format)?;
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some(format!("EXPORT TABLE {}.{} TO {} OK", stmt.database.as_deref().unwrap_or(""), stmt.table, stmt.path))]],
+            vec![vec![Some(msg)]],
         ))
     }
 
     pub(crate) fn set_variable(&self, stmt: &fe_sql_parser::ast::SetVariableStmt) -> Result<QueryResult, String> {
-        Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
-            vec![vec![Some(format!("SET {} OK", stmt.variable))]],
-        ))
+        let var_name = stmt.variable.trim_matches('`').to_lowercase();
+        // Convert Expr to string value
+        let value = match &stmt.value {
+            fe_sql_parser::ast::Expr::Literal(lit) => match lit {
+                fe_sql_parser::ast::LiteralValue::String(s) => s.clone(),
+                fe_sql_parser::ast::LiteralValue::Int64(n) => n.to_string(),
+                fe_sql_parser::ast::LiteralValue::Float64(n) => n.to_string(),
+                fe_sql_parser::ast::LiteralValue::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
+                fe_sql_parser::ast::LiteralValue::Null => "".to_string(),
+                fe_sql_parser::ast::LiteralValue::Date(s) => s.clone(),
+            },
+            fe_sql_parser::ast::Expr::ColumnRef { column, .. } => column.clone(),
+            _ => format!("{:?}", stmt.value),
+        };
+
+        if stmt.is_global {
+            self.sys_vars.set_global(&var_name, &value)?;
+        } else {
+            let session = self.session_vars.read();
+            self.sys_vars.set_session(&var_name, &value, &session)?;
+        }
+
+        Ok(QueryResult::ok())
     }
 
     // ---- Stats / Analyze ----

@@ -103,6 +103,13 @@ pub enum Statement {
     RollbackTo(String),
     ReleaseSavepoint(String),
     SetTransactionIsolation(String),
+
+    // Admin and operations statements
+    ShowStatus { global: bool, pattern: Option<String> },
+    KillQuery(u64),
+    KillConnection(u64),
+    AdminCheckTable(String),
+    AdminShowReplica,
 }
 
 #[derive(Debug, Clone)]

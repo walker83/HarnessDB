@@ -242,6 +242,19 @@ impl AuditLogger {
         }
     }
 
+    /// Log a pre-built audit entry directly
+    pub async fn log_entry(&self, entry: AuditLogEntry) {
+        if !self.config.enabled {
+            return;
+        }
+        if self.config.log_slow_queries_only && entry.duration_ms < self.config.slow_query_threshold_ms {
+            return;
+        }
+        if self.config.log_queries {
+            self.write_entry(&entry).await;
+        }
+    }
+
     pub fn get_config(&self) -> &AuditLogConfig {
         &self.config
     }

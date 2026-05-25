@@ -1,0 +1,15 @@
+[package]
+name = "fe-backup"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+fe-catalog = { workspace = true }
+fe-storage = { workspace = true }
+arrow = { workspace = true }
+parquet = { workspace = true }

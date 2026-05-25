@@ -402,12 +402,6 @@ impl Connection {
         // Check for special commands that some clients send
         let trimmed = sql.trim().to_lowercase();
 
-        // Handle SET commands as no-ops (commonly sent by mysql client)
-        if trimmed.starts_with("set ") {
-            self.send_ok(0, 0).await?;
-            return Ok(());
-        }
-
         // Handle common MySQL client initialization queries
         // These are sent automatically by the mysql CLI on connect
         if trimmed.starts_with("select") {
@@ -473,42 +467,7 @@ impl Connection {
                 );
                 return self.send_result_set(result).await;
             }
-            if trimmed.contains("variables") {
-                let result = QueryResult::with_rows(
-                    vec![
-                        ColumnDef { name: "Variable_name".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "Value".to_string(), col_type: ColumnType::String },
-                    ],
-                    vec![],
-                );
-                return self.send_result_set(result).await;
-            }
-            if trimmed.contains("status") {
-                let result = QueryResult::with_rows(
-                    vec![
-                        ColumnDef { name: "Variable_name".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "Value".to_string(), col_type: ColumnType::String },
-                    ],
-                    vec![],
-                );
-                return self.send_result_set(result).await;
-            }
-            if trimmed.contains("processlist") {
-                let result = QueryResult::with_rows(
-                    vec![
-                        ColumnDef { name: "Id".to_string(), col_type: ColumnType::Int },
-                        ColumnDef { name: "User".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "Host".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "db".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "Command".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "Time".to_string(), col_type: ColumnType::Int },
-                        ColumnDef { name: "State".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "Info".to_string(), col_type: ColumnType::String },
-                    ],
-                    vec![],
-                );
-                return self.send_result_set(result).await;
-            }
+            // SHOW VARIABLES, SHOW STATUS, SHOW PROCESSLIST are now forwarded to the handler
         }
 
         let result = self.handler.handle_query(sql);

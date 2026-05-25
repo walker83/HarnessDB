@@ -4,8 +4,13 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use fe_catalog::CatalogManager;
 use fe_datafusion::{register_doris_udfs, register_misc_udfs};
 use fe_storage::{ParquetCatalogProvider, ParquetStorage};
+use fe_config::{RorisConfig, SystemVariableManager, SessionVariables};
+use fe_monitor::audit_log::AuditLogger;
+use fe_backup::BackupManager;
 use parking_lot::RwLock as PlRwLock;
 use mysql_protocol::QueryResult;
+
+use crate::connection_tracker::ConnectionTracker;
 
 pub(crate) struct RorisQueryHandler {
     pub(crate) catalog: Arc<CatalogManager>,
@@ -14,6 +19,15 @@ pub(crate) struct RorisQueryHandler {
     pub(crate) transaction: Arc<PlRwLock<SimpleTransactionState>>,
     pub(crate) session_ctx: SessionContext,
     pub(crate) storage: Arc<ParquetStorage>,
+    // Configuration and system variables
+    pub(crate) config: RorisConfig,
+    pub(crate) sys_vars: Arc<SystemVariableManager>,
+    pub(crate) session_vars: Arc<PlRwLock<SessionVariables>>,
+    // Operations
+    pub(crate) audit_logger: Arc<AuditLogger>,
+    pub(crate) connection_tracker: Arc<ConnectionTracker>,
+    // Backup
+    pub(crate) backup_manager: Arc<BackupManager>,
 }
 
 #[derive(Clone)]
@@ -71,18 +85,27 @@ impl SimpleTransactionState {
 }
 
 impl RorisQueryHandler {
-    pub(crate) fn new(catalog: Arc<CatalogManager>, data_dir: impl Into<std::path::PathBuf>) -> Self {
-        let storage = Arc::new(ParquetStorage::open(data_dir).unwrap());
+    pub(crate) fn new(
+        catalog: Arc<CatalogManager>,
+        config: RorisConfig,
+        sys_vars: Arc<SystemVariableManager>,
+        audit_logger: Arc<AuditLogger>,
+        connection_tracker: Arc<ConnectionTracker>,
+        backup_manager: Arc<BackupManager>,
+    ) -> Self {
+        let storage = Arc::new(ParquetStorage::open(&config.storage.data_dir).unwrap());
         let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog.clone(), storage.clone()));
-        let config = SessionConfig::new()
+        let df_config = SessionConfig::new()
             .with_default_catalog_and_schema("roris", "information_schema")
             .with_create_default_catalog_and_schema(false)
             .with_information_schema(true);
-        let mut session_ctx = SessionContext::new_with_config(config);
+        let mut session_ctx = SessionContext::new_with_config(df_config);
         session_ctx.register_catalog("roris", df_catalog);
         register_doris_udfs(&mut session_ctx);
         register_misc_udfs(&mut session_ctx);
         fe_datafusion::register_date_udfs(&mut session_ctx);
+
+        let session_vars = Arc::new(PlRwLock::new(sys_vars.create_session()));
 
         Self {
             catalog,
@@ -91,6 +114,12 @@ impl RorisQueryHandler {
             transaction: Arc::new(PlRwLock::new(SimpleTransactionState::new())),
             session_ctx,
             storage,
+            config,
+            sys_vars,
+            session_vars,
+            audit_logger,
+            connection_tracker,
+            backup_manager,
         }
     }
 

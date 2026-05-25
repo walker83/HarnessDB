@@ -16,6 +16,10 @@ clap = { version = "4", features = ["derive"] }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
+sysinfo = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
 
 fe-sql-parser = { workspace = true }
 fe-catalog = { workspace = true }
@@ -23,6 +27,8 @@ fe-common = { workspace = true }
 fe-monitor = { workspace = true }
 fe-datafusion = { workspace = true }
 fe-storage = { workspace = true }
+fe-config = { workspace = true }
+fe-backup = { workspace = true }
 mysql-protocol = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }

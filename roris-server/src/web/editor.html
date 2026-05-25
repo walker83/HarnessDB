@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RorisDB SQL Editor</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1e1e2e; color: #cdd6f4; height: 100vh; display: flex; flex-direction: column; }
+.header { background: #181825; padding: 8px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #313244; }
+.header h1 { font-size: 16px; color: #89b4fa; font-weight: 600; }
+.header select { background: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+.header button { background: #89b4fa; color: #1e1e2e; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 13px; }
+.header button:hover { background: #74c7ec; }
+.header .status { margin-left: auto; font-size: 12px; color: #a6adc8; }
+.main { display: flex; flex: 1; overflow: hidden; }
+.sidebar { width: 250px; background: #181825; border-right: 1px solid #313244; display: flex; flex-direction: column; overflow-y: auto; }
+.sidebar-section { padding: 8px 12px; }
+.sidebar-section h3 { font-size: 11px; text-transform: uppercase; color: #a6adc8; margin-bottom: 8px; letter-spacing: 0.5px; }
+.db-item { padding: 4px 8px; cursor: pointer; border-radius: 4px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.db-item:hover { background: #313244; }
+.db-item.active { background: #45475a; color: #89b4fa; }
+.db-item .icon { font-size: 14px; }
+.table-item { padding: 3px 8px 3px 24px; cursor: pointer; border-radius: 4px; font-size: 12px; color: #a6adc8; }
+.table-item:hover { background: #313244; color: #cdd6f4; }
+.history-item { padding: 6px 8px; cursor: pointer; border-radius: 4px; font-size: 11px; color: #a6adc8; border-bottom: 1px solid #313244; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+.history-item:hover { background: #313244; color: #cdd6f4; }
+.history-item.error { color: #f38ba8; }
+.editor-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.sql-editor-wrap { position: relative; flex: 0 0 200px; border-bottom: 1px solid #313244; }
+.sql-editor { width: 100%; height: 100%; background: #1e1e2e; color: #cdd6f4; border: none; padding: 12px; font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; font-size: 14px; line-height: 1.6; resize: none; outline: none; tab-size: 2; }
+.sql-editor::placeholder { color: #585b70; }
+.results { flex: 1; overflow: auto; padding: 0; }
+.result-info { padding: 8px 12px; font-size: 12px; color: #a6adc8; background: #181825; border-bottom: 1px solid #313244; display: flex; gap: 16px; align-items: center; }
+.result-info .error { color: #f38ba8; font-weight: 600; }
+.result-info .success { color: #a6e3a1; }
+.result-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.result-table th { background: #181825; padding: 8px 12px; text-align: left; font-weight: 600; color: #89b4fa; position: sticky; top: 0; border-bottom: 2px solid #313244; white-space: nowrap; }
+.result-table td { padding: 6px 12px; border-bottom: 1px solid #313244; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+.result-table tr:hover td { background: #313244; }
+.result-table .null { color: #585b70; font-style: italic; }
+.tab-bar { display: flex; background: #181825; border-bottom: 1px solid #313244; }
+.tab { padding: 6px 16px; font-size: 12px; cursor: pointer; color: #a6adc8; border-bottom: 2px solid transparent; }
+.tab.active { color: #89b4fa; border-bottom-color: #89b4fa; }
+.tab:hover { color: #cdd6f4; }
+.shortcut-hint { font-size: 11px; color: #585b70; padding: 4px 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>RorisDB SQL Editor</h1>
+  <select id="dbSelect" onchange="switchDatabase()">
+    <option value="">-- Select Database --</option>
+  </select>
+  <button onclick="executeQuery()" title="Ctrl+Enter">Execute</button>
+  <span class="status" id="statusBar">Ready</span>
+</div>
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <h3>Databases</h3>
+      <div id="dbTree"></div>
+    </div>
+    <div class="sidebar-section" style="flex:1; overflow-y:auto;">
+      <h3>History</h3>
+      <div id="historyList"></div>
+    </div>
+  </div>
+  <div class="editor-area">
+    <div class="sql-editor-wrap">
+      <textarea class="sql-editor" id="sqlEditor" placeholder="Enter SQL query here... (Ctrl+Enter to execute)" spellcheck="false"></textarea>
+    </div>
+    <div class="tab-bar">
+      <div class="tab active" onclick="showTab('results')">Results</div>
+      <div class="tab" onclick="showTab('messages')">Messages</div>
+    </div>
+    <div class="results" id="resultsPanel">
+      <div class="result-info" id="resultInfo" style="display:none;"></div>
+      <div id="resultContent"></div>
+    </div>
+  </div>
+</div>
+<script>
+let currentDb = '';
+const API = '';
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+  loadDatabases();
+  loadStatus();
+  const editor = document.getElementById('sqlEditor');
+  editor.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      executeQuery();
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = editor.selectionStart;
+      editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(editor.selectionEnd);
+      editor.selectionStart = editor.selectionEnd = start + 2;
+    }
+  });
+});
+
+async function loadDatabases() {
+  try {
+    const res = await fetch(API + '/api/databases');
+    const dbs = await res.json();
+    const select = document.getElementById('dbSelect');
+    const tree = document.getElementById('dbTree');
+    select.innerHTML = '<option value="">-- Select Database --</option>';
+    tree.innerHTML = '';
+    dbs.forEach(db => {
+      const opt = document.createElement('option');
+      opt.value = db;
+      opt.textContent = db;
+      select.appendChild(opt);
+      const item = document.createElement('div');
+      item.className = 'db-item';
+      item.innerHTML = '<span class="icon">&#128193;</span>' + db;
+      item.onclick = () => toggleDb(db, item);
+      tree.appendChild(item);
+    });
+  } catch(e) { console.error('Failed to load databases:', e); }
+}
+
+async function toggleDb(db, el) {
+  document.querySelectorAll('.db-item').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+  // Remove existing table items
+  el.parentNode.querySelectorAll('.table-group-' + CSS.escape(db)).forEach(e => e.remove());
+  try {
+    const res = await fetch(API + '/api/tables/' + db);
+    if (!res.ok) return;
+    const tables = await res.json();
+    tables.forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'table-item table-group-' + db;
+      item.textContent = t;
+      item.onclick = () => {
+        document.getElementById('sqlEditor').value = 'SELECT * FROM ' + db + '.' + t + ' LIMIT 100;';
+        switchDatabaseTo(db);
+      };
+      el.after(item);
+    });
+  } catch(e) {}
+}
+
+function switchDatabase() {
+  const db = document.getElementById('dbSelect').value;
+  currentDb = db;
+  document.getElementById('statusBar').textContent = db ? 'Database: ' + db : 'Ready';
+}
+
+function switchDatabaseTo(db) {
+  document.getElementById('dbSelect').value = db;
+  currentDb = db;
+  document.getElementById('statusBar').textContent = 'Database: ' + db;
+}
+
+async function executeQuery() {
+  const sql = document.getElementById('sqlEditor').value.trim();
+  if (!sql) return;
+  const info = document.getElementById('resultInfo');
+  const content = document.getElementById('resultContent');
+  info.style.display = 'flex';
+  info.innerHTML = '<span>Executing...</span>';
+  content.innerHTML = '';
+  document.getElementById('statusBar').textContent = 'Executing...';
+  try {
+    const res = await fetch(API + '/api/query', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sql, database: currentDb || undefined })
+    });
+    const data = await res.json();
+    info.innerHTML = '';
+    if (data.error) {
+      info.innerHTML = '<span class="error">Error: ' + escapeHtml(data.error) + '</span>';
+      document.getElementById('statusBar').textContent = 'Error';
+    } else {
+      info.innerHTML = '<span class="success">OK</span><span>' + data.row_count + ' rows</span><span>' + data.duration_ms + ' ms</span>';
+      document.getElementById('statusBar').textContent = data.row_count + ' rows, ' + data.duration_ms + 'ms';
+      if (data.columns.length > 0 && data.rows.length > 0) {
+        renderTable(data.columns, data.rows);
+      } else if (data.columns.length > 0) {
+        renderTable(data.columns, []);
+      } else {
+        content.innerHTML = '<div style="padding:12px;color:#a6e3a1;">Query executed successfully.</div>';
+      }
+    }
+    addHistory(sql, data);
+  } catch(e) {
+    info.innerHTML = '<span class="error">Request failed: ' + escapeHtml(e.message) + '</span>';
+    document.getElementById('statusBar').textContent = 'Error';
+  }
+}
+
+function renderTable(columns, rows) {
+  const content = document.getElementById('resultContent');
+  let html = '<table class="result-table"><thead><tr>';
+  columns.forEach(c => { html += '<th>' + escapeHtml(c.name) + '</th>'; });
+  html += '</tr></thead><tbody>';
+  rows.forEach(row => {
+    html += '<tr>';
+    row.forEach(v => {
+      if (v === null || v === undefined) {
+        html += '<td class="null">NULL</td>';
+      } else {
+        html += '<td>' + escapeHtml(String(v)) + '</td>';
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  content.innerHTML = html;
+}
+
+async function addHistory(sql, data) {
+  try {
+    const res = await fetch(API + '/api/history');
+    const history = await res.json();
+    renderHistory(history);
+  } catch(e) {}
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch(API + '/api/history');
+    const history = await res.json();
+    renderHistory(history);
+  } catch(e) {}
+}
+
+function renderHistory(history) {
+  const list = document.getElementById('historyList');
+  list.innerHTML = '';
+  history.slice().reverse().forEach(h => {
+    const item = document.createElement('div');
+    item.className = 'history-item' + (h.error ? ' error' : '');
+    item.textContent = h.sql;
+    item.title = h.sql + '\n' + h.duration_ms + 'ms';
+    item.onclick = () => {
+      document.getElementById('sqlEditor').value = h.sql;
+    };
+    list.appendChild(item);
+  });
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetch(API + '/api/status');
+    const s = await res.json();
+    document.getElementById('statusBar').textContent = 'RorisDB ' + s.version + ' | Uptime: ' + formatUptime(s.uptime_seconds) + ' | Queries: ' + s.total_queries;
+  } catch(e) {}
+}
+
+function formatUptime(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+// Auto-refresh status every 10 seconds
+setInterval(loadStatus, 10000);
+// Auto-load history every 5 seconds
+setInterval(loadHistory, 5000);
+</script>
+</body>
+</html>

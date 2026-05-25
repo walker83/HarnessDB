@@ -1,0 +1,10 @@
+[package]
+name = "fe-config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+toml = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }

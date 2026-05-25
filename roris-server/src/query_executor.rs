@@ -117,6 +117,12 @@ impl RorisQueryHandler {
             Statement::ShowRowPolicy(filter) => self.show_row_policy(filter.clone()),
             Statement::KillAnalyzeJob(id) => self.kill_analyze_job(id.clone()),
             Statement::AlterStats(table, props) => self.alter_stats(table.clone(), props.clone()),
+            // New admin/operations statements
+            Statement::ShowStatus { global, pattern } => self.show_status(*global, pattern.clone()),
+            Statement::KillQuery(id) => self.kill_query(*id),
+            Statement::KillConnection(id) => self.kill_connection(*id),
+            Statement::AdminCheckTable(table) => self.admin_check_table(table.clone()),
+            Statement::AdminShowReplica => self.admin_show_replica(),
         }
     }
 
@@ -357,11 +363,12 @@ impl RorisQueryHandler {
     }
 
     pub(crate) fn show_variables(&self, global: bool, pattern: Option<String>) -> Result<QueryResult, String> {
-        let mut rows = vec![
-            vec![Some("debug".to_string()), Some(format!("global={}, pattern={:?}", global, pattern))],
-            vec![Some("version".to_string()), Some("5.7.42".to_string())],
-            vec![Some("version_comment".to_string()), Some("RorisDB".to_string())],
-        ];
+        let session = if global { None } else { Some(self.session_vars.read()) };
+        let session_ref = session.as_deref();
+        let vars = self.sys_vars.match_like(pattern.as_deref(), session_ref);
+        let rows: Vec<Vec<Option<String>>> = vars.iter()
+            .map(|(name, value)| vec![Some(name.clone()), Some(value.clone())])
+            .collect();
 
         Ok(QueryResult::with_rows(
             vec![
@@ -372,17 +379,22 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_processlist(&self, full: bool) -> Result<QueryResult, String> {
-        let rows = vec![vec![
-            Some("1".to_string()),
-            Some("root".to_string()),
-            Some("127.0.0.1".to_string()),
-            None,
-            Some("Query".to_string()),
-            if full { Some("SHOW PROCESSLIST".to_string()) } else { Some("SHOW PROCESSLIST".to_string()) },
-            Some("0".to_string()),
-            None,
-        ]];
+    pub(crate) fn show_processlist(&self, _full: bool) -> Result<QueryResult, String> {
+        let conns = self.connection_tracker.list();
+        let rows: Vec<Vec<Option<String>>> = conns.iter().map(|c| {
+            let time = c.connected_at.elapsed().as_secs().to_string();
+            let info = c.current_sql.clone();
+            vec![
+                Some(c.id.to_string()),
+                Some(c.user.clone()),
+                Some(c.host.clone()),
+                c.db.clone(),
+                Some(c.command.clone()),
+                Some(time),
+                Some(c.state.clone()),
+                info,
+            ]
+        }).collect();
 
         Ok(QueryResult::with_rows(
             vec![
@@ -396,6 +408,128 @@ impl RorisQueryHandler {
                 ColumnDef { name: "Info".to_string(), col_type: ColumnType::String },
             ],
             rows,
+        ))
+    }
+
+    pub(crate) fn show_status(&self, _global: bool, pattern: Option<String>) -> Result<QueryResult, String> {
+        let ct = &self.connection_tracker;
+        let db_count = self.catalog.list_databases().len();
+        let table_count: usize = self.catalog.list_databases().iter()
+            .filter_map(|db| self.catalog.list_tables(db))
+            .map(|tables| tables.len())
+            .sum();
+
+        let mut status_vars = vec![
+            ("Uptime".to_string(), ct.uptime_seconds().to_string()),
+            ("Queries".to_string(), ct.total_queries().to_string()),
+            ("Threads_connected".to_string(), ct.active_connections().to_string()),
+            ("Threads_running".to_string(), ct.active_queries().to_string()),
+            ("Connections".to_string(), ct.total_connections().to_string()),
+            ("Max_used_connections".to_string(), ct.peak_connections().to_string()),
+            ("Slow_queries".to_string(), ct.slow_queries().to_string()),
+            ("Database_count".to_string(), db_count.to_string()),
+            ("Table_count".to_string(), table_count.to_string()),
+            ("Version".to_string(), self.sys_vars.get("version", None).unwrap_or_default()),
+            ("Version_comment".to_string(), self.sys_vars.get("version_comment", None).unwrap_or_default()),
+        ];
+
+        // Filter by LIKE pattern
+        if let Some(ref pat) = pattern {
+            let pat_lower = pat.to_lowercase();
+            status_vars.retain(|(name, _)| like_match(&pat_lower, &name.to_lowercase()));
+        }
+
+        let rows: Vec<Vec<Option<String>>> = status_vars.iter()
+            .map(|(name, value)| vec![Some(name.clone()), Some(value.clone())])
+            .collect();
+
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Variable_name".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Value".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    pub(crate) fn kill_query(&self, id: u64) -> Result<QueryResult, String> {
+        if self.connection_tracker.kill(id as u32) {
+            Ok(QueryResult::with_rows(
+                vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+                vec![vec![Some(format!("Query {} killed", id))]],
+            ))
+        } else {
+            Err(format!("Unknown connection ID: {}", id))
+        }
+    }
+
+    pub(crate) fn kill_connection(&self, id: u64) -> Result<QueryResult, String> {
+        if self.connection_tracker.kill(id as u32) {
+            Ok(QueryResult::with_rows(
+                vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
+                vec![vec![Some(format!("Connection {} killed", id))]],
+            ))
+        } else {
+            Err(format!("Unknown connection ID: {}", id))
+        }
+    }
+
+    pub(crate) fn admin_check_table(&self, table_ref: String) -> Result<QueryResult, String> {
+        let (db, tbl) = if table_ref.contains('.') {
+            let parts: Vec<&str> = table_ref.splitn(2, '.').collect();
+            (parts[0].to_string(), parts[1].to_string())
+        } else {
+            (self.current_database.read().clone(), table_ref)
+        };
+
+        match self.storage.read(&db, &tbl) {
+            Ok(batch) => {
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Op".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Msg_type".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Msg_text".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![vec![
+                        Some(format!("{}.{}", db, tbl)),
+                        Some("check".to_string()),
+                        Some("status".to_string()),
+                        Some(format!("OK ({} rows, {} columns)", batch.num_rows(), batch.num_columns())),
+                    ]],
+                ))
+            }
+            Err(e) => {
+                Ok(QueryResult::with_rows(
+                    vec![
+                        ColumnDef { name: "Table".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Op".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Msg_type".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Msg_text".to_string(), col_type: ColumnType::String },
+                    ],
+                    vec![vec![
+                        Some(format!("{}.{}", db, tbl)),
+                        Some("check".to_string()),
+                        Some("error".to_string()),
+                        Some(format!("FAILED: {}", e)),
+                    ]],
+                ))
+            }
+        }
+    }
+
+    pub(crate) fn admin_show_replica(&self) -> Result<QueryResult, String> {
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Mode".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Replicas".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Status".to_string(), col_type: ColumnType::String },
+            ],
+            vec![vec![
+                Some("Single Node".to_string()),
+                Some("1".to_string()),
+                Some("No replicas configured (single-node mode)".to_string()),
+            ]],
         ))
     }
 
@@ -591,9 +725,22 @@ impl RorisQueryHandler {
     }
 
     pub(crate) fn show_repositories(&self) -> Result<QueryResult, String> {
+        let repos = self.backup_manager.list_repositories();
+        let rows: Vec<Vec<Option<String>>> = repos.iter()
+            .map(|name| {
+                let path = self.backup_manager.get_repo_path(name)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                vec![Some(name.clone()), Some(path)]
+            })
+            .collect();
+
         Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "Name".to_string(), col_type: ColumnType::String }],
-            vec![],
+            vec![
+                ColumnDef { name: "Name".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Path".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
         ))
     }
 

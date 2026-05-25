@@ -103,6 +103,9 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     if trimmed.starts_with("SHOW PROCESSLIST") || trimmed == "SHOW PROCESSLIST" {
         return parse_show_processlist(sql);
     }
+    if trimmed.starts_with("SHOW STATUS") || trimmed == "SHOW STATUS" {
+        return parse_show_status(sql);
+    }
     if trimmed.starts_with("SHOW INDEX") || trimmed.starts_with("SHOW KEYS") {
         return parse_show_index(sql);
     }
@@ -251,6 +254,18 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
     if trimmed.starts_with("KILL ANALYZE") {
         return parse_kill_analyze_job(sql);
+    }
+    if trimmed.starts_with("KILL QUERY") {
+        return parse_kill_query(sql);
+    }
+    if trimmed.starts_with("KILL ") && !trimmed.starts_with("KILL ANALYZE") {
+        return parse_kill_connection(sql);
+    }
+    if trimmed.starts_with("ADMIN CHECK TABLE") {
+        return parse_admin_check_table(sql);
+    }
+    if trimmed.starts_with("ADMIN SHOW REPLICA") || trimmed == "ADMIN SHOW REPLICA" {
+        return Ok(vec![Statement::AdminShowReplica]);
     }
     if trimmed.starts_with("ALTER STATS") {
         return parse_alter_stats(sql);
@@ -752,6 +767,47 @@ fn parse_show_processlist(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let full = after_show.contains("FULL");
 
     Ok(vec![Statement::ShowProcesslist(full)])
+}
+
+fn parse_show_status(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let sql_upper = sql.trim().to_uppercase();
+    let after_show = sql_upper
+        .strip_prefix("SHOW")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW STATUS".to_string(),
+        })?
+        .trim();
+
+    // Parse: SHOW [GLOBAL|SESSION] STATUS [LIKE pattern]
+    let mut global = true;
+    let mut rest = after_show;
+
+    // Skip "STATUS" keyword
+    rest = rest.strip_prefix("STATUS").unwrap_or(rest).trim();
+
+    // Check for GLOBAL/SESSION before STATUS (re-parse from beginning)
+    let after_show_orig = sql_upper.strip_prefix("SHOW").unwrap_or("").trim();
+    if after_show_orig.starts_with("GLOBAL") {
+        global = true;
+        rest = after_show_orig.strip_prefix("GLOBAL").unwrap_or("").trim();
+        rest = rest.strip_prefix("STATUS").unwrap_or(rest).trim();
+    } else if after_show_orig.starts_with("SESSION") {
+        global = false;
+        rest = after_show_orig.strip_prefix("SESSION").unwrap_or("").trim();
+        rest = rest.strip_prefix("STATUS").unwrap_or(rest).trim();
+    } else if after_show_orig.starts_with("STATUS") {
+        rest = after_show_orig.strip_prefix("STATUS").unwrap_or("").trim();
+    }
+
+    let mut pattern = None;
+    if rest.starts_with("LIKE ") {
+        pattern = Some(rest[5..].trim().trim_matches('\'').to_string());
+    } else if !rest.is_empty() {
+        pattern = Some(rest.to_string());
+    }
+
+    Ok(vec![Statement::ShowStatus { global, pattern }])
 }
 
 fn parse_show_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
@@ -2962,6 +3018,47 @@ fn parse_kill_analyze_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .trim();
     let (name, _) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected job ID".to_string() })?;
     Ok(vec![Statement::KillAnalyzeJob(name.to_string())])
+}
+
+fn parse_kill_query(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let after = sql.trim().strip_prefix("KILL QUERY")
+        .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected KILL QUERY".to_string() })?
+        .trim();
+    let id_str = after.split_whitespace().next().unwrap_or("");
+    let id: u64 = id_str.parse().map_err(|_| ParseError::SyntaxError {
+        position: 0,
+        message: format!("Invalid connection ID: {}", id_str),
+    })?;
+    Ok(vec![Statement::KillQuery(id)])
+}
+
+fn parse_kill_connection(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let after = sql.trim().strip_prefix("KILL")
+        .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected KILL".to_string() })?
+        .trim();
+    // Skip optional "CONNECTION" keyword
+    let after = if after.to_uppercase().starts_with("CONNECTION") {
+        after["CONNECTION".len()..].trim()
+    } else {
+        after
+    };
+    let id_str = after.split_whitespace().next().unwrap_or("");
+    let id: u64 = id_str.parse().map_err(|_| ParseError::SyntaxError {
+        position: 0,
+        message: format!("Invalid connection ID: {}", id_str),
+    })?;
+    Ok(vec![Statement::KillConnection(id)])
+}
+
+fn parse_admin_check_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let after = sql.trim().strip_prefix("ADMIN CHECK TABLE")
+        .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected ADMIN CHECK TABLE".to_string() })?
+        .trim();
+    let (table_name, _) = extract_identifier(after).ok_or_else(|| ParseError::SyntaxError {
+        position: 0,
+        message: "Expected table name".to_string(),
+    })?;
+    Ok(vec![Statement::AdminCheckTable(table_name.to_string())])
 }
 
 fn parse_alter_stats(sql: &str) -> Result<Vec<Statement>, ParseError> {
