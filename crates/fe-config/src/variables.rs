@@ -163,15 +163,10 @@ pub struct SessionVariables {
 
 impl SessionVariables {
     pub fn new(global: Arc<GlobalVariables>) -> Self {
-        // Session starts with a copy of session-scoped global values
-        let mut values = HashMap::new();
-        for def in SYSTEM_VARIABLE_DEFS {
-            if def.scope == VarScope::Session || def.scope == VarScope::Both {
-                values.insert(def.name.to_lowercase(), def.default_value.to_string());
-            }
-        }
+        // Session starts empty — `get()` falls through to current global values.
+        // Only session-level overrides are stored here.
         Self {
-            values: RwLock::new(values),
+            values: RwLock::new(HashMap::new()),
             global,
         }
     }
@@ -300,62 +295,61 @@ impl Default for SystemVariableManager {
     }
 }
 
-/// Simple LIKE pattern matching (% = any chars, _ = single char)
+/// SQL LIKE pattern matching (% = any sequence, _ = single char).
+/// Caller is responsible for lowercasing both pattern and text for case-insensitive matching.
 fn like_match(pattern: &str, text: &str) -> bool {
-    let pattern = pattern.replace('%', ".*").replace('_', ".");
-    let re_pattern = format!("^{}$", pattern);
-    // Simple regex-free matching
-    like_match_simple(&re_pattern, text)
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    like_match_impl(pat, 0, txt, 0)
 }
 
-/// Simple pattern matching without regex crate
-fn like_match_simple(pattern: &str, text: &str) -> bool {
-    let pat_bytes = pattern.as_bytes();
-    let txt_bytes = text.as_bytes();
-    like_match_recursive(pat_bytes, 0, txt_bytes, 0)
-}
+/// Recursive LIKE matcher operating on bytes.
+/// `%` matches zero or more arbitrary characters.
+/// `_` matches exactly one arbitrary character.
+/// All other characters match themselves.
+fn like_match_impl(pat: &[u8], pi: usize, txt: &[u8], ti: usize) -> bool {
+    let mut pi = pi;
+    let mut ti = ti;
 
-fn like_match_recursive(pat: &[u8], mut pi: usize, txt: &[u8], mut ti: usize) -> bool {
-    while pi < pat.len() && ti < txt.len() {
-        if pat[pi] == b'*' {
-            // Handle .* (from %)
-            if pi + 1 < pat.len() && pat[pi + 1] == b'.' {
-                pi += 2;
-                // Try matching rest of pattern at each position
+    while pi < pat.len() {
+        match pat[pi] {
+            b'%' => {
+                // Skip consecutive % wildcards
+                while pi < pat.len() && pat[pi] == b'%' {
+                    pi += 1;
+                }
+                // Trailing % matches everything remaining
+                if pi == pat.len() {
+                    return true;
+                }
+                // Try matching the rest of the pattern starting at every remaining text position
                 for i in ti..=txt.len() {
-                    if like_match_recursive(pat, pi, txt, i) {
+                    if like_match_impl(pat, pi, txt, i) {
                         return true;
                     }
                 }
                 return false;
             }
-            pi += 1;
-            continue;
-        } else if pat[pi] == b'.' && pi + 1 > 0 && pi > 0 && pat[pi - 1] != b'.' {
-            // Handle . (from _) - matches single char
-            pi += 1;
-            ti += 1;
-        } else if pat[pi] == txt[ti] || pat[pi] == b'\\' && pi + 1 < pat.len() && pat[pi + 1] == txt[ti] {
-            if pat[pi] == b'\\' {
+            b'_' => {
+                // Must match exactly one character
+                if ti >= txt.len() {
+                    return false;
+                }
                 pi += 1;
+                ti += 1;
             }
-            pi += 1;
-            ti += 1;
-        } else {
-            return false;
+            ch => {
+                if ti >= txt.len() || txt[ti] != ch {
+                    return false;
+                }
+                pi += 1;
+                ti += 1;
+            }
         }
     }
 
-    // Skip trailing wildcards
-    while pi < pat.len() && (pat[pi] == b'*' || pat[pi] == b'.') {
-        if pat[pi] == b'*' && pi + 1 < pat.len() && pat[pi + 1] == b'.' {
-            pi += 2;
-        } else {
-            pi += 1;
-        }
-    }
-
-    pi == pat.len() && ti == txt.len()
+    // Pattern exhausted — text must also be exhausted
+    ti == txt.len()
 }
 
 #[cfg(test)]
@@ -408,11 +402,28 @@ mod tests {
 
     #[test]
     fn test_like_match() {
+        // % matches any sequence
         assert!(like_match("%version%", "version"));
         assert!(like_match("%version%", "my_version_string"));
         assert!(like_match("version", "version"));
         assert!(!like_match("version", "versions"));
         assert!(like_match("ver%on", "version"));
+
+        // _ matches exactly one char
+        assert!(like_match("ver_ion", "version"));
+        assert!(!like_match("ver_ion", "verXXion"));
+        assert!(like_match("_ersion", "version")); // _ matches 'v'
+        assert!(!like_match("_ersion", "ersions")); // extra char at end
+
+        // Edge cases
+        assert!(like_match("%", "anything"));
+        assert!(like_match("%", ""));
+        assert!(like_match("_", "a"));
+        assert!(!like_match("_", ""));
+        assert!(!like_match("_", "ab"));
+        assert!(like_match("%%", "anything"));
+        assert!(like_match("a%b%c", "aXXbYYc"));
+        assert!(!like_match("a%b%c", "aXXYYc"));
     }
 
     #[test]

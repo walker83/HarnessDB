@@ -33,4 +33,5 @@ mysql-protocol = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }
 datafusion = { workspace = true }
+parquet = { workspace = true }
 chrono = { workspace = true }

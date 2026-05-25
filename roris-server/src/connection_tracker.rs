@@ -22,7 +22,6 @@ pub struct ConnectionInfo {
 /// Tracks active connections and server-wide metrics
 pub struct ConnectionTracker {
     connections: RwLock<HashMap<u32, ConnectionInfo>>,
-    next_id: AtomicU32,
     total_connections: AtomicU64,
     active_queries: AtomicU64,
     total_queries: AtomicU64,
@@ -35,7 +34,6 @@ impl ConnectionTracker {
     pub fn new() -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
-            next_id: AtomicU32::new(1),
             total_connections: AtomicU64::new(0),
             active_queries: AtomicU64::new(0),
             total_queries: AtomicU64::new(0),
@@ -45,14 +43,13 @@ impl ConnectionTracker {
         }
     }
 
-    /// Register a new connection, returns the connection ID
-    pub fn register(&self, host: &str, user: &str) -> u32 {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+    /// Register a new connection with a given ID (from MySQL protocol layer)
+    pub fn register(&self, conn_id: u32, user: &str, host: &str, db: String) {
         let info = ConnectionInfo {
-            id,
+            id: conn_id,
             user: user.to_string(),
             host: host.to_string(),
-            db: None,
+            db: if db.is_empty() { None } else { Some(db) },
             command: "Sleep".to_string(),
             state: "".to_string(),
             connected_at: Instant::now(),
@@ -61,7 +58,7 @@ impl ConnectionTracker {
         };
 
         let mut conns = self.connections.write();
-        conns.insert(id, info);
+        conns.insert(conn_id, info);
         let current_count = conns.len() as u32;
         drop(conns);
 
@@ -77,8 +74,6 @@ impl ConnectionTracker {
                 Err(p) => peak = p,
             }
         }
-
-        id
     }
 
     /// Unregister a connection

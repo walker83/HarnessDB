@@ -334,14 +334,18 @@ impl RorisQueryHandler {
                 let mut rows = Vec::new();
                 for table_name in tables {
                     if let Some(tbl) = catalog.get_table(target_db, &table_name) {
+                        // Try to get actual row count and data size from storage
+                        let (row_count, data_size) = self.get_table_stats(target_db, &table_name)
+                            .unwrap_or((tbl.row_count, tbl.data_size));
+
                         rows.push(vec![
                             Some(table_name.clone()),
                             Some("InnoDB".to_string()),
-                            Some(tbl.row_count.to_string()),
-                            Some(format!("{:?}", tbl.data_size)),
-                            Some("DEFAULT".to_string()),
-                            Some("Dynamic".to_string()),
-                            None,
+                            Some(row_count.to_string()),
+                            Some(data_size.to_string()),
+                            Some("utf8mb4_general_ci".to_string()),
+                            None, // Comment
+                            None, // Create_options
                         ]);
                     }
                 }
@@ -360,6 +364,27 @@ impl RorisQueryHandler {
             }
             None => Err(format!("Database '{}' not found", target_db)),
         }
+    }
+
+    /// Get actual row count and data size from Parquet file
+    fn get_table_stats(&self, db: &str, table: &str) -> Option<(u64, u64)> {
+        let table_dir = self.storage.table_dir(db, table);
+        let parquet_path = table_dir.join("data.parquet");
+
+        if !parquet_path.exists() {
+            return Some((0, 0));
+        }
+
+        // Get file size
+        let metadata = std::fs::metadata(&parquet_path).ok()?;
+        let data_size = metadata.len();
+
+        // Read Parquet metadata to get row count
+        let file = std::fs::File::open(&parquet_path).ok()?;
+        let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file).ok()?;
+        let row_count = builder.metadata().file_metadata().num_rows();
+
+        Some((row_count as u64, data_size))
     }
 
     pub(crate) fn show_variables(&self, global: bool, pattern: Option<String>) -> Result<QueryResult, String> {

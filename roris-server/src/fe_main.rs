@@ -169,6 +169,15 @@ impl QueryHandler for RorisQueryHandler {
         }
         self.session_ctx.state_ref().write().config_mut().options_mut().catalog.default_schema = db.to_string();
     }
+
+    fn on_connect(&self, conn_id: u32, user: &str, host: &str) {
+        let db = self.current_database.read().clone();
+        self.connection_tracker.register(conn_id, user, host, db);
+    }
+
+    fn on_disconnect(&self, conn_id: u32) {
+        self.connection_tracker.unregister(conn_id);
+    }
 }
 
 impl RorisQueryHandler {

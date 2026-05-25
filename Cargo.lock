@@ -3529,6 +3529,7 @@ dependencies = [
  "fe-storage",
  "mysql-protocol",
  "parking_lot",
+ "parquet",
  "serde",
  "serde_json",
  "sysinfo",

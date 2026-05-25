@@ -83,6 +83,10 @@ pub trait QueryHandler: Send + Sync + 'static {
     fn handle_query(&self, sql: &str) -> QueryResult;
     /// Called when client changes database (USE command). Default: do nothing.
     fn set_database(&self, _db: &str) {}
+    /// Called when a new client connection is established.
+    fn on_connect(&self, _conn_id: u32, _user: &str, _host: &str) {}
+    /// Called when a client connection is closed.
+    fn on_disconnect(&self, _conn_id: u32) {}
 }
 
 /// The MySQL protocol server.
@@ -135,8 +139,12 @@ async fn handle_connection(
     handler: Arc<dyn QueryHandler>,
     auth_timeout_secs: u64,
 ) -> std::io::Result<()> {
-    let mut conn = Connection::new(stream, conn_id, handler, auth_timeout_secs);
-    conn.run().await
+    let peer_addr = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
+    handler.on_connect(conn_id, "root", &peer_addr);
+    let mut conn = Connection::new(stream, conn_id, handler.clone(), auth_timeout_secs);
+    let result = conn.run().await;
+    handler.on_disconnect(conn_id);
+    result
 }
 
 /// Convert a ColumnDef (from QueryResult) to a Column (for packet encoding).

@@ -385,6 +385,15 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         return Ok(vec![Statement::SetTransactionIsolation(isolation_level.to_string())]);
     }
 
+    // SET GLOBAL / SET SESSION / SET NAMES / SET character set / SET @@global.var / SET @@session.var
+    // sqlparser can't handle the GLOBAL/SESSION keyword prefix, so intercept before it.
+    if upper.starts_with("SET ") && !upper.starts_with("SET PROPERTIES") {
+        if let Some(stmt) = try_parse_set_variable(sql)? {
+            return Ok(vec![stmt]);
+        }
+        // Fall through to sqlparser for SET @user_var = val etc.
+    }
+
     // INSERT ... SET syntax (MySQL compatibility) - convert to INSERT ... VALUES
     // INSERT INTO t SET col1 = val1, col2 = val2 -> INSERT INTO t (col1, col2) VALUES (val1, val2)
     if trimmed.starts_with("INSERT") && trimmed.contains(" SET ") && !trimmed.contains(" ON DUPLICATE KEY") {
@@ -715,6 +724,137 @@ fn parse_show_table_status(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
 
     Ok(vec![Statement::ShowTableStatus(db_name)])
+}
+
+/// Try to parse a SET variable statement.
+/// Returns Ok(None) if the SQL is not a simple SET variable (e.g. SET @user_var — let sqlparser handle it).
+/// Returns Ok(Some(stmt)) if successfully parsed.
+/// Returns Err if this is clearly a SET variable but malformed.
+fn try_parse_set_variable(sql: &str) -> Result<Option<Statement>, ParseError> {
+    let trimmed = sql.trim().trim_end_matches(';');
+    let upper = trimmed.to_uppercase();
+    let after_set = upper.strip_prefix("SET ").unwrap_or_default().trim();
+
+    // Detect scope: GLOBAL or SESSION
+    let (is_global, rest) = if after_set.starts_with("GLOBAL ") || after_set.starts_with("GLOBAL\t") {
+        (true, after_set.strip_prefix("GLOBAL ").or_else(|| after_set.strip_prefix("GLOBAL\t")).unwrap_or_default().trim())
+    } else if after_set.starts_with("SESSION ") || after_set.starts_with("SESSION\t") {
+        (false, after_set.strip_prefix("SESSION ").or_else(|| after_set.strip_prefix("SESSION\t")).unwrap_or_default().trim())
+    } else {
+        (false, after_set)
+    };
+
+    // Handle SET NAMES 'charset' / SET NAMES charset
+    if !is_global && rest.starts_with("NAMES") {
+        let charset = rest.strip_prefix("NAMES").unwrap_or_default().trim()
+            .trim_matches('\'').trim_matches('"');
+        // SET NAMES sets multiple character set variables at once.
+        // We just store it as a special variable.
+        return Ok(Some(Statement::SetVariable(SetVariableStmt {
+            variable: "character_set_all".to_string(),
+            value: Expr::Literal(LiteralValue::String(charset.to_string())),
+            is_global: false,
+        })));
+    }
+
+    // Handle SET CHARACTER SET ... (same as SET NAMES for our purposes)
+    if !is_global && rest.starts_with("CHARACTER SET") {
+        let charset = rest.strip_prefix("CHARACTER SET").unwrap_or_default().trim()
+            .trim_matches('\'').trim_matches('"');
+        return Ok(Some(Statement::SetVariable(SetVariableStmt {
+            variable: "character_set_all".to_string(),
+            value: Expr::Literal(LiteralValue::String(charset.to_string())),
+            is_global: false,
+        })));
+    }
+
+    // Handle @@global.var = val / @@session.var = val / @@var = val
+    let (scope_from_at, rest) = if rest.starts_with("@@GLOBAL.") {
+        (Some(true), rest.strip_prefix("@@GLOBAL.").unwrap_or_default().trim())
+    } else if rest.starts_with("@@SESSION.") {
+        (Some(false), rest.strip_prefix("@@SESSION.").unwrap_or_default().trim())
+    } else if rest.starts_with("@@") && !rest.starts_with("@@") {
+        // just @@var — treat as session
+        (Some(false), rest.strip_prefix("@@").unwrap_or_default().trim())
+    } else {
+        (None, rest)
+    };
+
+    let effective_global = scope_from_at.unwrap_or(is_global);
+
+    // Skip user variables (@var) — let sqlparser handle them
+    if rest.starts_with('@') {
+        return Ok(None);
+    }
+
+    // Parse: var_name = value  OR  var_name := value  OR  var_name TO value
+    let (var_name, value_str) = if let Some(eq_pos) = rest.find(":=") {
+        let name = rest[..eq_pos].trim().trim_matches('`').trim_matches('"');
+        let val = rest[eq_pos + 2..].trim();
+        (name, val)
+    } else if let Some(eq_pos) = rest.find('=') {
+        let name = rest[..eq_pos].trim().trim_matches('`').trim_matches('"');
+        let val = rest[eq_pos + 1..].trim();
+        (name, val)
+    } else if let Some(to_pos) = rest.to_uppercase().find(" TO ") {
+        let name = rest[..to_pos].trim().trim_matches('`').trim_matches('"');
+        let val = rest[to_pos + 4..].trim();
+        (name, val)
+    } else {
+        // No assignment — might be something sqlparser handles
+        return Ok(None);
+    };
+
+    if var_name.is_empty() {
+        return Ok(None);
+    }
+
+    // Parse value into Expr
+    let value_expr = parse_set_value(value_str);
+
+    Ok(Some(Statement::SetVariable(SetVariableStmt {
+        variable: var_name.to_lowercase(),
+        value: value_expr,
+        is_global: effective_global,
+    })))
+}
+
+/// Parse a SET value string into an Expr.
+fn parse_set_value(s: &str) -> Expr {
+    let s = s.trim();
+
+    // Quoted string
+    if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
+        let inner = &s[1..s.len()-1];
+        // Handle escaped quotes
+        let unescaped = inner.replace("\\'", "'").replace("\\\"", "\"").replace("\\\\", "\\");
+        return Expr::Literal(LiteralValue::String(unescaped));
+    }
+
+    // Boolean-like
+    let upper = s.to_uppercase();
+    if upper == "TRUE" || upper == "ON" {
+        return Expr::Literal(LiteralValue::Boolean(true));
+    }
+    if upper == "FALSE" || upper == "OFF" {
+        return Expr::Literal(LiteralValue::Boolean(false));
+    }
+    if upper == "NULL" || upper == "DEFAULT" {
+        return Expr::Literal(LiteralValue::Null);
+    }
+
+    // Integer
+    if let Ok(n) = s.parse::<i64>() {
+        return Expr::Literal(LiteralValue::Int64(n));
+    }
+
+    // Float
+    if let Ok(f) = s.parse::<f64>() {
+        return Expr::Literal(LiteralValue::Float64(f));
+    }
+
+    // Unquoted string (e.g. utf8mb4, STRICT_TRANS_TABLES)
+    Expr::Literal(LiteralValue::String(s.to_string()))
 }
 
 fn parse_show_variables(sql: &str) -> Result<Vec<Statement>, ParseError> {
