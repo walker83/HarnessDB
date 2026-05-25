@@ -22,7 +22,8 @@ pub const DEFAULT_CAPABILITIES: u32 =
     | CapabilityFlags::MULTI_STATEMENTS
     | CapabilityFlags::MULTI_RESULTS
     | CapabilityFlags::PS_MULTI_RESULTS
-    | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA;
+    | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA
+    | CapabilityFlags::DEPRECATE_EOF;
 
 /// Server status flags sent in OK packets.
 pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;

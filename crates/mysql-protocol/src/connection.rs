@@ -425,13 +425,19 @@ impl Connection {
             // select @@variable (various system variables)
             if trimmed.contains("@@") {
                 // Extract variable name from query like "SELECT @@max_allowed_packet"
+                // or "SELECT @@session.lower_case_table_names"
                 let var_name = trimmed
                     .split("@@")
                     .nth(1)
                     .map(|s| s.trim().split_whitespace().next().unwrap_or("").trim_end_matches(';').trim())
                     .unwrap_or("");
+                // Strip session./global. prefix if present
+                let clean_var = var_name
+                    .strip_prefix("session.")
+                    .or_else(|| var_name.strip_prefix("global."))
+                    .unwrap_or(var_name);
 
-                let (value, col_type) = match var_name {
+                let (value, col_type) = match clean_var {
                     "max_allowed_packet" => (4194304.to_string(), ColumnType::Int), // 4MB default
                     "version" | "version_comment" => ("RorisDB".to_string(), ColumnType::String),
                     "character_set_client" | "character_set_connection" | "character_set_results" => ("utf8mb4".to_string(), ColumnType::String),
@@ -442,6 +448,14 @@ impl Connection {
                     "wait_timeout" => (28800.to_string(), ColumnType::Int),
                     "interactive_timeout" => (28800.to_string(), ColumnType::Int),
                     "net_buffer_length" => (16384.to_string(), ColumnType::Int),
+                    "lower_case_table_names" => ("0".to_string(), ColumnType::Int),
+                    "have_ssl" => ("NO".to_string(), ColumnType::String),
+                    "have_query_cache" => ("NO".to_string(), ColumnType::String),
+                    "license" => ("Apache 2.0".to_string(), ColumnType::String),
+                    "innodb_version" => (env!("CARGO_PKG_VERSION").to_string(), ColumnType::String),
+                    "protocol_version" => ("10".to_string(), ColumnType::Int),
+                    "tmpdir" => ("/tmp".to_string(), ColumnType::String),
+                    "datadir" => ("".to_string(), ColumnType::String),
                     _ => ("".to_string(), ColumnType::String),
                 };
 
@@ -452,6 +466,23 @@ impl Connection {
                 return self.send_result_set(result).await;
             }
 
+        }
+
+        // Handle transaction commands
+        if trimmed.starts_with("begin") || trimmed.starts_with("start transaction") {
+            return self.send_ok(0, 0).await;
+        }
+        if trimmed.starts_with("commit") || trimmed.starts_with("rollback") {
+            // Accept these silently (ignore errors about no transaction)
+            return self.send_ok(0, 0).await;
+        }
+
+        // Handle SET commands (autocommit, names, etc.)
+        if trimmed.starts_with("set ") {
+            // SET AUTOCOMMIT = 0|1, SET @@autocommit = 0|1, etc.
+            if trimmed.contains("autocommit") || trimmed.contains("names ") || trimmed.contains("character_set") {
+                return self.send_ok(0, 0).await;
+            }
         }
 
         // Handle SHOW commands
