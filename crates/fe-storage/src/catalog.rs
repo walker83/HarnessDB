@@ -94,7 +94,7 @@ impl SchemaProvider for ParquetSchemaProvider {
 pub struct ParquetCatalogProvider {
     pub catalog: Arc<CatalogManager>,
     pub storage: Arc<ParquetStorage>,
-    pub schemas: DashMap<String, Arc<ParquetSchemaProvider>>,
+    pub schemas: DashMap<String, Arc<dyn datafusion::catalog::SchemaProvider>>,
 }
 
 impl std::fmt::Debug for ParquetCatalogProvider {
@@ -114,9 +114,14 @@ impl ParquetCatalogProvider {
                     name.clone(),
                     catalog.clone(),
                     storage.clone(),
-                )),
+                )) as Arc<dyn datafusion::catalog::SchemaProvider>,
             );
         }
+        // Register custom information_schema with MySQL-compatible types
+        schemas.insert(
+            "information_schema".to_string(),
+            Arc::new(crate::information_schema::InformationSchemaProvider::new(catalog.clone())) as Arc<dyn datafusion::catalog::SchemaProvider>,
+        );
         Self {
             catalog,
             storage,
@@ -131,7 +136,7 @@ impl ParquetCatalogProvider {
                 name.to_string(),
                 self.catalog.clone(),
                 self.storage.clone(),
-            )),
+            )) as Arc<dyn datafusion::catalog::SchemaProvider>,
         );
     }
 
@@ -185,9 +190,9 @@ impl CatalogProvider for ParquetCatalogProvider {
         self.schemas.iter().map(|r| r.key().clone()).collect()
     }
 
-    fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
+    fn schema(&self, name: &str) -> Option<Arc<dyn datafusion::catalog::SchemaProvider>> {
         self.schemas
             .get(name)
-            .map(|r| r.value().clone() as Arc<dyn SchemaProvider>)
+            .map(|r| r.value().clone())
     }
 }

@@ -1,7 +1,9 @@
 pub mod catalog;
+pub mod information_schema;
 pub mod table_provider;
 
 pub use catalog::{ParquetCatalogProvider, ParquetSchemaProvider};
+pub use information_schema::InformationSchemaProvider;
 pub use table_provider::ParquetTableProvider;
 
 use std::path::{Path, PathBuf};

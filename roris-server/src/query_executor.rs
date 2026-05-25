@@ -41,7 +41,7 @@ impl RorisQueryHandler {
     pub(crate) fn execute_statement(&self, conn_id: u32, stmt: &Statement) -> Result<QueryResult, String> {
         match stmt {
             Statement::ShowDatabases => self.show_databases(conn_id),
-            Statement::ShowTables(db, like) => self.show_tables(conn_id, db.clone(), like.clone()),
+            Statement::ShowTables(db, like, is_full) => self.show_tables(conn_id, db.clone(), like.clone(), *is_full),
             Statement::ShowCreateTable(db, table) => self.show_create_table(conn_id, db.clone(), table.clone()),
             Statement::ShowCreateDatabase(db) => self.show_create_database(conn_id, db),
             Statement::ShowCreateView(db, view) => self.show_create_view(conn_id, db.clone(), view.clone()),
@@ -169,7 +169,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_tables(&self, conn_id: u32, db: Option<String>, like: Option<String>) -> Result<QueryResult, String> {
+    pub(crate) fn show_tables(&self, conn_id: u32, db: Option<String>, like: Option<String>, is_full: bool) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         let current_db = self.get_session(conn_id);
         let target_db = db.as_deref().unwrap_or(&current_db);
@@ -184,12 +184,23 @@ impl RorisQueryHandler {
                             None => true,
                         }
                     })
-                    .map(|t| vec![Some(t.clone())])
+                    .map(|t| {
+                        if is_full {
+                            vec![Some(t.clone()), Some("BASE TABLE".to_string())]
+                        } else {
+                            vec![Some(t.clone())]
+                        }
+                    })
                     .collect();
-                Ok(QueryResult::with_rows(
-                    vec![ColumnDef { name: "Tables".to_string(), col_type: ColumnType::String }],
-                    rows,
-                ))
+                let columns = if is_full {
+                    vec![
+                        ColumnDef { name: format!("Tables_in_{}", target_db), col_type: ColumnType::String },
+                        ColumnDef { name: "Table_type".to_string(), col_type: ColumnType::String },
+                    ]
+                } else {
+                    vec![ColumnDef { name: "Tables".to_string(), col_type: ColumnType::String }]
+                };
+                Ok(QueryResult::with_rows(columns, rows))
             }
             None => Err(format!("Database '{}' not found", target_db)),
         }

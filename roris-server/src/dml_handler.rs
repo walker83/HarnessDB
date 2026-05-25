@@ -129,7 +129,7 @@ impl RorisQueryHandler {
                     let df_config = SessionConfig::new()
                         .with_default_catalog_and_schema("roris", &current_db)
                         .with_create_default_catalog_and_schema(false)
-                        .with_information_schema(true);
+                        .with_information_schema(false); // Use custom information_schema from ParquetCatalogProvider
                     let mut ctx = SessionContext::new_with_config(df_config);
                     ctx.register_catalog("roris", df_catalog);
                     let df = ctx.sql(&select_sql).await?;

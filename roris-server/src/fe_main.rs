@@ -23,7 +23,7 @@ use fe_backup::BackupManager;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_parser::{parse_sql, is_dml_sql};
-use fe_storage::ParquetCatalogProvider;
+use fe_storage::{ParquetCatalogProvider, InformationSchemaProvider};
 use fe_datafusion::{register_doris_udfs, register_misc_udfs};
 use datafusion::prelude::{SessionConfig, SessionContext};
 
@@ -85,7 +85,7 @@ impl QueryHandler for RorisQueryHandler {
                             let df_config = SessionConfig::new()
                                 .with_default_catalog_and_schema("roris", &current_db)
                                 .with_create_default_catalog_and_schema(false)
-                                .with_information_schema(true);
+                                .with_information_schema(false); // Use custom information_schema from ParquetCatalogProvider
                             let mut ctx = SessionContext::new_with_config(df_config);
                             ctx.register_catalog("roris", df_catalog);
                             register_doris_udfs(&mut ctx);

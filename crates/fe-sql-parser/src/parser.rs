@@ -1870,7 +1870,7 @@ fn convert_statement(
                 properties: vec![],
             }))
         }
-        sqlparser::ast::Statement::ShowTables { show_options, .. } => {
+        sqlparser::ast::Statement::ShowTables { show_options, full, .. } => {
             let db_name = show_options
                 .show_in
                 .and_then(|si| si.parent_name)
@@ -1878,7 +1878,7 @@ fn convert_statement(
             let like_pattern = show_options
                 .filter_position
                 .and_then(|fp| match fp {
-                    sqlparser::ast::ShowStatementFilterPosition::Suffix(filter) 
+                    sqlparser::ast::ShowStatementFilterPosition::Suffix(filter)
                     | sqlparser::ast::ShowStatementFilterPosition::Infix(filter) => {
                         if let sqlparser::ast::ShowStatementFilter::Like(pattern) = filter {
                             Some(pattern)
@@ -1887,7 +1887,7 @@ fn convert_statement(
                         }
                     }
                 });
-            Ok(Statement::ShowTables(db_name, like_pattern))
+            Ok(Statement::ShowTables(db_name, like_pattern, full))
         }
         sqlparser::ast::Statement::Use(use_expr) => {
             let db_name = match use_expr {
