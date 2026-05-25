@@ -238,7 +238,8 @@ mod write {
             .iter()
             .map(|f| arrow_array::new_empty_array(f.data_type()))
             .collect();
-        RecordBatch::try_new(schema.clone(), cols).unwrap()
+        RecordBatch::try_new(schema.clone(), cols)
+            .expect("schema should be valid for empty batch (need at least one column)")
     }
 
     /// Write a RecordBatch to a Parquet file atomically (write temp + rename).

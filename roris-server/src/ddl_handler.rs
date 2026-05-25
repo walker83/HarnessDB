@@ -72,6 +72,11 @@ impl RorisQueryHandler {
     // ---- Table DDL ----
 
     pub(crate) fn create_table(&self, stmt: &CreateTableStmt) -> Result<QueryResult, String> {
+        // Validate at least one column (MySQL rejects 0-column tables)
+        if stmt.columns.is_empty() {
+            return Err("A table must have at least one column".to_string());
+        }
+
         let catalog = &self.catalog;
         let current_db = self.current_database.read();
         let db = stmt.database.as_deref().unwrap_or(&current_db);
