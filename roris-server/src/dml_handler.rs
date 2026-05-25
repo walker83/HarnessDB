@@ -5,9 +5,10 @@ use datafusion::arrow::compute::concat_batches;
 use datafusion::arrow::datatypes::{DataType as ADT, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
-use datafusion::prelude::SessionContext;
+use datafusion::prelude::{SessionConfig, SessionContext};
 use mysql_protocol::QueryResult;
 use mysql_protocol::server::{ColumnDef, ColumnType};
+use fe_storage::ParquetCatalogProvider;
 
 use fe_sql_parser::ast::{self, DeleteStmt};
 
@@ -15,16 +16,16 @@ use crate::handler_struct::RorisQueryHandler;
 use crate::utils::{build_arrow_array_from_exprs, expr_to_string_value, update_column_in_batch, merge_columns};
 
 impl RorisQueryHandler {
-    pub(crate) fn insert(&self, stmt: &ast::InsertStmt) -> Result<QueryResult, String> {
+    pub(crate) fn insert(&self, conn_id: u32, stmt: &ast::InsertStmt) -> Result<QueryResult, String> {
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
             1 => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 (current_db.clone(), stmt.table.clone())
             }
             2 => (parts[0].to_string(), parts[1].to_string()),
             _ => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 (current_db.clone(), stmt.table.clone())
             }
         };
@@ -116,11 +117,21 @@ impl RorisQueryHandler {
         let select_sql = query_stmt_to_sql(query);
 
         // Execute via DataFusion in a spawned thread with its own tokio runtime
+        // Use a per-query context with the correct default schema
+        let current_db = database.to_string();
         let result = std::thread::spawn({
-            let ctx = self.session_ctx.clone();
+            let catalog = self.catalog.clone();
+            let storage = self.storage.clone();
             move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
+                    let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog, storage));
+                    let df_config = SessionConfig::new()
+                        .with_default_catalog_and_schema("roris", &current_db)
+                        .with_create_default_catalog_and_schema(false)
+                        .with_information_schema(true);
+                    let mut ctx = SessionContext::new_with_config(df_config);
+                    ctx.register_catalog("roris", df_catalog);
                     let df = ctx.sql(&select_sql).await?;
                     let batches = df.collect().await?;
                     Ok::<_, datafusion::error::DataFusionError>(batches)
@@ -600,16 +611,16 @@ pub(crate) fn evaluate_set_expr_with_datafusion(
 }
 
 impl RorisQueryHandler {
-    pub(crate) fn update(&self, stmt: &ast::UpdateStmt) -> Result<QueryResult, String> {
+    pub(crate) fn update(&self, conn_id: u32, stmt: &ast::UpdateStmt) -> Result<QueryResult, String> {
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
             1 => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 (current_db.clone(), stmt.table.clone())
             }
             2 => (parts[0].to_string(), parts[1].to_string()),
             _ => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 (current_db.clone(), stmt.table.clone())
             }
         };
@@ -661,7 +672,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn delete(&self, stmt: &DeleteStmt) -> Result<QueryResult, String> {
+    pub(crate) fn delete(&self, conn_id: u32, stmt: &DeleteStmt) -> Result<QueryResult, String> {
         let target_tables = if stmt.tables.is_empty() {
             if let Some(ref from) = stmt.from {
                 fn get_base_table_name(t: &fe_sql_parser::ast::TableRef) -> String {
@@ -683,12 +694,12 @@ impl RorisQueryHandler {
         let parts: Vec<&str> = primary_table.split('.').collect();
         let (database, table_name) = match parts.len() {
             1 => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 (current_db.clone(), primary_table.clone())
             }
             2 => (parts[0].to_string(), parts[1].to_string()),
             _ => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 (current_db.clone(), primary_table.clone())
             }
         };
@@ -780,56 +791,48 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn start_transaction(&self) -> Result<QueryResult, String> {
-        let mut tx = self.transaction.write();
-        if tx.in_transaction {
+    pub(crate) fn start_transaction(&self, conn_id: u32) -> Result<QueryResult, String> {
+        if self.in_transaction(conn_id) {
             // Nested BEGIN is a no-op in non-savepoint mode (matches MySQL behavior)
             return Ok(QueryResult::ok());
         }
-        tx.begin();
+        self.begin_transaction(conn_id);
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn commit_tx(&self) -> Result<QueryResult, String> {
-        let mut tx = self.transaction.write();
-        if !tx.in_transaction {
+    pub(crate) fn commit_tx(&self, conn_id: u32) -> Result<QueryResult, String> {
+        if !self.in_transaction(conn_id) {
             return Err("No transaction to commit".to_string());
         }
-        tx.in_transaction = false;
+        self.commit_transaction(conn_id);
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn rollback_tx(&self) -> Result<QueryResult, String> {
-        let mut tx = self.transaction.write();
-        if !tx.in_transaction {
+    pub(crate) fn rollback_tx(&self, conn_id: u32) -> Result<QueryResult, String> {
+        if !self.in_transaction(conn_id) {
             return Err("No transaction to rollback".to_string());
         }
-        tx.rollback();
-        tx.in_transaction = false;
+        self.rollback_transaction(conn_id);
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn savepoint(&self, name: String) -> Result<QueryResult, String> {
-        let mut tx = self.transaction.write();
-        tx.savepoint(name).map_err(|e| e)?;
+    pub(crate) fn savepoint_cmd(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
+        self.with_session_mut(conn_id, |s| s.transaction.savepoint(name)).map_err(|e| e)?;
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn rollback_to_savepoint(&self, name: String) -> Result<QueryResult, String> {
-        let mut tx = self.transaction.write();
-        tx.rollback_to_savepoint(&name).map_err(|e| e)?;
+    pub(crate) fn rollback_to_savepoint_cmd(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
+        self.with_session_mut(conn_id, |s| s.transaction.rollback_to_savepoint(&name)).map_err(|e| e)?;
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn release_savepoint(&self, name: String) -> Result<QueryResult, String> {
-        let mut tx = self.transaction.write();
-        tx.release_savepoint(&name).map_err(|e| e)?;
+    pub(crate) fn release_savepoint_cmd(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
+        self.with_session_mut(conn_id, |s| s.transaction.release_savepoint(&name)).map_err(|e| e)?;
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn set_transaction_isolation(&self, level: String) -> Result<QueryResult, String> {
-        let mut tx = self.transaction.write();
-        tx.set_isolation_level(level.clone());
+    pub(crate) fn set_transaction_isolation(&self, conn_id: u32, level: String) -> Result<QueryResult, String> {
+        self.with_session_mut(conn_id, |s| s.transaction.set_isolation_level(level.clone()));
         tracing::info!("Setting transaction isolation level to: {}", level);
         Ok(QueryResult::ok())
     }

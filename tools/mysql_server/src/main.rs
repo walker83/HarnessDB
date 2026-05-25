@@ -18,7 +18,7 @@ impl TpchQueryHandler {
 }
 
 impl QueryHandler for TpchQueryHandler {
-    fn handle_query(&self, sql: &str) -> QueryResult {
+    fn handle_query(&self, conn_id: u32, sql: &str) -> QueryResult {
         let sql_upper = sql.trim().to_uppercase();
 
         // Use tpch database

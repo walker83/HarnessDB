@@ -399,6 +399,17 @@ pub(crate) fn update_column_in_batch(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
+        ADT::Decimal128(precision, scale) => {
+            let arr = col.as_any().downcast_ref::<Decimal128Array>().unwrap();
+            let scale_factor = 10i128.pow(*scale as u32);
+            let val_f: f64 = val_str.parse().map_err(|e| format!("Parse error: {}", e))?;
+            let val = (val_f * scale_factor as f64) as i128;
+            let new_arr = Decimal128Array::from_iter(
+                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
+            ).with_precision_and_scale(*precision, *scale)
+             .map_err(|e| format!("Decimal precision/scale error: {}", e))?;
+            Arc::new(new_arr)
+        }
         _ => return Err(format!("Unsupported column type for UPDATE: {}", col.data_type())),
     };
 
@@ -561,14 +572,15 @@ pub(crate) fn build_arrow_array_from_exprs(
             Arc::new(arr)
         }
         ADT::Decimal128(precision, scale) => {
-            // LARGEINT maps to Decimal128; build from Int64/Float64 literals
+            // Build from Int64/Float64 literals, scaling by 10^scale for correct decimal representation
+            let scale_factor = 10i128.pow(*scale as u32);
             let arr: Decimal128Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(*n)),
-                Expr::Literal(LiteralValue::Float64(f)) => Some(*f as i128),
+                Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(*n) * scale_factor),
+                Expr::Literal(LiteralValue::Float64(f)) => Some((*f * scale_factor as f64) as i128),
                 Expr::Literal(LiteralValue::Null) => None,
                 Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(-*n)),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i128)),
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(i128::from(*n) * scale_factor)),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(-((*f * scale_factor as f64) as i128)),
                     _ => None,
                 },
                 _ => None,
@@ -936,7 +948,7 @@ mod tests {
     fn test_parse_data_type() {
         assert!(matches!(parse_data_type("INT"), DataType::Int32));
         assert!(matches!(parse_data_type("BIGINT"), DataType::Int64));
-        assert!(matches!(parse_data_type("VARCHAR"), DataType::String));
+        assert!(matches!(parse_data_type("VARCHAR"), DataType::Varchar(_)));
         assert!(matches!(parse_data_type("DOUBLE"), DataType::Float64));
         assert!(matches!(parse_data_type("BOOL"), DataType::Boolean));
         assert!(matches!(parse_data_type("DATE"), DataType::Date));

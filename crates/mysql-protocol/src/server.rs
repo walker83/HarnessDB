@@ -80,9 +80,9 @@ impl QueryResult {
 
 /// Trait that callers implement to handle SQL queries from MySQL clients.
 pub trait QueryHandler: Send + Sync + 'static {
-    fn handle_query(&self, sql: &str) -> QueryResult;
+    fn handle_query(&self, conn_id: u32, sql: &str) -> QueryResult;
     /// Called when client changes database (USE command). Default: do nothing.
-    fn set_database(&self, _db: &str) {}
+    fn set_database(&self, _conn_id: u32, _db: &str) {}
     /// Called when a new client connection is established.
     fn on_connect(&self, _conn_id: u32, _user: &str, _host: &str) {}
     /// Called when a client connection is closed.

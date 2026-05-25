@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::prelude::{SessionConfig, SessionContext};
@@ -12,17 +13,23 @@ use mysql_protocol::QueryResult;
 
 use crate::connection_tracker::ConnectionTracker;
 
+/// Per-connection session state
+pub(crate) struct SessionState {
+    pub(crate) current_database: String,
+    pub(crate) session_vars: SessionVariables,
+    pub(crate) transaction: SimpleTransactionState,
+}
+
 pub(crate) struct RorisQueryHandler {
     pub(crate) catalog: Arc<CatalogManager>,
-    pub(crate) current_database: Arc<PlRwLock<String>>,
     pub(crate) views: Arc<PlRwLock<Vec<ViewInfo>>>,
-    pub(crate) transaction: Arc<PlRwLock<SimpleTransactionState>>,
     pub(crate) session_ctx: SessionContext,
     pub(crate) storage: Arc<ParquetStorage>,
     // Configuration and system variables
     pub(crate) config: RorisConfig,
     pub(crate) sys_vars: Arc<SystemVariableManager>,
-    pub(crate) session_vars: Arc<PlRwLock<SessionVariables>>,
+    // Per-connection session state
+    pub(crate) sessions: Arc<PlRwLock<HashMap<u32, SessionState>>>,
     // Operations
     pub(crate) audit_logger: Arc<AuditLogger>,
     pub(crate) connection_tracker: Arc<ConnectionTracker>,
@@ -105,22 +112,93 @@ impl RorisQueryHandler {
         register_misc_udfs(&mut session_ctx);
         fe_datafusion::register_date_udfs(&mut session_ctx);
 
-        let session_vars = Arc::new(PlRwLock::new(sys_vars.create_session()));
-
         Self {
             catalog,
-            current_database: Arc::new(PlRwLock::new("information_schema".to_string())),
             views: Arc::new(PlRwLock::new(Vec::new())),
-            transaction: Arc::new(PlRwLock::new(SimpleTransactionState::new())),
             session_ctx,
             storage,
             config,
             sys_vars,
-            session_vars,
+            sessions: Arc::new(PlRwLock::new(HashMap::new())),
             audit_logger,
             connection_tracker,
             backup_manager,
         }
+    }
+
+    /// Get session state for a connection, creating default if not exists
+    pub(crate) fn get_session(&self, conn_id: u32) -> String {
+        let sessions = self.sessions.read();
+        sessions.get(&conn_id)
+            .map(|s| s.current_database.clone())
+            .unwrap_or_else(|| "information_schema".to_string())
+    }
+
+    /// Set current database for a connection
+    pub(crate) fn set_current_database(&self, conn_id: u32, db: String) {
+        let mut sessions = self.sessions.write();
+        let session = sessions.entry(conn_id).or_insert_with(|| SessionState {
+            current_database: db.clone(),
+            session_vars: self.sys_vars.create_session(),
+            transaction: SimpleTransactionState::new(),
+        });
+        session.current_database = db;
+    }
+
+    /// Get mutable access to session state
+    pub(crate) fn with_session_mut<F, R>(&self, conn_id: u32, f: F) -> R
+    where
+        F: FnOnce(&mut SessionState) -> R,
+    {
+        let mut sessions = self.sessions.write();
+        let session = sessions.entry(conn_id).or_insert_with(|| SessionState {
+            current_database: "information_schema".to_string(),
+            session_vars: self.sys_vars.create_session(),
+            transaction: SimpleTransactionState::new(),
+        });
+        f(session)
+    }
+
+    /// Remove session state for a connection
+    pub(crate) fn remove_session(&self, conn_id: u32) {
+        let mut sessions = self.sessions.write();
+        sessions.remove(&conn_id);
+    }
+
+    /// Transaction operations
+    pub(crate) fn begin_transaction(&self, conn_id: u32) {
+        self.with_session_mut(conn_id, |s| s.transaction.begin());
+    }
+
+    pub(crate) fn commit_transaction(&self, conn_id: u32) {
+        self.with_session_mut(conn_id, |s| {
+            s.transaction.in_transaction = false;
+            s.transaction.savepoints.clear();
+        });
+    }
+
+    pub(crate) fn rollback_transaction(&self, conn_id: u32) {
+        self.with_session_mut(conn_id, |s| s.transaction.rollback());
+    }
+
+    pub(crate) fn savepoint(&self, conn_id: u32, name: String) -> Result<(), String> {
+        self.with_session_mut(conn_id, |s| s.transaction.savepoint(name))
+    }
+
+    pub(crate) fn rollback_to_savepoint(&self, conn_id: u32, name: &str) -> Result<(), String> {
+        self.with_session_mut(conn_id, |s| s.transaction.rollback_to_savepoint(name))
+    }
+
+    pub(crate) fn release_savepoint(&self, conn_id: u32, name: &str) -> Result<(), String> {
+        self.with_session_mut(conn_id, |s| s.transaction.release_savepoint(name))
+    }
+
+    pub(crate) fn set_isolation_level(&self, conn_id: u32, level: String) {
+        self.with_session_mut(conn_id, |s| s.transaction.set_isolation_level(level));
+    }
+
+    pub(crate) fn in_transaction(&self, conn_id: u32) -> bool {
+        self.with_session_mut(conn_id, |s| s.transaction.in_transaction)
     }
 
     pub(crate) fn find_view(&self, db: &str, name: &str) -> Option<ViewInfo> {

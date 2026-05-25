@@ -38,125 +38,125 @@ fn datatype_to_mysql_type(dt: &RorisDataType) -> String {
 }
 
 impl RorisQueryHandler {
-    pub(crate) fn execute_statement(&self, stmt: &Statement) -> Result<QueryResult, String> {
+    pub(crate) fn execute_statement(&self, conn_id: u32, stmt: &Statement) -> Result<QueryResult, String> {
         match stmt {
-            Statement::ShowDatabases => self.show_databases(),
-            Statement::ShowTables(db, like) => self.show_tables(db.clone(), like.clone()),
-            Statement::ShowCreateTable(db, table) => self.show_create_table(db.clone(), table.clone()),
-            Statement::ShowCreateDatabase(db) => self.show_create_database(db),
-            Statement::ShowCreateView(db, view) => self.show_create_view(db.clone(), view.clone()),
-            Statement::Describe(db, table) => self.describe(db.clone(), table.clone()),
-            Statement::UseDatabase(db) => self.use_database(db),
-            Statement::CreateDatabase(stmt) => self.create_database(stmt),
-            Statement::CreateTable(stmt) => self.create_table(stmt),
-            Statement::DropDatabase(stmt) => self.drop_database(stmt),
-            Statement::DropTable(stmt) => self.drop_table(stmt),
-            Statement::AlterTable(stmt) => self.alter_table(stmt),
-            Statement::TruncateTable { database, table, if_exists } => self.truncate_table(database.clone(), table.to_string(), *if_exists),
-            Statement::Insert(stmt) => self.insert(stmt),
-            Statement::Update(stmt) => self.update(stmt),
-            Statement::Delete(stmt) => self.delete(stmt),
+            Statement::ShowDatabases => self.show_databases(conn_id),
+            Statement::ShowTables(db, like) => self.show_tables(conn_id, db.clone(), like.clone()),
+            Statement::ShowCreateTable(db, table) => self.show_create_table(conn_id, db.clone(), table.clone()),
+            Statement::ShowCreateDatabase(db) => self.show_create_database(conn_id, db),
+            Statement::ShowCreateView(db, view) => self.show_create_view(conn_id, db.clone(), view.clone()),
+            Statement::Describe(db, table) => self.describe(conn_id, db.clone(), table.clone()),
+            Statement::UseDatabase(db) => self.use_database(conn_id, db),
+            Statement::CreateDatabase(stmt) => self.create_database(conn_id, stmt),
+            Statement::CreateTable(stmt) => self.create_table(conn_id, stmt),
+            Statement::DropDatabase(stmt) => self.drop_database(conn_id, stmt),
+            Statement::DropTable(stmt) => self.drop_table(conn_id, stmt),
+            Statement::AlterTable(stmt) => self.alter_table(conn_id, stmt),
+            Statement::TruncateTable { database, table, if_exists } => self.truncate_table(conn_id, database.clone(), table.to_string(), *if_exists),
+            Statement::Insert(stmt) => self.insert(conn_id, stmt),
+            Statement::Update(stmt) => self.update(conn_id, stmt),
+            Statement::Delete(stmt) => self.delete(conn_id, stmt),
             // Transaction statements
-            Statement::StartTransaction => self.start_transaction(),
-            Statement::Commit => self.commit_tx(),
-            Statement::Rollback => self.rollback_tx(),
-            Statement::Savepoint(name) => self.savepoint(name.clone()),
-            Statement::RollbackTo(name) => self.rollback_to_savepoint(name.clone()),
-            Statement::ReleaseSavepoint(name) => self.release_savepoint(name.clone()),
-            Statement::SetTransactionIsolation(level) => self.set_transaction_isolation(level.clone()),
+            Statement::StartTransaction => self.start_transaction(conn_id),
+            Statement::Commit => self.commit_tx(conn_id),
+            Statement::Rollback => self.rollback_tx(conn_id),
+            Statement::Savepoint(name) => self.savepoint_cmd(conn_id, name.clone()),
+            Statement::RollbackTo(name) => self.rollback_to_savepoint_cmd(conn_id, name.clone()),
+            Statement::ReleaseSavepoint(name) => self.release_savepoint_cmd(conn_id, name.clone()),
+            Statement::SetTransactionIsolation(level) => self.set_transaction_isolation(conn_id, level.clone()),
             Statement::Query(_) => Err("Query statements should be handled by DataFusion path".to_string()),
             Statement::Explain(_) => Err("Explain statements should be handled by DataFusion path".to_string()),
-            Statement::ShowPartitions(db, table) => self.show_partitions(db.clone(), table.clone()),
-            Statement::ShowTableStatus(db) => self.show_table_status(db.clone()),
-            Statement::ShowVariables { global, pattern } => self.show_variables(*global, pattern.clone()),
-            Statement::ShowProcesslist(full) => self.show_processlist(*full),
-            Statement::ShowIndex(db, table) => self.show_index(db.clone(), table.clone()),
-            Statement::ShowAlterTable(db) => self.show_alter_table(db.clone()),
-            Statement::ShowBackends => self.show_backends(),
-            Statement::ShowFrontends => self.show_frontends(),
-            Statement::ShowTableId => self.show_table_id(),
-            Statement::ShowPartitionId => self.show_partition_id(),
-            Statement::ShowDynamicPartitionTables => self.show_dynamic_partition_tables(),
-            Statement::ShowView(db, view) => self.show_view(db.clone(), view.clone()),
-            Statement::ShowCreateMaterializedView(name) => self.show_create_materialized_view(name.clone()),
+            Statement::ShowPartitions(db, table) => self.show_partitions(conn_id, db.clone(), table.clone()),
+            Statement::ShowTableStatus(db) => self.show_table_status(conn_id, db.clone()),
+            Statement::ShowVariables { global, pattern } => self.show_variables(conn_id, *global, pattern.clone()),
+            Statement::ShowProcesslist(full) => self.show_processlist(conn_id, *full),
+            Statement::ShowIndex(db, table) => self.show_index(conn_id, db.clone(), table.clone()),
+            Statement::ShowAlterTable(db) => self.show_alter_table(conn_id, db.clone()),
+            Statement::ShowBackends => self.show_backends(conn_id),
+            Statement::ShowFrontends => self.show_frontends(conn_id),
+            Statement::ShowTableId => self.show_table_id(conn_id),
+            Statement::ShowPartitionId => self.show_partition_id(conn_id),
+            Statement::ShowDynamicPartitionTables => self.show_dynamic_partition_tables(conn_id),
+            Statement::ShowView(db, view) => self.show_view(conn_id, db.clone(), view.clone()),
+            Statement::ShowCreateMaterializedView(name) => self.show_create_materialized_view(conn_id, name.clone()),
             // Batch 2 DDL
-            Statement::AlterDatabase(stmt) => self.alter_database(stmt),
-            Statement::DropView(stmt) => self.drop_view(stmt),
-            Statement::AlterView(stmt) => self.alter_view(stmt),
-            Statement::CreateIndex(stmt) => self.create_index(stmt),
-            Statement::DropIndex(stmt) => self.drop_index(stmt),
-            Statement::CancelAlterTable(stmt) => self.cancel_alter_table(stmt),
-            Statement::AlterColocateGroup(stmt) => self.alter_colocate_group(stmt),
+            Statement::AlterDatabase(stmt) => self.alter_database(conn_id, stmt),
+            Statement::DropView(stmt) => self.drop_view(conn_id, stmt),
+            Statement::AlterView(stmt) => self.alter_view(conn_id, stmt),
+            Statement::CreateIndex(stmt) => self.create_index(conn_id, stmt),
+            Statement::DropIndex(stmt) => self.drop_index(conn_id, stmt),
+            Statement::CancelAlterTable(stmt) => self.cancel_alter_table(conn_id, stmt),
+            Statement::AlterColocateGroup(stmt) => self.alter_colocate_group(conn_id, stmt),
             // Existing statements with parsers but previously missing handlers
             Statement::CreateView { database, name, if_not_exists, query, columns } => {
-                self.create_view(database.clone(), name.clone(), *if_not_exists, query.clone(), columns.clone())
+                self.create_view(conn_id, database.clone(), name.clone(), *if_not_exists, query.clone(), columns.clone())
             }
-            Statement::CreateMaterializedView(stmt) => self.create_materialized_view(stmt),
-            Statement::DropMaterializedView(stmt) => self.drop_materialized_view(stmt),
-            Statement::AlterMaterializedView(stmt) => self.alter_materialized_view(stmt),
-            Statement::RefreshMaterializedView(stmt) => self.refresh_materialized_view(stmt),
-            Statement::CreateRepository(stmt) => self.create_repository(stmt),
-            Statement::DropRepository(stmt) => self.drop_repository(stmt),
-            Statement::ShowRepositories => self.show_repositories(),
-            Statement::BackupDatabase(stmt) => self.backup_database(stmt),
-            Statement::RestoreDatabase(stmt) => self.restore_database(stmt),
-            Statement::ShowUsers => self.show_users(),
-            Statement::CreateUser(stmt) => self.create_user(stmt),
-            Statement::DropUser(stmt) => self.drop_user(stmt),
-            Statement::CreateCatalog(stmt) => self.create_catalog(stmt),
-            Statement::DropCatalog(stmt) => self.drop_catalog(stmt),
-            Statement::ShowCatalogs => self.show_catalogs(),
-            Statement::RefreshCatalog(stmt) => self.refresh_catalog(stmt),
-            Statement::SetVariable(stmt) => self.set_variable(stmt),
+            Statement::CreateMaterializedView(stmt) => self.create_materialized_view(conn_id, stmt),
+            Statement::DropMaterializedView(stmt) => self.drop_materialized_view(conn_id, stmt),
+            Statement::AlterMaterializedView(stmt) => self.alter_materialized_view(conn_id, stmt),
+            Statement::RefreshMaterializedView(stmt) => self.refresh_materialized_view(conn_id, stmt),
+            Statement::CreateRepository(stmt) => self.create_repository(conn_id, stmt),
+            Statement::DropRepository(stmt) => self.drop_repository(conn_id, stmt),
+            Statement::ShowRepositories => self.show_repositories(conn_id),
+            Statement::BackupDatabase(stmt) => self.backup_database(conn_id, stmt),
+            Statement::RestoreDatabase(stmt) => self.restore_database(conn_id, stmt),
+            Statement::ShowUsers => self.show_users(conn_id),
+            Statement::CreateUser(stmt) => self.create_user(conn_id, stmt),
+            Statement::DropUser(stmt) => self.drop_user(conn_id, stmt),
+            Statement::CreateCatalog(stmt) => self.create_catalog(conn_id, stmt),
+            Statement::DropCatalog(stmt) => self.drop_catalog(conn_id, stmt),
+            Statement::ShowCatalogs => self.show_catalogs(conn_id),
+            Statement::RefreshCatalog(stmt) => self.refresh_catalog(conn_id, stmt),
+            Statement::SetVariable(stmt) => self.set_variable(conn_id, stmt),
             Statement::Union(_) => Err("Union statements should be handled by DataFusion path".to_string()),
             // Batch 3/4 statements
-            Statement::ExportTable(stmt) => self.export_table(stmt),
-            Statement::CancelExport(id) => self.cancel_export(id.clone()),
-            Statement::ShowExport => self.show_export(),
-            Statement::CreateFunction(stmt) => self.create_function(stmt),
-            Statement::DropFunction(stmt) => self.drop_function(stmt),
-            Statement::ShowFunctions(pattern) => self.show_functions(pattern.clone()),
-            Statement::ShowCreateFunction(name) => self.show_create_function(name.clone()),
-            Statement::DescribeFunction(name) => self.describe_function(name.clone()),
-            Statement::AnalyzeTable(stmt) => self.analyze_table(stmt),
-            Statement::DropStats(stmt) => self.drop_stats(stmt),
-            Statement::ShowAnalyze(id) => self.show_analyze(id.clone()),
-            Statement::ShowStats(table) => self.show_stats(table.clone()),
-            Statement::ShowTableStats(table) => self.show_table_stats(table.clone()),
-            Statement::CreateJob(stmt) => self.create_job(stmt),
-            Statement::DropJob(name) => self.drop_job_stmt(name.clone()),
-            Statement::PauseJob(name) => self.pause_job(name.clone()),
-            Statement::ResumeJob(name) => self.resume_job_stmt(name.clone()),
-            Statement::CancelTask(id) => self.cancel_task(id.clone()),
-            Statement::InstallPlugin(stmt) => self.install_plugin(stmt),
-            Statement::UninstallPlugin(name) => self.uninstall_plugin(name.clone()),
-            Statement::ShowPlugins => self.show_plugins(),
-            Statement::RecoverDatabase(name) => self.recover_database(name.clone()),
-            Statement::RecoverTable { database, table } => self.recover_table(database.clone(), table.clone()),
-            Statement::RecoverPartition { database, table, partition } => self.recover_partition(database.clone(), table.clone(), partition.clone()),
-            Statement::DropCatalogRecycleBin(filter) => self.drop_catalog_recycle_bin(filter.clone()),
-            Statement::ShowCatalogRecycleBin => self.show_catalog_recycle_bin(),
-            Statement::CreateSqlBlockRule(stmt) => self.create_sql_block_rule(stmt),
-            Statement::AlterSqlBlockRule(name, props) => self.alter_sql_block_rule(name.clone(), props.clone()),
-            Statement::DropSqlBlockRule(name) => self.drop_sql_block_rule(name.clone()),
+            Statement::ExportTable(stmt) => self.export_table(conn_id, stmt),
+            Statement::CancelExport(id) => self.cancel_export(conn_id, id.clone()),
+            Statement::ShowExport => self.show_export(conn_id),
+            Statement::CreateFunction(stmt) => self.create_function(conn_id, stmt),
+            Statement::DropFunction(stmt) => self.drop_function(conn_id, stmt),
+            Statement::ShowFunctions(pattern) => self.show_functions(conn_id, pattern.clone()),
+            Statement::ShowCreateFunction(name) => self.show_create_function(conn_id, name.clone()),
+            Statement::DescribeFunction(name) => self.describe_function(conn_id, name.clone()),
+            Statement::AnalyzeTable(stmt) => self.analyze_table(conn_id, stmt),
+            Statement::DropStats(stmt) => self.drop_stats(conn_id, stmt),
+            Statement::ShowAnalyze(id) => self.show_analyze(conn_id, id.clone()),
+            Statement::ShowStats(table) => self.show_stats(conn_id, table.clone()),
+            Statement::ShowTableStats(table) => self.show_table_stats(conn_id, table.clone()),
+            Statement::CreateJob(stmt) => self.create_job(conn_id, stmt),
+            Statement::DropJob(name) => self.drop_job_stmt(conn_id, name.clone()),
+            Statement::PauseJob(name) => self.pause_job(conn_id, name.clone()),
+            Statement::ResumeJob(name) => self.resume_job_stmt(conn_id, name.clone()),
+            Statement::CancelTask(id) => self.cancel_task(conn_id, id.clone()),
+            Statement::InstallPlugin(stmt) => self.install_plugin(conn_id, stmt),
+            Statement::UninstallPlugin(name) => self.uninstall_plugin(conn_id, name.clone()),
+            Statement::ShowPlugins => self.show_plugins(conn_id),
+            Statement::RecoverDatabase(name) => self.recover_database(conn_id, name.clone()),
+            Statement::RecoverTable { database, table } => self.recover_table(conn_id, database.clone(), table.clone()),
+            Statement::RecoverPartition { database, table, partition } => self.recover_partition(conn_id, database.clone(), table.clone(), partition.clone()),
+            Statement::DropCatalogRecycleBin(filter) => self.drop_catalog_recycle_bin(conn_id, filter.clone()),
+            Statement::ShowCatalogRecycleBin => self.show_catalog_recycle_bin(conn_id),
+            Statement::CreateSqlBlockRule(stmt) => self.create_sql_block_rule(conn_id, stmt),
+            Statement::AlterSqlBlockRule(name, props) => self.alter_sql_block_rule(conn_id, name.clone(), props.clone()),
+            Statement::DropSqlBlockRule(name) => self.drop_sql_block_rule(conn_id, name.clone()),
             Statement::ShowSqlBlockRule(filter) => self.show_sql_block_rule(filter.clone()),
-            Statement::CreateRowPolicy(stmt) => self.create_row_policy(stmt),
-            Statement::DropRowPolicy { name, database, table } => self.drop_row_policy(name.clone(), database.clone(), table.clone()),
+            Statement::CreateRowPolicy(stmt) => self.create_row_policy(conn_id, stmt),
+            Statement::DropRowPolicy { name, database, table } => self.drop_row_policy(conn_id, name.clone(), database.clone(), table.clone()),
             Statement::ShowRowPolicy(filter) => self.show_row_policy(filter.clone()),
-            Statement::KillAnalyzeJob(id) => self.kill_analyze_job(id.clone()),
-            Statement::AlterStats(table, props) => self.alter_stats(table.clone(), props.clone()),
+            Statement::KillAnalyzeJob(id) => self.kill_analyze_job(conn_id, id.clone()),
+            Statement::AlterStats(table, props) => self.alter_stats(conn_id, table.clone(), props.clone()),
             // New admin/operations statements
             Statement::ShowStatus { global, pattern } => self.show_status(*global, pattern.clone()),
             Statement::KillQuery(id) => self.kill_query(*id),
             Statement::KillConnection(id) => self.kill_connection(*id),
-            Statement::AdminCheckTable(table) => self.admin_check_table(table.clone()),
-            Statement::AdminShowReplica => self.admin_show_replica(),
+            Statement::AdminCheckTable(table) => self.admin_check_table(conn_id, table.clone()),
+            Statement::AdminShowReplica => self.admin_show_replica(conn_id),
         }
     }
 
     // ---- show_* methods ----
 
-    pub(crate) fn show_databases(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_databases(&self, conn_id: u32) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         let databases = catalog.list_databases();
         let rows: Vec<Vec<Option<String>>> = databases
@@ -169,9 +169,9 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_tables(&self, db: Option<String>, like: Option<String>) -> Result<QueryResult, String> {
+    pub(crate) fn show_tables(&self, conn_id: u32, db: Option<String>, like: Option<String>) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = db.as_deref().unwrap_or(&current_db);
 
         match catalog.list_tables(target_db) {
@@ -195,9 +195,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn describe(&self, db: String, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn describe(&self, conn_id: u32, db: String, table: String) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = if db.is_empty() { &current_db } else { &db };
 
         match catalog.get_table(target_db, &table) {
@@ -233,20 +233,19 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn use_database(&self, db: &str) -> Result<QueryResult, String> {
+    pub(crate) fn use_database(&self, conn_id: u32, db: &str) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         if catalog.get_database(db).is_some() {
-            let mut current_db = self.current_database.write();
-            *current_db = db.to_string();
+            self.set_current_database(conn_id, db.to_string());
             Ok(QueryResult::ok())
         } else {
             Err(format!("Unknown database '{}'", db))
         }
     }
 
-    pub(crate) fn show_create_table(&self, db: String, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_create_table(&self, conn_id: u32, db: String, table: String) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = if db.is_empty() { &current_db } else { &db };
 
         match catalog.get_table(target_db, &table) {
@@ -293,7 +292,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_create_database(&self, db: &str) -> Result<QueryResult, String> {
+    pub(crate) fn show_create_database(&self, conn_id: u32, db: &str) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         match catalog.get_database(db) {
             Some(database) => {
@@ -311,9 +310,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_create_view(&self, db: String, view: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_create_view(&self, conn_id: u32, db: String, view: String) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = if db.is_empty() { &current_db } else { &db };
 
         match catalog.get_table(target_db, &view) {
@@ -335,9 +334,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_partitions(&self, db: String, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_partitions(&self, conn_id: u32, db: String, table: String) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = if db.is_empty() { &current_db } else { &db };
 
         match catalog.get_table(target_db, &table) {
@@ -369,9 +368,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_table_status(&self, db: Option<String>) -> Result<QueryResult, String> {
+    pub(crate) fn show_table_status(&self, conn_id: u32, db: Option<String>) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = db.as_deref().unwrap_or(&current_db);
 
         match catalog.list_tables(target_db) {
@@ -432,10 +431,14 @@ impl RorisQueryHandler {
         Some((row_count as u64, data_size))
     }
 
-    pub(crate) fn show_variables(&self, global: bool, pattern: Option<String>) -> Result<QueryResult, String> {
-        let session = if global { None } else { Some(self.session_vars.read()) };
-        let session_ref = session.as_deref();
-        let vars = self.sys_vars.match_like(pattern.as_deref(), session_ref);
+    pub(crate) fn show_variables(&self, conn_id: u32, global: bool, pattern: Option<String>) -> Result<QueryResult, String> {
+        let vars = if global {
+            self.sys_vars.match_like(pattern.as_deref(), None)
+        } else {
+            self.with_session_mut(conn_id, |s| {
+                self.sys_vars.match_like(pattern.as_deref(), Some(&s.session_vars))
+            })
+        };
         let rows: Vec<Vec<Option<String>>> = vars.iter()
             .map(|(name, value)| vec![Some(name.clone()), Some(value.clone())])
             .collect();
@@ -449,7 +452,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_processlist(&self, _full: bool) -> Result<QueryResult, String> {
+    pub(crate) fn show_processlist(&self, conn_id: u32, _full: bool) -> Result<QueryResult, String> {
         let conns = self.connection_tracker.list();
         let rows: Vec<Vec<Option<String>>> = conns.iter().map(|c| {
             let time = c.connected_at.elapsed().as_secs().to_string();
@@ -544,12 +547,12 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn admin_check_table(&self, table_ref: String) -> Result<QueryResult, String> {
+    pub(crate) fn admin_check_table(&self, conn_id: u32, table_ref: String) -> Result<QueryResult, String> {
         let (db, tbl) = if table_ref.contains('.') {
             let parts: Vec<&str> = table_ref.splitn(2, '.').collect();
             (parts[0].to_string(), parts[1].to_string())
         } else {
-            (self.current_database.read().clone(), table_ref)
+            (self.get_session(conn_id).clone(), table_ref)
         };
 
         match self.storage.read(&db, &tbl) {
@@ -588,7 +591,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn admin_show_replica(&self) -> Result<QueryResult, String> {
+    pub(crate) fn admin_show_replica(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![
                 ColumnDef { name: "Mode".to_string(), col_type: ColumnType::String },
@@ -603,9 +606,9 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_index(&self, db: String, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_index(&self, conn_id: u32, db: String, table: String) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = if db.is_empty() { &current_db } else { &db };
 
         match catalog.get_table(target_db, &table) {
@@ -651,14 +654,14 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_alter_table(&self, _db: Option<String>) -> Result<QueryResult, String> {
+    pub(crate) fn show_alter_table(&self, conn_id: u32, _db: Option<String>) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Message".to_string(), col_type: ColumnType::String }],
             vec![vec![Some("No ALTER TABLE operations in progress".to_string())]],
         ))
     }
 
-    pub(crate) fn show_backends(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_backends(&self, conn_id: u32) -> Result<QueryResult, String> {
         let backends = vec![
             ("1".to_string(), "127.0.0.1".to_string(), "9060".to_string(), "true".to_string(), "0".to_string(), "0".to_string()),
         ];
@@ -680,7 +683,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_frontends(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_frontends(&self, conn_id: u32) -> Result<QueryResult, String> {
         let frontends = vec![
             ("fe1".to_string(), "127.0.0.1".to_string(), "9030".to_string(), "true".to_string(), "false".to_string(), "0".to_string()),
         ];
@@ -702,7 +705,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_table_id(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_table_id(&self, conn_id: u32) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         let mut rows = Vec::new();
 
@@ -730,23 +733,23 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_partition_id(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_partition_id(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "PartitionId".to_string(), col_type: ColumnType::String }],
             vec![],
         ))
     }
 
-    pub(crate) fn show_dynamic_partition_tables(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_dynamic_partition_tables(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Message".to_string(), col_type: ColumnType::String }],
             vec![vec![Some("No dynamic partition tables".to_string())]],
         ))
     }
 
-    pub(crate) fn show_view(&self, db: String, view: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_view(&self, conn_id: u32, db: String, view: String) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let target_db = if db.is_empty() { &current_db } else { &db };
 
         match catalog.get_table(target_db, &view) {
@@ -776,9 +779,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_create_materialized_view(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_create_materialized_view(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
 
         if let Some(mv) = catalog.get_materialized_view(&current_db, &name) {
             let create_sql = format!("CREATE MATERIALIZED VIEW `{}` AS {}", mv.name, mv.definition);
@@ -794,7 +797,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_repositories(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_repositories(&self, conn_id: u32) -> Result<QueryResult, String> {
         let repos = self.backup_manager.list_repositories();
         let rows: Vec<Vec<Option<String>>> = repos.iter()
             .map(|name| {
@@ -814,28 +817,28 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_users(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_users(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "User".to_string(), col_type: ColumnType::String }],
             vec![vec![Some("root".to_string())]],
         ))
     }
 
-    pub(crate) fn show_catalogs(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_catalogs(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Catalog".to_string(), col_type: ColumnType::String }],
             vec![vec![Some("internal".to_string())]],
         ))
     }
 
-    pub(crate) fn show_export(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_export(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Export".to_string(), col_type: ColumnType::String }],
             vec![],
         ))
     }
 
-    pub(crate) fn show_functions(&self, pattern: Option<String>) -> Result<QueryResult, String> {
+    pub(crate) fn show_functions(&self, conn_id: u32, pattern: Option<String>) -> Result<QueryResult, String> {
         let _ = pattern;
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Function".to_string(), col_type: ColumnType::String }],
@@ -843,49 +846,49 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_create_function(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_create_function(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Function".to_string(), col_type: ColumnType::String }, ColumnDef { name: "Create Function".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(name.clone()), Some(format!("CREATE FUNCTION {}", name))]],
         ))
     }
 
-    pub(crate) fn describe_function(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn describe_function(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Function".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(name)]],
         ))
     }
 
-    pub(crate) fn show_analyze(&self, id: Option<String>) -> Result<QueryResult, String> {
+    pub(crate) fn show_analyze(&self, conn_id: u32, id: Option<String>) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Analyze".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(id.unwrap_or_default())]],
         ))
     }
 
-    pub(crate) fn show_stats(&self, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_stats(&self, conn_id: u32, table: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Table".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(table)]],
         ))
     }
 
-    pub(crate) fn show_table_stats(&self, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_table_stats(&self, conn_id: u32, table: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Table".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(table)]],
         ))
     }
 
-    pub(crate) fn show_plugins(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_plugins(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Plugin".to_string(), col_type: ColumnType::String }],
             vec![],
         ))
     }
 
-    pub(crate) fn show_catalog_recycle_bin(&self) -> Result<QueryResult, String> {
+    pub(crate) fn show_catalog_recycle_bin(&self, conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "RecycleBin".to_string(), col_type: ColumnType::String }],
             vec![],

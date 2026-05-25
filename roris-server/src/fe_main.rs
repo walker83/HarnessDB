@@ -23,6 +23,9 @@ use fe_backup::BackupManager;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use fe_sql_parser::{parse_sql, is_dml_sql};
+use fe_storage::ParquetCatalogProvider;
+use fe_datafusion::{register_doris_udfs, register_misc_udfs};
+use datafusion::prelude::{SessionConfig, SessionContext};
 
 use handler_struct::RorisQueryHandler;
 use connection_tracker::ConnectionTracker;
@@ -46,7 +49,7 @@ struct Args {
 }
 
 impl QueryHandler for RorisQueryHandler {
-    fn handle_query(&self, sql: &str) -> QueryResult {
+    fn handle_query(&self, conn_id: u32, sql: &str) -> QueryResult {
         tracing::info!("handle_query received SQL: {:?}", sql);
         let trimmed = sql.trim().trim_end_matches(';');
         if trimmed.is_empty() {
@@ -63,18 +66,31 @@ impl QueryHandler for RorisQueryHandler {
             let upper = trimmed.to_uppercase();
             if upper.starts_with("INSERT") {
                 // Fall through to parse_sql path
-                self.dispatch_parsed(trimmed)
+                self.dispatch_parsed(conn_id, trimmed)
             } else if upper.starts_with("DELETE") || upper.starts_with("UPDATE") {
                 // DELETE and UPDATE also fall through to parse_sql path
-                self.dispatch_parsed(trimmed)
+                self.dispatch_parsed(conn_id, trimmed)
             } else {
-                // Other DML (like SELECT with INTO) goes to DataFusion
+                // Other DML (like SELECT) goes to DataFusion
+                // Create a per-query context with the correct default schema for this connection
+                let current_db = self.get_session(conn_id);
                 let result = std::thread::spawn({
-                    let ctx = self.session_ctx.clone();
+                    let catalog = self.catalog.clone();
+                    let storage = self.storage.clone();
                     let sql = trimmed.to_string();
                     move || {
                         let rt = tokio::runtime::Runtime::new().unwrap();
                         rt.block_on(async {
+                            let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog, storage));
+                            let df_config = SessionConfig::new()
+                                .with_default_catalog_and_schema("roris", &current_db)
+                                .with_create_default_catalog_and_schema(false)
+                                .with_information_schema(true);
+                            let mut ctx = SessionContext::new_with_config(df_config);
+                            ctx.register_catalog("roris", df_catalog);
+                            register_doris_udfs(&mut ctx);
+                            register_misc_udfs(&mut ctx);
+                            fe_datafusion::register_date_udfs(&mut ctx);
                             let df = ctx.sql(&sql).await?;
                             let schema = df.schema().clone();
                             let batches = df.collect().await?;
@@ -105,7 +121,7 @@ impl QueryHandler for RorisQueryHandler {
                 }
             }
         } else {
-            self.dispatch_parsed(trimmed)
+            self.dispatch_parsed(conn_id, trimmed)
         };
 
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -143,7 +159,7 @@ impl QueryHandler for RorisQueryHandler {
                     timestamp: chrono::Utc::now(),
                     user: "root".to_string(),
                     host: "127.0.0.1".to_string(),
-                    database: Some(self.current_database.read().clone()),
+                    database: Some(self.get_session(conn_id)),
                     query: trimmed.to_string(),
                     query_type,
                     status,
@@ -162,42 +178,51 @@ impl QueryHandler for RorisQueryHandler {
         result
     }
 
-    fn set_database(&self, db: &str) {
-        {
-            let mut current_db = self.current_database.write();
-            *current_db = db.to_string();
-        }
-        self.session_ctx.state_ref().write().config_mut().options_mut().catalog.default_schema = db.to_string();
+    fn set_database(&self, conn_id: u32, db: &str) {
+        self.set_current_database(conn_id, db.to_string());
+        // No longer modify shared session_ctx - per-query contexts use get_session(conn_id)
     }
 
     fn on_connect(&self, conn_id: u32, user: &str, host: &str) {
-        let db = self.current_database.read().clone();
+        let db = self.get_session(conn_id);
         self.connection_tracker.register(conn_id, user, host, db);
     }
 
     fn on_disconnect(&self, conn_id: u32) {
         self.connection_tracker.unregister(conn_id);
+        self.remove_session(conn_id);
     }
 }
 
 impl RorisQueryHandler {
-    fn dispatch_parsed(&self, trimmed: &str) -> QueryResult {
+    fn dispatch_parsed(&self, conn_id: u32, trimmed: &str) -> QueryResult {
         match parse_sql(trimmed) {
             Ok(statements) => {
                 if statements.is_empty() {
                     return QueryResult::ok();
                 }
-                let stmt = &statements[0];
-                match self.execute_statement(stmt) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        tracing::error!("Query error: {}", e);
-                        QueryResult::with_rows(
-                            vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
-                            vec![vec![Some(format!("ERROR: {}", e))]],
-                        )
+                // Execute all statements, return the last non-OK result or the final result
+                let mut last_result = QueryResult::ok();
+                for stmt in &statements {
+                    match self.execute_statement(conn_id, stmt) {
+                        Ok(result) => {
+                            // If this statement produced a result set (rows), return it immediately
+                            // This handles multi-statement queries where a SELECT is the last statement
+                            if !result.columns.is_empty() {
+                                return result;
+                            }
+                            last_result = result;
+                        }
+                        Err(e) => {
+                            tracing::error!("Query error: {}", e);
+                            return QueryResult::with_rows(
+                                vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                                vec![vec![Some(format!("ERROR: {}", e))]],
+                            );
+                        }
                     }
                 }
+                last_result
             }
             Err(e) => {
                 tracing::error!("Parse error: {}", e);

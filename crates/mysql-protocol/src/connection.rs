@@ -154,7 +154,7 @@ impl Connection {
                 // If database was specified in handshake, set it
                 if let Some(ref db) = self.database {
                     if !db.is_empty() {
-                        self.handler.set_database(db);
+                        self.handler.set_database(self.conn_id, db);
                     }
                 }
                 self.send_ok(0, 0).await?;
@@ -320,7 +320,7 @@ impl Connection {
                     let db = String::from_utf8_lossy(data).to_string();
                     debug!("COM_INIT_DB: {}", db);
                     self.database = Some(db.clone());
-                    self.handler.set_database(&db);
+                    self.handler.set_database(self.conn_id, &db);
                     self.send_ok(0, 0).await?;
                 }
                 command::COM_FIELD_LIST => {
@@ -470,7 +470,7 @@ impl Connection {
             // SHOW VARIABLES, SHOW STATUS, SHOW PROCESSLIST are now forwarded to the handler
         }
 
-        let result = self.handler.handle_query(sql);
+        let result = self.handler.handle_query(self.conn_id, sql);
         // Sync connection database state for USE commands
         let trimmed_lc = sql.trim().to_lowercase();
         if trimmed_lc.starts_with("use ") {
@@ -480,7 +480,7 @@ impl Connection {
                 let db_name = after_use.split_whitespace().next().unwrap_or(after_use);
                 if !db_name.is_empty() {
                     self.database = Some(db_name.to_string());
-                    self.handler.set_database(db_name);
+                    self.handler.set_database(self.conn_id, db_name);
                 }
             }
         }
@@ -585,7 +585,7 @@ impl Connection {
             };
             info!("Connection {} COM_STMT_PREPARE exec_sql: {}", self.conn_id, exec_sql);
 
-            let result = self.handler.handle_query(&exec_sql);
+            let result = self.handler.handle_query(self.conn_id, &exec_sql);
             (result.columns.len() as u16, result.columns)
         };
         info!("Connection {} COM_STMT_PREPARE result: {} columns, {} params", self.conn_id, num_columns, num_params);
@@ -660,7 +660,7 @@ impl Connection {
         info!("Connection {} COM_STMT_EXECUTE: {} (bound: {})", self.conn_id, sql, bound_sql);
 
         // Execute the SQL with bound parameters
-        let result = self.handler.handle_query(&bound_sql);
+        let result = self.handler.handle_query(self.conn_id, &bound_sql);
 
         // Use actual column count from result, not stored value
         let actual_num_cols = result.columns.len() as u16;

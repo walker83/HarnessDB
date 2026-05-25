@@ -350,7 +350,7 @@ fn test_server_config_default() {
 struct MockQueryHandler;
 
 impl QueryHandler for MockQueryHandler {
-    fn handle_query(&self, sql: &str) -> QueryResult {
+    fn handle_query(&self, _conn_id: u32, sql: &str) -> QueryResult {
         if sql.starts_with("SELECT") {
             QueryResult::with_rows(
                 vec![ColumnDef {
@@ -369,10 +369,10 @@ impl QueryHandler for MockQueryHandler {
 fn test_mock_query_handler() {
     let handler = MockQueryHandler;
 
-    let result = handler.handle_query("SELECT 1");
+    let result = handler.handle_query(0, "SELECT 1");
     assert_eq!(result.rows.len(), 1);
     assert_eq!(result.columns.len(), 1);
 
-    let result = handler.handle_query("CREATE TABLE t (id INT)");
+    let result = handler.handle_query(0, "CREATE TABLE t (id INT)");
     assert!(result.rows.is_empty());
 }

@@ -72,13 +72,16 @@ pub async fn api_query(
     State(state): State<Arc<WebState>>,
     Json(req): Json<QueryRequest>,
 ) -> Json<QueryResponse> {
+    // Use conn_id=0 for web editor (single-user context)
+    let web_conn_id = 0u32;
+
     // Switch database if specified
     if let Some(ref db) = req.database {
-        state.handler.set_database(db);
+        state.handler.set_database(web_conn_id, db);
     }
 
     let start = Instant::now();
-    let result = state.handler.handle_query(&req.sql);
+    let result = state.handler.handle_query(web_conn_id, &req.sql);
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let has_error = result.columns.iter().any(|c| c.name == "Error");

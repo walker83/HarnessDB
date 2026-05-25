@@ -1,5 +1,5 @@
 use mysql::prelude::*;
-use mysql::{Opts, OptsBuilder, Pool, Row, Value};
+use mysql::{Conn, Opts, OptsBuilder, Row, Value};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -101,23 +101,21 @@ fn find_binary() -> String {
 // Query helpers
 // ===========================================================================
 
-fn make_pool() -> Pool {
+fn make_conn() -> Conn {
     let opts = OptsBuilder::new()
         .ip_or_hostname(Some("127.0.0.1"))
         .tcp_port(MYSQL_PORT)
         .user(Some("root"))
         .pass(None::<String>);
-    Pool::new(Opts::from(opts)).expect("Failed to create connection pool")
+    Conn::new(Opts::from(opts)).expect("Failed to create connection")
 }
 
-fn exec_sql(pool: &Pool, sql: &str) {
-    let mut conn = pool.get_conn().expect("Failed to get connection");
+fn exec_sql(conn: &mut Conn, sql: &str) {
     conn.query_drop(sql)
         .unwrap_or_else(|e| panic!("Query failed: '{}' -- {}", sql, e));
 }
 
-fn query_rows(pool: &Pool, sql: &str) -> Vec<Row> {
-    let mut conn = pool.get_conn().expect("Failed to get connection");
+fn query_rows(conn: &mut Conn, sql: &str) -> Vec<Row> {
     conn.query(sql)
         .unwrap_or_else(|e| panic!("Query failed: '{}' -- {}", sql, e))
 }
@@ -166,17 +164,17 @@ fn test_doris_compat_e2e() {
     let server = E2eServer::start();
     server.wait_ready();
 
-    let pool = make_pool();
+    let mut conn = make_conn();
 
     // a. CREATE DATABASE
-    exec_sql(&pool, "CREATE DATABASE test_e2e");
+    exec_sql(&mut conn, "CREATE DATABASE test_e2e");
 
     // b. USE database
-    exec_sql(&pool, "USE test_e2e");
+    exec_sql(&mut conn, "USE test_e2e");
 
     // c. CREATE TABLE with Doris syntax
     exec_sql(
-        &pool,
+        &mut conn,
         "CREATE TABLE users (
             id INT,
             name VARCHAR(100),
@@ -187,50 +185,50 @@ fn test_doris_compat_e2e() {
     );
 
     // d. INSERT single row
-    exec_sql(&pool, "INSERT INTO users VALUES (1, 'Alice', 30, 50000.0)");
+    exec_sql(&mut conn, "INSERT INTO users VALUES (1, 'Alice', 30, 50000.0)");
 
     // e. INSERT multiple rows
     exec_sql(
-        &pool,
+        &mut conn,
         "INSERT INTO users VALUES (2, 'Bob', 25, 45000.0), (3, 'Charlie', 35, 60000.0)",
     );
 
     // f. SELECT with WHERE
-    let rows = query_rows(&pool, "SELECT * FROM users WHERE age > 28");
+    let rows = query_rows(&mut conn, "SELECT * FROM users WHERE age > 28");
     assert_eq!(rows.len(), 2, "WHERE age > 28 should return 2 rows");
 
     // g. SELECT with ORDER BY
-    let rows = query_rows(&pool, "SELECT name, salary FROM users ORDER BY salary DESC");
+    let rows = query_rows(&mut conn, "SELECT name, salary FROM users ORDER BY salary DESC");
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Charlie");
     assert_eq!(get_string(&rows[1], 0), "Alice");
     assert_eq!(get_string(&rows[2], 0), "Bob");
 
     // h. Aggregation
-    let rows = query_rows(&pool, "SELECT COUNT(*), AVG(salary) FROM users");
+    let rows = query_rows(&mut conn, "SELECT COUNT(*), AVG(salary) FROM users");
     assert_eq!(rows.len(), 1);
     assert_eq!(get_i64(&rows[0], 0), 3);
     let avg = get_f64(&rows[0], 1);
     assert!((avg - 51666.67).abs() < 100.0, "AVG should be ~51666, got {}", avg);
 
     // i. UPDATE
-    exec_sql(&pool, "UPDATE users SET salary = 55000.0 WHERE name = 'Alice'");
+    exec_sql(&mut conn, "UPDATE users SET salary = 55000.0 WHERE name = 'Alice'");
 
     // j. Verify UPDATE
-    let rows = query_rows(&pool, "SELECT salary FROM users WHERE name = 'Alice'");
+    let rows = query_rows(&mut conn, "SELECT salary FROM users WHERE name = 'Alice'");
     assert_eq!(rows.len(), 1);
     assert!((get_f64(&rows[0], 0) - 55000.0).abs() < 0.01);
 
     // k. DELETE
-    exec_sql(&pool, "DELETE FROM users WHERE age < 30");
+    exec_sql(&mut conn, "DELETE FROM users WHERE age < 30");
 
     // l. Verify DELETE
-    let rows = query_rows(&pool, "SELECT COUNT(*) FROM users");
+    let rows = query_rows(&mut conn, "SELECT COUNT(*) FROM users");
     assert_eq!(get_i64(&rows[0], 0), 2);
 
     // m. DROP TABLE
-    exec_sql(&pool, "DROP TABLE users");
+    exec_sql(&mut conn, "DROP TABLE users");
 
     // n. DROP DATABASE
-    exec_sql(&pool, "DROP DATABASE test_e2e");
+    exec_sql(&mut conn, "DROP DATABASE test_e2e");
 }

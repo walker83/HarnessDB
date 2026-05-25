@@ -5,7 +5,7 @@
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
 use mysql::prelude::*;
-use mysql::{Opts, OptsBuilder, Pool, Row, Value};
+use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -83,19 +83,19 @@ fn find_binary() -> String {
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
 
-fn make_pool() -> Pool {
+fn make_conn() -> mysql::Conn {
     let opts = OptsBuilder::new()
         .ip_or_hostname(Some("127.0.0.1"))
         .tcp_port(MYSQL_PORT)
         .user(Some("root"))
         .pass(None::<String>);
-    Pool::new(Opts::from(opts)).expect("Failed to create pool")
+    mysql::Conn::new(Opts::from(opts)).expect("Failed to create connection")
 }
 
 struct TestContext {
     #[allow(dead_code)]
     server: Arc<E2eServer>,
-    pool: Pool,
+    conn: RefCell<mysql::Conn>,
     current_db: RefCell<Option<String>>,
 }
 
@@ -110,8 +110,8 @@ lazy_static! {
 impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
-        let pool = make_pool();
-        TestContext { server, pool, current_db: RefCell::new(None) }
+        let conn = make_conn();
+        TestContext { server, conn: RefCell::new(conn), current_db: RefCell::new(None) }
     }
 
     /// Create a unique database name and return it
@@ -136,7 +136,7 @@ impl TestContext {
     }
 
     fn exec(&self, sql: &str) {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         if let Some(ref db) = *self.current_db.borrow() {
             let _ = conn.query_drop(format!("USE {}", db));
         }
@@ -144,7 +144,7 @@ impl TestContext {
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         if let Some(ref db) = *self.current_db.borrow() {
             let _ = conn.query_drop(format!("USE {}", db));
         }
@@ -152,7 +152,7 @@ impl TestContext {
     }
 
     fn query(&self, sql: &str) -> Vec<Row> {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         // Ensure we're in the right database (pool may reuse connections with stale USE)
         if let Some(ref db) = *self.current_db.borrow() {
             let _ = conn.query_drop(format!("USE {}", db));
@@ -161,7 +161,7 @@ impl TestContext {
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         // Ensure we're in the right database (pool may reuse connections with stale USE)
         if let Some(ref db) = *self.current_db.borrow() {
             let _ = conn.query_drop(format!("USE {}", db));

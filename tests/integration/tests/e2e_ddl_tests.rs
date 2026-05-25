@@ -5,7 +5,8 @@
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
 use mysql::prelude::*;
-use mysql::{Opts, OptsBuilder, Pool, Row, Value};
+use mysql::{Opts, OptsBuilder, Row, Value};
+use std::cell::RefCell;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -82,19 +83,19 @@ fn find_binary() -> String {
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
 
-fn make_pool() -> Pool {
+fn make_conn() -> mysql::Conn {
     let opts = OptsBuilder::new()
         .ip_or_hostname(Some("127.0.0.1"))
         .tcp_port(MYSQL_PORT)
         .user(Some("root"))
         .pass(None::<String>);
-    Pool::new(Opts::from(opts)).expect("Failed to create pool")
+    mysql::Conn::new(Opts::from(opts)).expect("Failed to create connection")
 }
 
 struct TestContext {
     #[allow(dead_code)]
     server: Arc<E2eServer>,
-    pool: Pool,
+    conn: RefCell<mysql::Conn>,
 }
 
 lazy_static! {
@@ -108,8 +109,8 @@ lazy_static! {
 impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
-        let pool = make_pool();
-        TestContext { server, pool }
+        let conn = make_conn();
+        TestContext { server, conn: RefCell::new(conn) }
     }
 
     /// Create a unique database name and return it
@@ -132,22 +133,22 @@ impl TestContext {
     }
 
     fn exec(&self, sql: &str) {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         conn.query_drop(sql).map_err(|e| format!("{}: {}", sql, e))
     }
 
     fn query(&self, sql: &str) -> Vec<Row> {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
-        let mut conn = self.pool.get_conn().expect("conn");
+        let mut conn = self.conn.borrow_mut();
         conn.query(sql).map_err(|e| format!("{}: {}", sql, e))
     }
 
@@ -1115,9 +1116,9 @@ fn test_describe_table_basic() {
     assert_eq!(get_string(&rows[1], 0), "name");
     assert_eq!(get_string(&rows[2], 0), "salary");
     // Column types (Debug format)
-    assert_eq!(get_string(&rows[0], 1), "Int32");
-    assert_eq!(get_string(&rows[1], 1), "String");
-    assert_eq!(get_string(&rows[2], 1), "Float64");
+    assert_eq!(get_string(&rows[0], 1), "INT");
+    assert_eq!(get_string(&rows[1], 1), "TEXT");
+    assert_eq!(get_string(&rows[2], 1), "DOUBLE");
     ctx.drop_db(&db);
 }
 
@@ -1141,8 +1142,8 @@ fn test_describe_table_varchar_type() {
     ctx.exec("CREATE TABLE t_vt (id INT, name VARCHAR(100))");
     let rows = ctx.query("DESCRIBE t_vt");
     assert_eq!(rows.len(), 2);
-    // VARCHAR maps to String internally
-    assert_eq!(get_string(&rows[1], 1), "String");
+    // VARCHAR(100) is returned as-is with the length parameter
+    assert_eq!(get_string(&rows[1], 1), "VARCHAR(100)");
     ctx.drop_db(&db);
 }
 
@@ -1153,8 +1154,8 @@ fn test_describe_table_bigint_type() {
     ctx.exec("CREATE TABLE t_bt (id BIGINT, val TINYINT)");
     let rows = ctx.query("DESCRIBE t_bt");
     assert_eq!(rows.len(), 2);
-    assert_eq!(get_string(&rows[0], 1), "Int64");
-    assert_eq!(get_string(&rows[1], 1), "Int8");
+    assert_eq!(get_string(&rows[0], 1), "BIGINT");
+    assert_eq!(get_string(&rows[1], 1), "TINYINT");
     ctx.drop_db(&db);
 }
 
@@ -1165,8 +1166,8 @@ fn test_describe_table_date_types() {
     ctx.exec("CREATE TABLE t_dt2 (d DATE, ts DATETIME)");
     let rows = ctx.query("DESCRIBE t_dt2");
     assert_eq!(rows.len(), 2);
-    assert_eq!(get_string(&rows[0], 1), "Date");
-    assert_eq!(get_string(&rows[1], 1), "DateTime");
+    assert_eq!(get_string(&rows[0], 1), "DATE");
+    assert_eq!(get_string(&rows[1], 1), "DATETIME");
     ctx.drop_db(&db);
 }
 
@@ -1177,8 +1178,8 @@ fn test_describe_table_float_types() {
     ctx.exec("CREATE TABLE t_ft (f FLOAT, d DOUBLE)");
     let rows = ctx.query("DESCRIBE t_ft");
     assert_eq!(rows.len(), 2);
-    assert_eq!(get_string(&rows[0], 1), "Float32");
-    assert_eq!(get_string(&rows[1], 1), "Float64");
+    assert_eq!(get_string(&rows[0], 1), "FLOAT");
+    assert_eq!(get_string(&rows[1], 1), "DOUBLE");
     ctx.drop_db(&db);
 }
 
@@ -1390,12 +1391,12 @@ fn test_show_tables_like_pattern() {
 #[test]
 fn test_show_databases_empty_and_create() {
     let ctx = TestContext::new();
-    let before = ctx.query("SHOW DATABASES");
-    let before_count = before.len();
     let db = ctx.new_db_name();
     ctx.exec(&format!("CREATE DATABASE {}", db));
-    let after = ctx.query("SHOW DATABASES");
-    assert_eq!(after.len(), before_count + 1, "Should have one more database");
+    // Verify the database exists by name (don't rely on count due to parallel tests)
+    let rows = ctx.query("SHOW DATABASES");
+    let names: Vec<String> = rows.iter().map(|r| get_string(r, 0)).collect();
+    assert!(names.contains(&db), "Created database {} should appear in SHOW DATABASES", db);
     ctx.drop_db(&db);
 }
 
@@ -1407,7 +1408,7 @@ fn test_describe_table_empty_db() {
     let rows = ctx.query("DESC t_empty_desc");
     assert_eq!(rows.len(), 1);
     assert_eq!(get_string(&rows[0], 0), "id");
-    assert_eq!(get_string(&rows[0], 1), "Int32");
+    assert_eq!(get_string(&rows[0], 1), "INT");
     assert_eq!(get_string(&rows[0], 2), "YES");
     ctx.drop_db(&db);
 }

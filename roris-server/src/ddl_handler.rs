@@ -13,7 +13,7 @@ use crate::utils::{literal_to_string, parse_data_type};
 impl RorisQueryHandler {
     // ---- Database DDL ----
 
-    pub(crate) fn create_database(&self, stmt: &CreateDatabaseStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_database(&self, conn_id: u32, stmt: &CreateDatabaseStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         match catalog.create_database(&stmt.name) {
             Ok(()) => {
@@ -38,7 +38,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn drop_database(&self, stmt: &DropDatabaseStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_database(&self, conn_id: u32, stmt: &DropDatabaseStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         match catalog.drop_database(&stmt.name) {
             Ok(()) => {
@@ -52,7 +52,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn alter_database(&self, stmt: &AlterDatabaseStmt) -> Result<QueryResult, String> {
+    pub(crate) fn alter_database(&self, conn_id: u32, stmt: &AlterDatabaseStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         if catalog.get_database(&stmt.name).is_none() {
             return Err(format!("Unknown database '{}'", stmt.name));
@@ -71,14 +71,14 @@ impl RorisQueryHandler {
 
     // ---- Table DDL ----
 
-    pub(crate) fn create_table(&self, stmt: &CreateTableStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_table(&self, conn_id: u32, stmt: &CreateTableStmt) -> Result<QueryResult, String> {
         // Validate at least one column (MySQL rejects 0-column tables)
         if stmt.columns.is_empty() {
             return Err("A table must have at least one column".to_string());
         }
 
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
 
         let table_id = catalog.next_id();
@@ -182,9 +182,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn drop_table(&self, stmt: &DropTableStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_table(&self, conn_id: u32, stmt: &DropTableStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let table = stmt.name.clone();
 
@@ -209,9 +209,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn alter_table(&self, stmt: &AlterTableStmt) -> Result<QueryResult, String> {
+    pub(crate) fn alter_table(&self, conn_id: u32, stmt: &AlterTableStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
 
         match catalog.get_table(db, &stmt.table) {
@@ -435,9 +435,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn truncate_table(&self, database: Option<String>, table: String, if_exists: bool) -> Result<QueryResult, String> {
+    pub(crate) fn truncate_table(&self, conn_id: u32, database: Option<String>, table: String, if_exists: bool) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let db = database.as_deref().unwrap_or(&current_db);
 
         match catalog.get_table(db, &table) {
@@ -478,8 +478,8 @@ impl RorisQueryHandler {
 
     // ---- View DDL ----
 
-    pub(crate) fn create_view(&self, database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String>) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read();
+    pub(crate) fn create_view(&self, conn_id: u32, database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String>) -> Result<QueryResult, String> {
+        let current_db = self.get_session(conn_id);
         let db = database.as_deref().unwrap_or(&current_db);
         if self.find_view(db, &name).is_some() {
             if if_not_exists { return Ok(QueryResult::ok()); }
@@ -490,8 +490,8 @@ impl RorisQueryHandler {
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn drop_view(&self, stmt: &DropViewStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read();
+    pub(crate) fn drop_view(&self, conn_id: u32, stmt: &DropViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let mut views = self.views.write();
         let idx = views.iter().position(|v| v.database == db && v.name == stmt.name);
@@ -501,8 +501,8 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn alter_view(&self, stmt: &AlterViewStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read();
+    pub(crate) fn alter_view(&self, conn_id: u32, stmt: &AlterViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let mut views = self.views.write();
         let view = views.iter_mut().find(|v| v.database == db && v.name == stmt.name)
@@ -513,9 +513,9 @@ impl RorisQueryHandler {
 
     // ---- Index DDL ----
 
-    pub(crate) fn create_index(&self, stmt: &CreateIndexStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_index(&self, conn_id: u32, stmt: &CreateIndexStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
@@ -534,9 +534,9 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn drop_index(&self, stmt: &DropIndexStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_index(&self, conn_id: u32, stmt: &DropIndexStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
@@ -559,8 +559,8 @@ impl RorisQueryHandler {
 
     // ---- Materialized View DDL ----
 
-    pub(crate) fn create_materialized_view(&self, stmt: &fe_sql_parser::ast::CreateMaterializedViewStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read();
+    pub(crate) fn create_materialized_view(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateMaterializedViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let catalog = &self.catalog;
         if catalog.get_table(db, &stmt.name).is_some() && !stmt.if_not_exists {
@@ -583,8 +583,8 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn drop_materialized_view(&self, stmt: &fe_sql_parser::ast::DropMaterializedViewStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read();
+    pub(crate) fn drop_materialized_view(&self, conn_id: u32, stmt: &fe_sql_parser::ast::DropMaterializedViewStmt) -> Result<QueryResult, String> {
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let catalog = &self.catalog;
         match catalog.drop_table(db, &stmt.name) {
@@ -594,14 +594,14 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn alter_materialized_view(&self, stmt: &fe_sql_parser::ast::AlterMaterializedViewStmt) -> Result<QueryResult, String> {
+    pub(crate) fn alter_materialized_view(&self, conn_id: u32, stmt: &fe_sql_parser::ast::AlterMaterializedViewStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("ALTER MATERIALIZED VIEW {}.{} OK", stmt.database.as_deref().unwrap_or(&String::new()), stmt.name))]],
         ))
     }
 
-    pub(crate) fn refresh_materialized_view(&self, stmt: &fe_sql_parser::ast::RefreshMaterializedViewStmt) -> Result<QueryResult, String> {
+    pub(crate) fn refresh_materialized_view(&self, conn_id: u32, stmt: &fe_sql_parser::ast::RefreshMaterializedViewStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("REFRESH MATERIALIZED VIEW {}.{} OK", stmt.database.as_deref().unwrap_or(&String::new()), stmt.name))]],
@@ -610,7 +610,7 @@ impl RorisQueryHandler {
 
     // ---- Repository / Backup DDL ----
 
-    pub(crate) fn create_repository(&self, stmt: &fe_sql_parser::ast::CreateRepositoryStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_repository(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateRepositoryStmt) -> Result<QueryResult, String> {
         // Extract path from properties
         let path = stmt.properties.iter()
             .find(|(k, _)| k.to_lowercase() == "location" || k.to_lowercase() == "path")
@@ -629,7 +629,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn drop_repository(&self, stmt: &fe_sql_parser::ast::DropRepositoryStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_repository(&self, conn_id: u32, stmt: &fe_sql_parser::ast::DropRepositoryStmt) -> Result<QueryResult, String> {
         match self.backup_manager.drop_repository(&stmt.name) {
             Ok(()) => Ok(QueryResult::with_rows(
                 vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
@@ -645,7 +645,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn backup_database(&self, stmt: &fe_sql_parser::ast::BackupDatabaseStmt) -> Result<QueryResult, String> {
+    pub(crate) fn backup_database(&self, conn_id: u32, stmt: &fe_sql_parser::ast::BackupDatabaseStmt) -> Result<QueryResult, String> {
         let msg = self.backup_manager.backup_database(
             &self.catalog,
             &stmt.database,
@@ -658,7 +658,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn restore_database(&self, stmt: &fe_sql_parser::ast::RestoreDatabaseStmt) -> Result<QueryResult, String> {
+    pub(crate) fn restore_database(&self, conn_id: u32, stmt: &fe_sql_parser::ast::RestoreDatabaseStmt) -> Result<QueryResult, String> {
         let msg = self.backup_manager.restore_database(
             &self.catalog,
             &stmt.database,
@@ -673,9 +673,9 @@ impl RorisQueryHandler {
 
     // ---- Alter helpers ----
 
-    pub(crate) fn cancel_alter_table(&self, stmt: &CancelAlterTableStmt) -> Result<QueryResult, String> {
+    pub(crate) fn cancel_alter_table(&self, conn_id: u32, stmt: &CancelAlterTableStmt) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
-        let current_db = self.current_database.read();
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
             Some(_) => Ok(QueryResult::ok()),
@@ -683,11 +683,11 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn alter_colocate_group(&self, stmt: &AlterColocateGroupStmt) -> Result<QueryResult, String> {
+    pub(crate) fn alter_colocate_group(&self, conn_id: u32, stmt: &AlterColocateGroupStmt) -> Result<QueryResult, String> {
         use fe_sql_parser::ast::ColocateGroupOperation;
         match &stmt.operation {
             ColocateGroupOperation::AddTable { database, table } => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 let db = database.as_deref().unwrap_or(&current_db);
                 let catalog = &self.catalog;
                 if catalog.get_table(db, table).is_none() { return Err(format!("Unknown table '{}.{}'", db, table)); }
@@ -704,7 +704,7 @@ impl RorisQueryHandler {
                 Ok(QueryResult::ok())
             }
             ColocateGroupOperation::RemoveTable { database, table } => {
-                let current_db = self.current_database.read();
+                let current_db = self.get_session(conn_id);
                 let db = database.as_deref().unwrap_or(&current_db);
                 let catalog = &self.catalog;
                 if let Some(mut tbl) = catalog.get_table(db, table) {
@@ -728,14 +728,14 @@ impl RorisQueryHandler {
 
     // ---- User DDL ----
 
-    pub(crate) fn create_user(&self, stmt: &fe_sql_parser::ast::CreateUserStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_user(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateUserStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CREATE USER {} OK", stmt.username))]],
         ))
     }
 
-    pub(crate) fn drop_user(&self, stmt: &fe_sql_parser::ast::DropUserStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_user(&self, conn_id: u32, stmt: &fe_sql_parser::ast::DropUserStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(if stmt.if_exists { format!("DROP USER {} OK (if exists)", stmt.username) } else { format!("DROP USER {} OK", stmt.username) })]],
@@ -744,21 +744,21 @@ impl RorisQueryHandler {
 
     // ---- Catalog DDL ----
 
-    pub(crate) fn create_catalog(&self, stmt: &fe_sql_parser::ast::CreateCatalogStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_catalog(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateCatalogStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CREATE CATALOG {} OK", stmt.name))]],
         ))
     }
 
-    pub(crate) fn drop_catalog(&self, stmt: &fe_sql_parser::ast::DropCatalogStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_catalog(&self, conn_id: u32, stmt: &fe_sql_parser::ast::DropCatalogStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("DROP CATALOG {} OK", stmt.name))]],
         ))
     }
 
-    pub(crate) fn refresh_catalog(&self, stmt: &fe_sql_parser::ast::RefreshCatalogStmt) -> Result<QueryResult, String> {
+    pub(crate) fn refresh_catalog(&self, conn_id: u32, stmt: &fe_sql_parser::ast::RefreshCatalogStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("REFRESH CATALOG {} OK", stmt.name))]],
@@ -767,8 +767,8 @@ impl RorisQueryHandler {
 
     // ---- Export / Variable ----
 
-    pub(crate) fn export_table(&self, stmt: &fe_sql_parser::ast::ExportTableStmt) -> Result<QueryResult, String> {
-        let current_db = self.current_database.read();
+    pub(crate) fn export_table(&self, conn_id: u32, stmt: &fe_sql_parser::ast::ExportTableStmt) -> Result<QueryResult, String> {
+        let current_db = self.get_session(conn_id);
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let format = stmt.properties.iter()
             .find(|(k, _)| k.to_lowercase() == "format")
@@ -782,7 +782,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn set_variable(&self, stmt: &fe_sql_parser::ast::SetVariableStmt) -> Result<QueryResult, String> {
+    pub(crate) fn set_variable(&self, conn_id: u32, stmt: &fe_sql_parser::ast::SetVariableStmt) -> Result<QueryResult, String> {
         let var_name = stmt.variable.trim_matches('`').to_lowercase();
         // Convert Expr to string value
         let value = match &stmt.value {
@@ -801,8 +801,10 @@ impl RorisQueryHandler {
         if stmt.is_global {
             self.sys_vars.set_global(&var_name, &value)?;
         } else {
-            let session = self.session_vars.read();
-            self.sys_vars.set_session(&var_name, &value, &session)?;
+            // Set session variable within the closure to avoid lifetime issues
+            self.with_session_mut(conn_id, |s| {
+                s.session_vars.set(&var_name, &value)
+            })?;
         }
 
         Ok(QueryResult::ok())
@@ -810,14 +812,14 @@ impl RorisQueryHandler {
 
     // ---- Stats / Analyze ----
 
-    pub(crate) fn analyze_table(&self, stmt: &fe_sql_parser::ast::AnalyzeTableStmt) -> Result<QueryResult, String> {
+    pub(crate) fn analyze_table(&self, conn_id: u32, stmt: &fe_sql_parser::ast::AnalyzeTableStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("ANALYZE TABLE {}.{} OK", stmt.database.as_deref().unwrap_or(""), stmt.table))]],
         ))
     }
 
-    pub(crate) fn drop_stats(&self, stmt: &fe_sql_parser::ast::DropStatsStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_stats(&self, conn_id: u32, stmt: &fe_sql_parser::ast::DropStatsStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("DROP STATS {}.{} OK", stmt.database.as_deref().unwrap_or(""), stmt.table))]],
@@ -826,14 +828,14 @@ impl RorisQueryHandler {
 
     // ---- Function DDL ----
 
-    pub(crate) fn create_function(&self, stmt: &fe_sql_parser::ast::CreateFunctionStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_function(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateFunctionStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CREATE FUNCTION {} OK", stmt.name))]],
         ))
     }
 
-    pub(crate) fn drop_function(&self, stmt: &fe_sql_parser::ast::DropFunctionStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_function(&self, conn_id: u32, stmt: &fe_sql_parser::ast::DropFunctionStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("DROP FUNCTION {} OK", stmt.name))]],
@@ -842,14 +844,14 @@ impl RorisQueryHandler {
 
     // ---- Stats / Analyze ----
 
-    pub(crate) fn create_job(&self, stmt: &fe_sql_parser::ast::CreateJobStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_job(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateJobStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CREATE JOB {} OK", stmt.name))]],
         ))
     }
 
-    pub(crate) fn drop_job_stmt(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn drop_job_stmt(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("DROP JOB {} OK", name))]],
@@ -858,14 +860,14 @@ impl RorisQueryHandler {
 
     // ---- Plugin DDL ----
 
-    pub(crate) fn install_plugin(&self, stmt: &fe_sql_parser::ast::InstallPluginStmt) -> Result<QueryResult, String> {
+    pub(crate) fn install_plugin(&self, conn_id: u32, stmt: &fe_sql_parser::ast::InstallPluginStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("INSTALL PLUGIN {} OK", stmt.name))]],
         ))
     }
 
-    pub(crate) fn uninstall_plugin(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn uninstall_plugin(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("UNINSTALL PLUGIN {} OK", name))]],
@@ -874,21 +876,21 @@ impl RorisQueryHandler {
 
     // ---- Recover ----
 
-    pub(crate) fn recover_database(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn recover_database(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("RECOVER DATABASE {} OK", name))]],
         ))
     }
 
-    pub(crate) fn recover_table(&self, database: String, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn recover_table(&self, conn_id: u32, database: String, table: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("RECOVER TABLE {}.{} OK", database, table))]],
         ))
     }
 
-    pub(crate) fn recover_partition(&self, database: String, table: String, partition: String) -> Result<QueryResult, String> {
+    pub(crate) fn recover_partition(&self, conn_id: u32, database: String, table: String, partition: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("RECOVER PARTITION {}.{}.{} OK", database, table, partition))]],
@@ -897,28 +899,28 @@ impl RorisQueryHandler {
 
     // ---- Recycle Bin ----
 
-    pub(crate) fn drop_catalog_recycle_bin(&self, filter: Option<String>) -> Result<QueryResult, String> {
+    pub(crate) fn drop_catalog_recycle_bin(&self, conn_id: u32, filter: Option<String>) -> Result<QueryResult, String> {
         let _ = filter;
         Ok(QueryResult::ok())
     }
 
     // ---- SQL Block Rule ----
 
-    pub(crate) fn create_sql_block_rule(&self, stmt: &fe_sql_parser::ast::CreateSqlBlockRuleStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_sql_block_rule(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateSqlBlockRuleStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CREATE SQL_BLOCK_RULE {} OK", stmt.name))]],
         ))
     }
 
-    pub(crate) fn alter_sql_block_rule(&self, name: String, _props: Vec<(String, String)>) -> Result<QueryResult, String> {
+    pub(crate) fn alter_sql_block_rule(&self, conn_id: u32, name: String, _props: Vec<(String, String)>) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("ALTER SQL_BLOCK_RULE {} OK", name))]],
         ))
     }
 
-    pub(crate) fn drop_sql_block_rule(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn drop_sql_block_rule(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("DROP SQL_BLOCK_RULE {} OK", name))]],
@@ -927,14 +929,14 @@ impl RorisQueryHandler {
 
     // ---- Row Policy ----
 
-    pub(crate) fn create_row_policy(&self, stmt: &fe_sql_parser::ast::CreateRowPolicyStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_row_policy(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateRowPolicyStmt) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CREATE ROW POLICY {} OK", stmt.name))]],
         ))
     }
 
-    pub(crate) fn drop_row_policy(&self, name: String, _database: Option<String>, _table: String) -> Result<QueryResult, String> {
+    pub(crate) fn drop_row_policy(&self, conn_id: u32, name: String, _database: Option<String>, _table: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("DROP ROW POLICY {} OK", name))]],
@@ -943,14 +945,14 @@ impl RorisQueryHandler {
 
     // ---- Stats / Analyze admin ----
 
-    pub(crate) fn alter_stats(&self, table: String, _props: Vec<(String, String)>) -> Result<QueryResult, String> {
+    pub(crate) fn alter_stats(&self, conn_id: u32, table: String, _props: Vec<(String, String)>) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("ALTER STATS {} OK", table))]],
         ))
     }
 
-    pub(crate) fn kill_analyze_job(&self, id: String) -> Result<QueryResult, String> {
+    pub(crate) fn kill_analyze_job(&self, conn_id: u32, id: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("KILL ANALYZE JOB {} OK", id))]],
@@ -959,28 +961,28 @@ impl RorisQueryHandler {
 
     // ---- Export / Task / Job stubs ----
 
-    pub(crate) fn cancel_export(&self, id: String) -> Result<QueryResult, String> {
+    pub(crate) fn cancel_export(&self, conn_id: u32, id: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CANCEL EXPORT {} OK", id))]],
         ))
     }
 
-    pub(crate) fn pause_job(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn pause_job(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("PAUSE JOB {} OK", name))]],
         ))
     }
 
-    pub(crate) fn resume_job_stmt(&self, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn resume_job_stmt(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("RESUME JOB {} OK", name))]],
         ))
     }
 
-    pub(crate) fn cancel_task(&self, id: String) -> Result<QueryResult, String> {
+    pub(crate) fn cancel_task(&self, conn_id: u32, id: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CANCEL TASK {} OK", id))]],
