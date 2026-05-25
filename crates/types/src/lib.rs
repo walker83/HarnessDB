@@ -7,6 +7,7 @@ pub mod schema;
 pub mod block;
 
 pub use data_type::DataType;
+pub use data_type::DecimalType;
 pub use scalar::{ScalarValue, JsonValue};
 pub use vector::{Vector, JsonVector, TypedVector};
 pub use vector::{BooleanVector, Int8Vector, Int16Vector, Int32Vector, Int64Vector, Int128Vector};

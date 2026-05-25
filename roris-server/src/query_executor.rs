@@ -5,9 +5,37 @@ use datafusion::arrow::datatypes::DataType as ADT;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::QueryResult;
 use fe_sql_parser::Statement;
+use ::types::DataType as RorisDataType;
 
 use crate::handler_struct::RorisQueryHandler;
 use crate::utils::{like_match, parse_data_type};
+
+/// Convert internal DataType to MySQL-compatible type string for DESCRIBE/SHOW CREATE TABLE
+fn datatype_to_mysql_type(dt: &RorisDataType) -> String {
+    match dt {
+        RorisDataType::Null => "NULL".to_string(),
+        RorisDataType::Boolean => "TINYINT(1)".to_string(),
+        RorisDataType::Int8 => "TINYINT".to_string(),
+        RorisDataType::Int16 => "SMALLINT".to_string(),
+        RorisDataType::Int32 => "INT".to_string(),
+        RorisDataType::Int64 => "BIGINT".to_string(),
+        RorisDataType::Int128 => "DECIMAL(38,0)".to_string(),
+        RorisDataType::Float32 => "FLOAT".to_string(),
+        RorisDataType::Float64 => "DOUBLE".to_string(),
+        RorisDataType::Decimal(d) => format!("DECIMAL({},{})", d.precision, d.scale),
+        RorisDataType::Date => "DATE".to_string(),
+        RorisDataType::DateTime => "DATETIME".to_string(),
+        RorisDataType::Varchar(n) => format!("VARCHAR({})", n),
+        RorisDataType::Char(n) => format!("CHAR({})", n),
+        RorisDataType::String => "TEXT".to_string(),
+        RorisDataType::Binary => "BLOB".to_string(),
+        RorisDataType::Json => "JSON".to_string(),
+        RorisDataType::Array(inner) => format!("ARRAY<{}>", datatype_to_mysql_type(inner)),
+        RorisDataType::Map(k, v) => format!("MAP<{},{}>", datatype_to_mysql_type(k), datatype_to_mysql_type(v)),
+        RorisDataType::Struct(_) => "STRUCT".to_string(),
+        RorisDataType::Float32Vector(dim) => format!("FLOAT32_VECTOR({})", dim),
+    }
+}
 
 impl RorisQueryHandler {
     pub(crate) fn execute_statement(&self, stmt: &Statement) -> Result<QueryResult, String> {
@@ -177,9 +205,14 @@ impl RorisQueryHandler {
                 let rows: Vec<Vec<Option<String>>> = tbl.columns.iter().map(|col| {
                     vec![
                         Some(col.name.clone()),
-                        Some(format!("{:?}", col.data_type)),
+                        Some(datatype_to_mysql_type(&col.data_type)),
                         Some(if col.nullable { "YES" } else { "NO" }.to_string()),
-                        col.default_value.as_ref().map(|v| format!("{:?}", v)),
+                        match &col.default_value {
+                            Some(v) => Some(format!("{:?}", v)),
+                            None => None,
+                        },
+                        Some("".to_string()),  // Key (empty for now)
+                        Some("".to_string()),  // Extra
                         Some(col.comment.clone()),
                     ]
                 }).collect();
@@ -189,6 +222,8 @@ impl RorisQueryHandler {
                         ColumnDef { name: "Type".to_string(), col_type: ColumnType::String },
                         ColumnDef { name: "Null".to_string(), col_type: ColumnType::String },
                         ColumnDef { name: "Default".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Key".to_string(), col_type: ColumnType::String },
+                        ColumnDef { name: "Extra".to_string(), col_type: ColumnType::String },
                         ColumnDef { name: "Comment".to_string(), col_type: ColumnType::String },
                     ],
                     rows,
@@ -219,21 +254,31 @@ impl RorisQueryHandler {
                 // Build CREATE TABLE statement from table metadata
                 let mut create_sql = format!("CREATE TABLE `{}` (\n", table);
                 for (i, col) in tbl.columns.iter().enumerate() {
+                    let mysql_type = datatype_to_mysql_type(&col.data_type);
                     let nullable = if col.nullable { "" } else { " NOT NULL" };
+                    let default_val = col.default_value.as_ref()
+                        .map(|v| format!(" DEFAULT {:?}", v))
+                        .unwrap_or_default();
+                    let comment = if col.comment.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" COMMENT '{}'", col.comment.replace('\'', "\\'"))
+                    };
                     let comma = if i < tbl.columns.len() - 1 { "," } else { "" };
-                    create_sql.push_str(&format!("  `{}` {}{}{}\n", col.name, col.data_type, nullable, comma));
+                    create_sql.push_str(&format!("  `{}` {}{}{}{}{}\n", col.name, mysql_type, nullable, default_val, comment, comma));
                 }
                 // Add UNIQUE KEY definitions
                 for uk in &tbl.unique_keys {
+                    let comma = if create_sql.ends_with('\n') { "," } else { "" };
                     if let Some(ref name) = uk.name {
-                        create_sql.push_str(&format!("  UNIQUE KEY `{}` ({})\n", name, uk.columns.join(", ")));
+                        create_sql.push_str(&format!("{}  UNIQUE KEY `{}` ({})\n", comma, name, uk.columns.join(", ")));
                     } else {
-                        create_sql.push_str(&format!("  UNIQUE ({})\n", uk.columns.join(", ")));
+                        create_sql.push_str(&format!("{}  UNIQUE ({})\n", comma, uk.columns.join(", ")));
                     }
                 }
-                create_sql.push_str(") ");
+                create_sql.push_str(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
                 if let Some(dist) = &tbl.distribution_info {
-                    create_sql.push_str(&format!("DISTRIBUTED BY HASH({}) BUCKETS {} ",
+                    create_sql.push_str(&format!(" DISTRIBUTED BY HASH({}) BUCKETS {}",
                         dist.columns.join(", "), dist.buckets));
                 }
                 Ok(QueryResult::with_rows(

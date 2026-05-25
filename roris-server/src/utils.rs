@@ -20,19 +20,56 @@ pub(crate) fn literal_to_string(lit: &fe_sql_parser::ast::LiteralValue) -> Strin
 }
 
 pub(crate) fn parse_data_type(s: &str) -> DataType {
-    match s.to_uppercase().as_str() {
-        "INT8" | "TINYINT" => DataType::Int8,
+    let upper = s.trim().to_uppercase();
+
+    // Handle parameterized types: VARCHAR(n), CHAR(n), DECIMAL(p,s)
+    if let Some(paren_pos) = upper.find('(') {
+        let base = upper[..paren_pos].trim();
+        let params = upper[paren_pos+1..].trim_end_matches(')').trim();
+
+        match base {
+            "VARCHAR" | "CHARACTER" => {
+                let n = params.parse::<usize>().unwrap_or(255);
+                return DataType::Varchar(n);
+            }
+            "CHAR" => {
+                let n = params.parse::<usize>().unwrap_or(1);
+                return DataType::Char(n);
+            }
+            "DECIMAL" | "NUMERIC" | "NUMBER" => {
+                let parts: Vec<&str> = params.split(',').collect();
+                let precision = parts.first().and_then(|p| p.trim().parse::<u8>().ok()).unwrap_or(10);
+                let scale = parts.get(1).and_then(|p| p.trim().parse::<u8>().ok()).unwrap_or(0);
+                return DataType::Decimal(::types::DecimalType { precision, scale });
+            }
+            _ => {}
+        }
+    }
+
+    // Simple types
+    match upper.as_str() {
+        "INT8" | "TINYINT" | "BOOLEAN" | "BOOL" => {
+            if upper == "BOOLEAN" || upper == "BOOL" {
+                DataType::Boolean
+            } else {
+                DataType::Int8
+            }
+        }
         "INT16" | "SMALLINT" => DataType::Int16,
-        "INT32" | "INT" => DataType::Int32,
+        "INT32" | "INT" | "INTEGER" | "MEDIUMINT" => DataType::Int32,
         "INT64" | "BIGINT" => DataType::Int64,
         "INT128" | "LARGEINT" => DataType::Int128,
-        "FLOAT32" | "FLOAT" => DataType::Float32,
-        "FLOAT64" | "DOUBLE" => DataType::Float64,
-        "STRING" | "VARCHAR" | "TEXT" => DataType::String,
-        "BOOLEAN" | "BOOL" => DataType::Boolean,
+        "FLOAT32" | "FLOAT" | "REAL" => DataType::Float32,
+        "FLOAT64" | "DOUBLE" | "DOUBLE PRECISION" => DataType::Float64,
+        "STRING" | "TEXT" | "LONGTEXT" | "MEDIUMTEXT" | "TINYTEXT" => DataType::String,
+        "VARCHAR" | "CHARACTER VARYING" => DataType::Varchar(255), // default length
+        "CHAR" | "CHARACTER" => DataType::Char(1), // default length
         "DATE" => DataType::Date,
         "DATETIME" | "TIMESTAMP" => DataType::DateTime,
-        _ => DataType::String,
+        "BINARY" | "VARBINARY" | "BLOB" | "LONGBLOB" | "MEDIUMBLOB" | "TINYBLOB" => DataType::Binary,
+        "JSON" | "JSONB" => DataType::Json,
+        "DECIMAL" | "NUMERIC" | "NUMBER" => DataType::Decimal(::types::DecimalType { precision: 10, scale: 0 }),
+        _ => DataType::String, // fallback
     }
 }
 
