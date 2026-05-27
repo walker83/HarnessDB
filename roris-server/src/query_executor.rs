@@ -147,6 +147,8 @@ impl RorisQueryHandler {
             Statement::AlterStats(table, props) => self.alter_stats(conn_id, table.clone(), props.clone()),
             // New admin/operations statements
             Statement::ShowStatus { global, pattern } => self.show_status(*global, pattern.clone()),
+            Statement::ShowEngines => self.show_engines(),
+            Statement::ShowCharset => self.show_charset(),
             Statement::KillQuery(id) => self.kill_query(*id),
             Statement::KillConnection(id) => self.kill_connection(*id),
             Statement::AdminCheckTable(table) => self.admin_check_table(conn_id, table.clone()),
@@ -531,6 +533,80 @@ impl RorisQueryHandler {
             vec![
                 ColumnDef { name: "Variable_name".to_string(), col_type: ColumnType::String },
                 ColumnDef { name: "Value".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    pub(crate) fn show_engines(&self) -> Result<QueryResult, String> {
+        // RorisDB uses a single storage engine based on Parquet
+        let rows = vec![
+            vec![
+                Some("InnoDB".to_string()),
+                Some("DEFAULT".to_string()),
+                Some("RorisDB Parquet storage engine".to_string()),
+                Some("NO".to_string()),
+                Some("NO".to_string()),
+                Some("NO".to_string()),
+            ],
+            vec![
+                Some("MEMORY".to_string()),
+                Some("".to_string()),
+                Some("In-memory storage (not persistent)".to_string()),
+                Some("YES".to_string()),
+                Some("NO".to_string()),
+                Some("NO".to_string()),
+            ],
+        ];
+
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Engine".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Support".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Comment".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Transactions".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "XA".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Savepoints".to_string(), col_type: ColumnType::String },
+            ],
+            rows,
+        ))
+    }
+
+    pub(crate) fn show_charset(&self) -> Result<QueryResult, String> {
+        // Return common MySQL character sets
+        let rows = vec![
+            vec![
+                Some("utf8mb4".to_string()),
+                Some("UTF-8 Unicode".to_string()),
+                Some("utf8mb4_general_ci".to_string()),
+                Some("4".to_string()),
+            ],
+            vec![
+                Some("utf8".to_string()),
+                Some("UTF-8 Unicode".to_string()),
+                Some("utf8_general_ci".to_string()),
+                Some("3".to_string()),
+            ],
+            vec![
+                Some("latin1".to_string()),
+                Some("cp1252 West European".to_string()),
+                Some("latin1_swedish_ci".to_string()),
+                Some("1".to_string()),
+            ],
+            vec![
+                Some("binary".to_string()),
+                Some("Binary pseudo charset".to_string()),
+                Some("binary".to_string()),
+                Some("1".to_string()),
+            ],
+        ];
+
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef { name: "Charset".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Description".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Default collation".to_string(), col_type: ColumnType::String },
+                ColumnDef { name: "Maxlen".to_string(), col_type: ColumnType::String },
             ],
             rows,
         ))

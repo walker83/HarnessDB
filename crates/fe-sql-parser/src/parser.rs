@@ -106,6 +106,12 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     if trimmed.starts_with("SHOW STATUS") || trimmed == "SHOW STATUS" {
         return parse_show_status(sql);
     }
+    if trimmed.starts_with("SHOW ENGINES") || trimmed == "SHOW ENGINES" {
+        return Ok(vec![Statement::ShowEngines]);
+    }
+    if trimmed.starts_with("SHOW CHARSET") || trimmed.starts_with("SHOW CHARACTER SET") {
+        return Ok(vec![Statement::ShowCharset]);
+    }
     if trimmed.starts_with("SHOW INDEX") || trimmed.starts_with("SHOW KEYS") {
         return parse_show_index(sql);
     }

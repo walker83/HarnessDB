@@ -106,6 +106,8 @@ pub enum Statement {
 
     // Admin and operations statements
     ShowStatus { global: bool, pattern: Option<String> },
+    ShowEngines,
+    ShowCharset,
     KillQuery(u64),
     KillConnection(u64),
     AdminCheckTable(String),

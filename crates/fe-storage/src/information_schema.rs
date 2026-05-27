@@ -13,25 +13,27 @@ use dashmap::DashMap;
 
 use fe_catalog::CatalogManager;
 use fe_datafusion::types::to_arrow_data_type;
+use crate::ParquetStorage;
 
 /// Custom information_schema provider that returns MySQL-compatible metadata
 pub struct InformationSchemaProvider {
     catalog: Arc<CatalogManager>,
+    storage: Arc<ParquetStorage>,
     tables: DashMap<String, Arc<dyn TableProvider>>,
 }
 
 impl InformationSchemaProvider {
-    pub fn new(catalog: Arc<CatalogManager>) -> Self {
+    pub fn new(catalog: Arc<CatalogManager>, storage: Arc<ParquetStorage>) -> Self {
         let tables = DashMap::new();
 
         // Register information_schema tables
-        tables.insert("tables".to_string(), Arc::new(InformationSchemaTables::new(catalog.clone())) as Arc<dyn TableProvider>);
+        tables.insert("tables".to_string(), Arc::new(InformationSchemaTables::new(catalog.clone(), storage.clone())) as Arc<dyn TableProvider>);
         tables.insert("columns".to_string(), Arc::new(InformationSchemaColumns::new(catalog.clone())) as Arc<dyn TableProvider>);
         tables.insert("schemata".to_string(), Arc::new(InformationSchemaSchemata::new(catalog.clone())) as Arc<dyn TableProvider>);
         tables.insert("table_constraints".to_string(), Arc::new(InformationSchemaTableConstraints::new(catalog.clone())) as Arc<dyn TableProvider>);
         tables.insert("key_column_usage".to_string(), Arc::new(InformationSchemaKeyColumnUsage::new(catalog.clone())) as Arc<dyn TableProvider>);
 
-        Self { catalog, tables }
+        Self { catalog, storage, tables }
     }
 }
 
@@ -64,10 +66,11 @@ impl SchemaProvider for InformationSchemaProvider {
 struct InformationSchemaTables {
     schema: SchemaRef,
     catalog: Arc<CatalogManager>,
+    storage: Arc<ParquetStorage>,
 }
 
 impl InformationSchemaTables {
-    fn new(catalog: Arc<CatalogManager>) -> Self {
+    fn new(catalog: Arc<CatalogManager>, storage: Arc<ParquetStorage>) -> Self {
         let schema = Arc::new(ArrowSchema::new(vec![
             arrow_schema::Field::new("table_catalog", ArrowDataType::Utf8, false),
             arrow_schema::Field::new("table_schema", ArrowDataType::Utf8, false),
@@ -79,7 +82,7 @@ impl InformationSchemaTables {
             arrow_schema::Field::new("table_collation", ArrowDataType::Utf8, true),
             arrow_schema::Field::new("table_comment", ArrowDataType::Utf8, true),
         ]));
-        Self { schema, catalog }
+        Self { schema, catalog, storage }
     }
 }
 
@@ -124,13 +127,27 @@ impl TableProvider for InformationSchemaTables {
             if let Some(db) = self.catalog.get_database(&db_name) {
                 let table_names: Vec<String> = db.table_names().into_iter().map(|s| s.to_string()).collect();
                 for tbl_name in table_names {
+                    // Get actual row count by reading the table
+                    let row_count = match self.storage.read(&db_name, &tbl_name) {
+                        Ok(batch) => batch.num_rows() as u64,
+                        Err(_) => 0u64,
+                    };
+
+                    // Get actual file size
+                    let file_size = {
+                        let parquet_path = self.storage.table_dir(&db_name, &tbl_name).join("data.parquet");
+                        std::fs::metadata(&parquet_path)
+                            .map(|m| m.len())
+                            .unwrap_or(0u64)
+                    };
+
                     table_catalog.push(Some("roris".to_string()));
                     table_schema.push(Some(db_name.clone()));
                     table_name.push(Some(tbl_name.clone()));
                     table_type.push(Some("BASE TABLE".to_string()));
                     engine.push(Some("InnoDB".to_string()));
-                    table_rows.push(Some(0u64)); // TODO: get actual row count
-                    data_length.push(Some(0u64)); // TODO: get actual size
+                    table_rows.push(Some(row_count));
+                    data_length.push(Some(file_size));
                     table_collation.push(Some("utf8mb4_general_ci".to_string()));
                     table_comment.push(Some("".to_string()));
                 }

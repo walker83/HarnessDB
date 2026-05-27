@@ -120,7 +120,7 @@ impl ParquetCatalogProvider {
         // Register custom information_schema with MySQL-compatible types
         schemas.insert(
             "information_schema".to_string(),
-            Arc::new(crate::information_schema::InformationSchemaProvider::new(catalog.clone())) as Arc<dyn datafusion::catalog::SchemaProvider>,
+            Arc::new(crate::information_schema::InformationSchemaProvider::new(catalog.clone(), storage.clone())) as Arc<dyn datafusion::catalog::SchemaProvider>,
         );
         Self {
             catalog,
