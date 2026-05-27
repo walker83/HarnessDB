@@ -55,6 +55,7 @@ pub async fn start_web_server(state: Arc<WebState>, port: u16) -> Result<(), Box
 
     let app = Router::new()
         .route("/", get(routes::serve_editor))
+        .route("/metrics", get(routes::metrics_handler))
         .route("/api/query", post(routes::api_query))
         .route("/api/databases", get(routes::api_databases))
         .route("/api/tables/{db}", get(routes::api_tables))

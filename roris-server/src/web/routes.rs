@@ -66,6 +66,21 @@ pub async fn serve_editor() -> (StatusCode, [(String, String); 2], String) {
     )
 }
 
+/// Prometheus /metrics endpoint — returns all registered metrics in text format
+pub async fn metrics_handler() -> (StatusCode, [(&'static str, &'static str); 1], String) {
+    use prometheus::{Encoder, TextEncoder};
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = vec![];
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    let body = String::from_utf8(buffer).unwrap_or_default();
+    (
+        StatusCode::OK,
+        [("Content-Type", "text/plain; charset=utf-8")],
+        body,
+    )
+}
+
 // ---- API handlers ----
 
 pub async fn api_query(

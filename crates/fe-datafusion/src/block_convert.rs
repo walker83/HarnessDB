@@ -161,52 +161,52 @@ fn convert_array_to_vector(array: &Arc<dyn Array>, data_type: &types::DataType) 
     Ok(match data_type {
         types::DataType::Boolean => {
             let arr = array.as_any().downcast_ref::<BooleanArray>().ok_or("Not BooleanArray")?;
-            let data: Vec<Option<bool>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<bool>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Boolean(BooleanVector::from_nullable_vec(data))
         }
         types::DataType::Int8 => {
             let arr = array.as_any().downcast_ref::<Int8Array>().ok_or("Not Int8Array")?;
-            let data: Vec<Option<i8>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i8>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int8(Int8Vector::from_nullable_vec(data))
         }
         types::DataType::Int16 => {
             let arr = array.as_any().downcast_ref::<Int16Array>().ok_or("Not Int16Array")?;
-            let data: Vec<Option<i16>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i16>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int16(Int16Vector::from_nullable_vec(data))
         }
         types::DataType::Int32 => {
             let arr = array.as_any().downcast_ref::<Int32Array>().ok_or("Not Int32Array")?;
-            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int32(Int32Vector::from_nullable_vec(data))
         }
         types::DataType::Int64 => {
             let arr = array.as_any().downcast_ref::<Int64Array>().ok_or("Not Int64Array")?;
-            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int64(Int64Vector::from_nullable_vec(data))
         }
         types::DataType::Float32 => {
             let arr = array.as_any().downcast_ref::<Float32Array>().ok_or("Not Float32Array")?;
-            let data: Vec<Option<f32>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<f32>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Float32(Float32Vector::from_nullable_vec(data))
         }
         types::DataType::Float64 => {
             let arr = array.as_any().downcast_ref::<Float64Array>().ok_or("Not Float64Array")?;
-            let data: Vec<Option<f64>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<f64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Float64(Float64Vector::from_nullable_vec(data))
         }
         types::DataType::String => {
             let arr = array.as_any().downcast_ref::<StringArray>().ok_or("Not StringArray")?;
-            let data: Vec<Option<String>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i).to_string())).collect();
+            let data: Vec<Option<String>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i).to_string())).collect();
             Vector::String(StringVector::from_nullable_vec(data))
         }
         types::DataType::Date => {
             let arr = array.as_any().downcast_ref::<Date32Array>().ok_or("Not Date32Array")?;
-            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Date(DateVector::from_nullable_vec(data))
         }
         types::DataType::DateTime => {
             let arr = array.as_any().downcast_ref::<TimestampSecondArray>().ok_or("Not TimestampSecondArray")?;
-            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::DateTime(DateTimeVector::from_nullable_vec(data))
         }
         _ => {
@@ -240,52 +240,52 @@ fn convert_array_to_vector_by_type(array: &Arc<dyn Array>, arrow_dt: &arrow_sche
     Ok(match arrow_dt {
         ArrowDataType::Boolean => {
             let arr = array.as_any().downcast_ref::<BooleanArray>().ok_or("Not BooleanArray")?;
-            let data: Vec<Option<bool>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<bool>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Boolean(BooleanVector::from_nullable_vec(data))
         }
         ArrowDataType::Int8 => {
             let arr = array.as_any().downcast_ref::<Int8Array>().ok_or("Not Int8Array")?;
-            let data: Vec<Option<i8>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i8>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int8(Int8Vector::from_nullable_vec(data))
         }
         ArrowDataType::Int16 => {
             let arr = array.as_any().downcast_ref::<Int16Array>().ok_or("Not Int16Array")?;
-            let data: Vec<Option<i16>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i16>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int16(Int16Vector::from_nullable_vec(data))
         }
         ArrowDataType::Int32 => {
             let arr = array.as_any().downcast_ref::<Int32Array>().ok_or("Not Int32Array")?;
-            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int32(Int32Vector::from_nullable_vec(data))
         }
         ArrowDataType::Int64 => {
             let arr = array.as_any().downcast_ref::<Int64Array>().ok_or("Not Int64Array")?;
-            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Int64(Int64Vector::from_nullable_vec(data))
         }
         ArrowDataType::Float32 => {
             let arr = array.as_any().downcast_ref::<Float32Array>().ok_or("Not Float32Array")?;
-            let data: Vec<Option<f32>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<f32>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Float32(Float32Vector::from_nullable_vec(data))
         }
         ArrowDataType::Float64 => {
             let arr = array.as_any().downcast_ref::<Float64Array>().ok_or("Not Float64Array")?;
-            let data: Vec<Option<f64>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<f64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Float64(Float64Vector::from_nullable_vec(data))
         }
         ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 => {
             let arr = array.as_any().downcast_ref::<StringArray>().ok_or("Not StringArray")?;
-            let data: Vec<Option<String>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i).to_string())).collect();
+            let data: Vec<Option<String>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i).to_string())).collect();
             Vector::String(StringVector::from_nullable_vec(data))
         }
         ArrowDataType::Date32 => {
             let arr = array.as_any().downcast_ref::<Date32Array>().ok_or("Not Date32Array")?;
-            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Date(DateVector::from_nullable_vec(data))
         }
         ArrowDataType::Timestamp(TimeUnit::Second, None) => {
             let arr = array.as_any().downcast_ref::<TimestampSecondArray>().ok_or("Not TimestampSecondArray")?;
-            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| arr.is_null(i).then(|| arr.value(i))).collect();
+            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::DateTime(DateTimeVector::from_nullable_vec(data))
         }
         _ => {

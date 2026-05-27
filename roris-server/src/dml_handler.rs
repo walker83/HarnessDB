@@ -116,10 +116,10 @@ impl RorisQueryHandler {
         // Reconstruct SELECT SQL from the parsed QueryStmt AST
         let select_sql = query_stmt_to_sql(query);
 
-        // Execute via DataFusion in a spawned thread with its own tokio runtime
+        // Execute via DataFusion with concurrency-limited thread
         // Use a per-query context with the correct default schema
         let current_db = database.to_string();
-        let result = std::thread::spawn({
+        let result = self.run_datafusion({
             let catalog = self.catalog.clone();
             let storage = self.storage.clone();
             move || {
@@ -132,17 +132,16 @@ impl RorisQueryHandler {
                         .with_information_schema(false); // Use custom information_schema from ParquetCatalogProvider
                     let mut ctx = SessionContext::new_with_config(df_config);
                     ctx.register_catalog("roris", df_catalog);
-                    let df = ctx.sql(&select_sql).await?;
-                    let batches = df.collect().await?;
-                    Ok::<_, datafusion::error::DataFusionError>(batches)
+                    let df = ctx.sql(&select_sql).await.map_err(|e| e.to_string())?;
+                    let batches = df.collect().await.map_err(|e| e.to_string())?;
+                    Ok::<_, String>(batches)
                 })
             }
-        }).join();
+        });
 
         let select_batches = match result {
-            Ok(Ok(batches)) => batches,
-            Ok(Err(e)) => return Err(format!("INSERT ... SELECT query failed: {}", e)),
-            Err(_) => return Err("INSERT ... SELECT thread panicked".to_string()),
+            Ok(batches) => batches,
+            Err(e) => return Err(format!("INSERT ... SELECT query failed: {}", e)),
         };
 
         // Concatenate all batches into one
@@ -468,146 +467,136 @@ fn table_ref_to_sql(t: &ast::TableRef) -> String {
     }
 }
 
-/// Evaluate a WHERE expression on a RecordBatch using DataFusion.
-///
-/// Returns a boolean mask where `true` means the row matches the condition.
-/// Unlike the hand-written `evaluate_where_filter` (which only handles `column op literal`),
-/// this function supports BETWEEN, IN, LIKE, IS NULL, function calls, and arbitrary expressions.
-///
-/// The approach:
-/// 1. Convert the WHERE AST back to SQL using `expr_to_sql`
-/// 2. Wrap the RecordBatch in a MemTable with a row index column
-/// 3. Execute `SELECT __row_index FROM __tmp WHERE <condition>` via DataFusion
-/// 4. Build the boolean mask from the matched row indices
-pub(crate) fn evaluate_where_with_datafusion(
-    batch: &RecordBatch,
-    where_expr: &ast::Expr,
-    session_ctx: &SessionContext,
-) -> Result<Vec<bool>, String> {
-    let schema = batch.schema();
-    let num_rows = batch.num_rows();
+impl RorisQueryHandler {
+    /// Evaluate a WHERE expression on a RecordBatch using DataFusion.
+    ///
+    /// Returns a boolean mask where `true` means the row matches the condition.
+    /// Unlike the hand-written `evaluate_where_filter` (which only handles `column op literal`),
+    /// this function supports BETWEEN, IN, LIKE, IS NULL, function calls, and arbitrary expressions.
+    ///
+    /// The approach:
+    /// 1. Convert the WHERE AST back to SQL using `expr_to_sql`
+    /// 2. Wrap the RecordBatch in a MemTable with a row index column
+    /// 3. Execute `SELECT __row_index FROM __tmp WHERE <condition>` via DataFusion
+    /// 4. Build the boolean mask from the matched row indices
+    pub(crate) fn evaluate_where_with_datafusion(
+        &self,
+        batch: &RecordBatch,
+        where_expr: &ast::Expr,
+    ) -> Result<Vec<bool>, String> {
+        let schema = batch.schema();
+        let num_rows = batch.num_rows();
 
-    // Add a row index column so we can identify which rows match the WHERE condition
-    let row_indices: Int64Array = (0i64..num_rows as i64).collect();
-    let indexed_fields: Vec<Field> = schema.fields().iter().map(|f| f.as_ref().clone()).collect();
-    let mut all_fields = indexed_fields;
-    all_fields.push(Field::new("__row_index", ADT::Int64, false));
-    let indexed_schema = Arc::new(Schema::new(all_fields));
+        // Add a row index column so we can identify which rows match the WHERE condition
+        let row_indices: Int64Array = (0i64..num_rows as i64).collect();
+        let indexed_fields: Vec<Field> = schema.fields().iter().map(|f| f.as_ref().clone()).collect();
+        let mut all_fields = indexed_fields;
+        all_fields.push(Field::new("__row_index", ADT::Int64, false));
+        let indexed_schema = Arc::new(Schema::new(all_fields));
 
-    let mut indexed_columns: Vec<ArrayRef> = batch.columns().to_vec();
-    indexed_columns.push(Arc::new(row_indices));
-    let indexed_batch = RecordBatch::try_new(indexed_schema.clone(), indexed_columns)
-        .map_err(|e| format!("Failed to create indexed batch: {}", e))?;
+        let mut indexed_columns: Vec<ArrayRef> = batch.columns().to_vec();
+        indexed_columns.push(Arc::new(row_indices));
+        let indexed_batch = RecordBatch::try_new(indexed_schema.clone(), indexed_columns)
+            .map_err(|e| format!("Failed to create indexed batch: {}", e))?;
 
-    // Build the WHERE clause SQL from the AST
-    let where_sql = expr_to_sql(where_expr);
+        // Build the WHERE clause SQL from the AST
+        let where_sql = expr_to_sql(where_expr);
 
-    // Clone the session context and register the batch as a MemTable
-    let mem_table = MemTable::try_new(indexed_schema, vec![vec![indexed_batch]])
-        .map_err(|e| format!("Failed to create MemTable: {}", e))?;
+        // Clone the session context and register the batch as a MemTable
+        let mem_table = MemTable::try_new(indexed_schema, vec![vec![indexed_batch]])
+            .map_err(|e| format!("Failed to create MemTable: {}", e))?;
 
-    // Use a fresh SessionContext to avoid schema provider conflicts
-    let ctx = SessionContext::new();
-    ctx.register_table("__tmp", Arc::new(mem_table))
-        .map_err(|e| format!("Failed to register table: {}", e))?;
+        // Use a fresh SessionContext to avoid schema provider conflicts
+        let ctx = SessionContext::new();
+        ctx.register_table("__tmp", Arc::new(mem_table))
+            .map_err(|e| format!("Failed to register table: {}", e))?;
 
-    let sql = format!("SELECT __row_index FROM __tmp WHERE {}", where_sql);
+        let sql = format!("SELECT __row_index FROM __tmp WHERE {}", where_sql);
 
-    // Execute in a spawned thread with its own tokio runtime (same pattern as handle_insert_select)
-    let result = std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let df = ctx.sql(&sql).await?;
-            let batches = df.collect().await?;
-            Ok::<_, datafusion::error::DataFusionError>(batches)
-        })
-    }).join();
+        // Execute with concurrency-limited thread
+        let matching_batches = self.run_datafusion(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let df = ctx.sql(&sql).await.map_err(|e| e.to_string())?;
+                let batches = df.collect().await.map_err(|e| e.to_string())?;
+                Ok::<_, String>(batches)
+            })
+        })?;
 
-    let matching_batches = match result {
-        Ok(Ok(batches)) => batches,
-        Ok(Err(e)) => return Err(format!("WHERE evaluation via DataFusion failed: {}", e)),
-        Err(_) => return Err("WHERE evaluation thread panicked".to_string()),
-    };
-
-    // Build the boolean mask from the matched row indices
-    let mut matching = vec![false; num_rows];
-    for batch in &matching_batches {
-        let idx_col = batch.column(0)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| "Failed to downcast row index column".to_string())?;
-        for i in 0..idx_col.len() {
-            matching[idx_col.value(i) as usize] = true;
+        // Build the boolean mask from the matched row indices
+        let mut matching = vec![false; num_rows];
+        for batch in &matching_batches {
+            let idx_col = batch.column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| "Failed to downcast row index column".to_string())?;
+            for i in 0..idx_col.len() {
+                matching[idx_col.value(i) as usize] = true;
+            }
         }
+
+        Ok(matching)
     }
 
-    Ok(matching)
-}
+    /// Evaluate a SET expression for every row in the batch using DataFusion.
+    /// Returns an ArrayRef containing the computed value for each row.
+    ///
+    /// The approach:
+    /// 1. Convert the SET expression AST back to SQL using `expr_to_sql`
+    /// 2. Register the RecordBatch as a MemTable
+    /// 3. Execute `SELECT <expr> AS __new_val FROM __tmp` via DataFusion
+    /// 4. Collect and return the result column
+    pub(crate) fn evaluate_set_expr_with_datafusion(
+        &self,
+        batch: &RecordBatch,
+        set_expr: &ast::Expr,
+    ) -> Result<ArrayRef, String> {
+        let schema = batch.schema();
+        let num_rows = batch.num_rows();
 
-/// Evaluate a SET expression for every row in the batch using DataFusion.
-/// Returns an ArrayRef containing the computed value for each row.
-///
-/// The approach:
-/// 1. Convert the SET expression AST back to SQL using `expr_to_sql`
-/// 2. Register the RecordBatch as a MemTable
-/// 3. Execute `SELECT <expr> AS __new_val FROM __tmp` via DataFusion
-/// 4. Collect and return the result column
-pub(crate) fn evaluate_set_expr_with_datafusion(
-    batch: &RecordBatch,
-    set_expr: &ast::Expr,
-    session_ctx: &SessionContext,
-) -> Result<ArrayRef, String> {
-    let schema = batch.schema();
-    let num_rows = batch.num_rows();
+        // Build the SELECT expression SQL from the AST
+        let expr_sql = expr_to_sql(set_expr);
 
-    // Build the SELECT expression SQL from the AST
-    let expr_sql = expr_to_sql(set_expr);
+        // Clone the session context and register the batch as a MemTable
+        let mem_table = MemTable::try_new(schema.clone(), vec![vec![batch.clone()]])
+            .map_err(|e| format!("Failed to create MemTable: {}", e))?;
 
-    // Clone the session context and register the batch as a MemTable
-    let mem_table = MemTable::try_new(schema.clone(), vec![vec![batch.clone()]])
-        .map_err(|e| format!("Failed to create MemTable: {}", e))?;
+        // Use a fresh SessionContext to avoid schema provider conflicts
+        let ctx = SessionContext::new();
+        ctx.register_table("__tmp", Arc::new(mem_table))
+            .map_err(|e| format!("Failed to register table: {}", e))?;
 
-    // Use a fresh SessionContext to avoid schema provider conflicts
-    let ctx = SessionContext::new();
-    ctx.register_table("__tmp", Arc::new(mem_table))
-        .map_err(|e| format!("Failed to register table: {}", e))?;
+        let sql = format!("SELECT {} AS __new_val FROM __tmp", expr_sql);
 
-    let sql = format!("SELECT {} AS __new_val FROM __tmp", expr_sql);
+        // Execute with concurrency-limited thread
+        let result_batches = self.run_datafusion(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let df = ctx.sql(&sql).await.map_err(|e| e.to_string())?;
+                let batches = df.collect().await.map_err(|e| e.to_string())?;
+                Ok::<_, String>(batches)
+            })
+        })?;
 
-    // Execute in a spawned thread with its own tokio runtime
-    let result = std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let df = ctx.sql(&sql).await?;
-            let batches = df.collect().await?;
-            Ok::<_, datafusion::error::DataFusionError>(batches)
-        })
-    }).join();
+        if result_batches.is_empty() || num_rows == 0 {
+            return Err("SET expression evaluation returned no batches".to_string());
+        }
 
-    let result_batches = match result {
-        Ok(Ok(batches)) => batches,
-        Ok(Err(e)) => return Err(format!("SET expression evaluation via DataFusion failed: {}", e)),
-        Err(_) => return Err("SET expression evaluation thread panicked".to_string()),
-    };
+        // Concatenate all result batches into one column
+        let mut arrays: Vec<ArrayRef> = Vec::new();
+        for b in &result_batches {
+            arrays.push(b.column(0).clone());
+        }
 
-    if result_batches.is_empty() || num_rows == 0 {
-        return Err("SET expression evaluation returned no batches".to_string());
+        let combined = if arrays.len() == 1 {
+            arrays.into_iter().next().unwrap()
+        } else {
+            datafusion::arrow::compute::concat(&arrays.iter().map(|a| a.as_ref()).collect::<Vec<_>>())
+                .map_err(|e| format!("Failed to concat result arrays: {}", e))?
+        };
+
+        Ok(combined)
     }
-
-    // Concatenate all result batches into one column
-    let mut arrays: Vec<ArrayRef> = Vec::new();
-    for b in &result_batches {
-        arrays.push(b.column(0).clone());
-    }
-
-    let combined = if arrays.len() == 1 {
-        arrays.into_iter().next().unwrap()
-    } else {
-        datafusion::arrow::compute::concat(&arrays.iter().map(|a| a.as_ref()).collect::<Vec<_>>())
-            .map_err(|e| format!("Failed to concat result arrays: {}", e))?
-    };
-
-    Ok(combined)
 }
 
 impl RorisQueryHandler {
@@ -627,12 +616,11 @@ impl RorisQueryHandler {
 
         let set_clauses = stmt.set_clauses.clone();
         let selection = stmt.selection.clone();
-        let session_ctx = self.session_ctx.clone();
 
         let total_updated = self.storage.update(&database, &table_name, |batch| {
             let mut total_updated = 0usize;
             let update_mask: Vec<bool> = if let Some(ref sel) = selection {
-                evaluate_where_with_datafusion(&batch, sel, &session_ctx).map_err(|e| fe_storage::StorageError::Other(e))?
+                self.evaluate_where_with_datafusion(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
             } else {
                 vec![true; batch.num_rows()]
             };
@@ -649,7 +637,7 @@ impl RorisQueryHandler {
                         .map_err(|e| fe_storage::StorageError::Other(e))?;
                 } else {
                     // Expression path: evaluate per-row via DataFusion
-                    let new_values = evaluate_set_expr_with_datafusion(&updated_batch, &set_clause.value, &session_ctx)
+                    let new_values = self.evaluate_set_expr_with_datafusion(&updated_batch, &set_clause.value)
                         .map_err(|e| fe_storage::StorageError::Other(format!("Failed to evaluate SET expression: {}", e)))?;
 
                     // Replace column values where update_mask is true
@@ -707,11 +695,10 @@ impl RorisQueryHandler {
         let selection = stmt.selection.clone();
         let order_by = stmt.order_by.clone();
         let delete_limit = stmt.limit;
-        let session_ctx = self.session_ctx.clone();
 
         let total_deleted = self.storage.delete(&database, &table_name, |batch| {
             if let Some(ref sel) = selection {
-                let mut match_mask = evaluate_where_with_datafusion(&batch, sel, &session_ctx)
+                let mut match_mask = self.evaluate_where_with_datafusion(&batch, sel)
                     .map_err(|e| fe_storage::StorageError::Other(e))?;
 
                 // Apply ORDER BY + LIMIT to the match_mask

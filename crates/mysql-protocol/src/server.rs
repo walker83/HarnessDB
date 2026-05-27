@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info, info_span, Instrument};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::auth::AuthPluginType;
 use crate::connection::Connection;
@@ -16,6 +17,8 @@ pub struct ServerConfig {
     /// Authentication timeout in seconds. Default: 30 seconds.
     /// Connection pools often need more time for handshake.
     pub auth_timeout_secs: u64,
+    /// Maximum concurrent connections. Default: 100.
+    pub max_connections: u32,
 }
 
 impl Default for ServerConfig {
@@ -25,6 +28,7 @@ impl Default for ServerConfig {
             port: 9030,
             default_auth_plugin: AuthPluginType::NativePassword,
             auth_timeout_secs: 30,
+            max_connections: 100,
         }
     }
 }
@@ -89,46 +93,62 @@ pub trait QueryHandler: Send + Sync + 'static {
     fn on_disconnect(&self, _conn_id: u32) {}
 }
 
-/// The MySQL protocol server.
+/// The MySQL protocol server with connection-level concurrency control.
 pub struct MysqlServer {
     config: ServerConfig,
     handler: Arc<dyn QueryHandler>,
     connection_counter: AtomicU32,
+    connection_semaphore: Arc<Semaphore>,
 }
 
 impl MysqlServer {
     pub fn new(config: ServerConfig, handler: Arc<dyn QueryHandler>) -> Self {
+        let max_connections = config.max_connections.max(1) as usize;
         Self {
             config,
             handler,
             connection_counter: AtomicU32::new(1),
+            connection_semaphore: Arc::new(Semaphore::new(max_connections)),
         }
     }
 
     /// Start accepting connections. Runs until the server is shut down.
+    /// Uses a semaphore to limit concurrent client connections.
     pub async fn run(&self) -> std::io::Result<()> {
         let addr = format!("{}:{}", self.config.bind_addr, self.config.port);
         let listener = TcpListener::bind(&addr).await?;
-        info!("MySQL server listening on {}", addr);
+        info!("MySQL server listening on {} (max_connections={})", addr, self.config.max_connections);
 
         let auth_timeout_secs = self.config.auth_timeout_secs;
+        let semaphore = self.connection_semaphore.clone();
 
         loop {
             let (stream, peer_addr) = listener.accept().await?;
             let conn_id = self.connection_counter.fetch_add(1, Ordering::Relaxed);
             let handler = self.handler.clone();
 
-            info!("Accepted connection {} from {}", conn_id, peer_addr);
+            // Try to acquire a connection semaphore permit
+            match semaphore.clone().try_acquire_owned() {
+                Ok(permit) => {
+                    info!("Accepted connection {} from {}", conn_id, peer_addr);
 
-            tokio::spawn(
-                async move {
-                    if let Err(e) = handle_connection(stream, conn_id, handler, auth_timeout_secs).await {
-                        error!("Connection {} error: {}", conn_id, e);
-                    }
-                    info!("Connection {} closed", conn_id);
+                    tokio::spawn(
+                        async move {
+                            if let Err(e) = handle_connection(stream, conn_id, handler, auth_timeout_secs, permit).await {
+                                error!("Connection {} error: {}", conn_id, e);
+                            }
+                            info!("Connection {} closed", conn_id);
+                        }
+                        .instrument(info_span!("mysql_conn", cid = conn_id)),
+                    );
                 }
-                .instrument(info_span!("mysql_conn", cid = conn_id)),
-            );
+                Err(_) => {
+                    warn!("Connection {} from {} rejected: max connections ({}) reached",
+                        conn_id, peer_addr, self.config.max_connections);
+                    // Drop the stream — client will see a connection reset
+                    drop(stream);
+                }
+            }
         }
     }
 }
@@ -138,6 +158,7 @@ async fn handle_connection(
     conn_id: u32,
     handler: Arc<dyn QueryHandler>,
     auth_timeout_secs: u64,
+    _permit: OwnedSemaphorePermit,
 ) -> std::io::Result<()> {
     let peer_addr = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
     handler.on_connect(conn_id, "root", &peer_addr);

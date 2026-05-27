@@ -27,6 +27,8 @@ pub struct ConnectionTracker {
     total_queries: AtomicU64,
     slow_queries: AtomicU64,
     peak_connections: AtomicU32,
+    rejected_queries: AtomicU64,
+    rejected_connections: AtomicU64,
     startup_time: Instant,
 }
 
@@ -39,6 +41,8 @@ impl ConnectionTracker {
             total_queries: AtomicU64::new(0),
             slow_queries: AtomicU64::new(0),
             peak_connections: AtomicU32::new(0),
+            rejected_queries: AtomicU64::new(0),
+            rejected_connections: AtomicU64::new(0),
             startup_time: Instant::now(),
         }
     }
@@ -74,12 +78,20 @@ impl ConnectionTracker {
                 Err(p) => peak = p,
             }
         }
+
+        // Update Prometheus active connections gauge
+        crate::metrics::set_active_connections(current_count as f64);
     }
 
     /// Unregister a connection
     pub fn unregister(&self, id: u32) {
         let mut conns = self.connections.write();
         conns.remove(&id);
+        let current_count = conns.len() as u32;
+        drop(conns);
+
+        // Update Prometheus active connections gauge
+        crate::metrics::set_active_connections(current_count as f64);
     }
 
     /// Update the current SQL being executed by a connection
@@ -119,6 +131,16 @@ impl ConnectionTracker {
     /// Record a slow query
     pub fn record_slow_query(&self) {
         self.slow_queries.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Record a rejected query (concurrency limit exceeded)
+    pub fn record_rejected_query(&self) {
+        self.rejected_queries.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Record a rejected connection (max connections exceeded)
+    pub fn record_rejected_connection(&self) {
+        self.rejected_connections.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Mark a connection for kill (sets command to "Killed")
@@ -166,6 +188,14 @@ impl ConnectionTracker {
 
     pub fn slow_queries(&self) -> u64 {
         self.slow_queries.load(Ordering::SeqCst)
+    }
+
+    pub fn rejected_queries(&self) -> u64 {
+        self.rejected_queries.load(Ordering::SeqCst)
+    }
+
+    pub fn rejected_connections(&self) -> u64 {
+        self.rejected_connections.load(Ordering::SeqCst)
     }
 }
 

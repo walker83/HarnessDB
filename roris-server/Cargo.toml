@@ -20,6 +20,8 @@ toml = { workspace = true }
 sysinfo = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
+prometheus = { version = "0.13", features = ["process"] }
+lazy_static = "1.5"
 
 fe-sql-parser = { workspace = true }
 fe-catalog = { workspace = true }

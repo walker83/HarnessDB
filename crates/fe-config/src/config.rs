@@ -57,6 +57,8 @@ pub struct QueryConfig {
     pub sql_mode: String,
     #[serde(default = "default_time_zone")]
     pub time_zone: String,
+    #[serde(default = "default_max_concurrent_queries")]
+    pub max_concurrent_queries: u32,
 }
 
 /// Logging and audit configuration section
@@ -96,6 +98,7 @@ fn default_page_size() -> u32 { 4096 }
 fn default_query_timeout() -> u32 { 300 }
 fn default_max_allowed_packet() -> u64 { 4194304 }
 fn default_time_zone() -> String { "SYSTEM".to_string() }
+fn default_max_concurrent_queries() -> u32 { 50 }
 fn default_true() -> bool { true }
 fn default_slow_query_threshold() -> u64 { 1000 }
 fn default_audit_log_dir() -> String { "data/fe/audit".to_string() }
@@ -144,6 +147,7 @@ impl Default for QueryConfig {
             max_allowed_packet: default_max_allowed_packet(),
             sql_mode: String::new(),
             time_zone: default_time_zone(),
+            max_concurrent_queries: default_max_concurrent_queries(),
         }
     }
 }
@@ -232,6 +236,7 @@ page_size = 4096
 [query]
 query_timeout = 300
 max_allowed_packet = 4194304
+max_concurrent_queries = 50
 sql_mode = ""
 time_zone = "SYSTEM"
 

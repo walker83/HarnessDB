@@ -35,6 +35,8 @@ pub(crate) struct RorisQueryHandler {
     pub(crate) connection_tracker: Arc<ConnectionTracker>,
     // Backup
     pub(crate) backup_manager: Arc<BackupManager>,
+    // Concurrency control: limits concurrent DataFusion query threads
+    pub(crate) query_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Clone)]
@@ -112,6 +114,8 @@ impl RorisQueryHandler {
         register_misc_udfs(&mut session_ctx);
         fe_datafusion::register_date_udfs(&mut session_ctx);
 
+        let max_concurrent = config.query.max_concurrent_queries.max(1) as usize;
+
         Self {
             catalog,
             views: Arc::new(PlRwLock::new(Vec::new())),
@@ -123,6 +127,7 @@ impl RorisQueryHandler {
             audit_logger,
             connection_tracker,
             backup_manager,
+            query_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent)),
         }
     }
 
@@ -163,6 +168,39 @@ impl RorisQueryHandler {
     pub(crate) fn remove_session(&self, conn_id: u32) {
         let mut sessions = self.sessions.write();
         sessions.remove(&conn_id);
+    }
+
+    /// Execute a DataFusion async operation in a spawned thread with concurrency limit.
+    ///
+    /// Acquires a query semaphore permit before spawning. If the semaphore is
+    /// exhausted, returns an error with a retry message. The spawned thread
+    /// creates its own Tokio runtime (needed because DataFusion operations
+    /// are async and this trait method is sync).
+    pub(crate) fn run_datafusion<F, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce() -> Result<T, String> + Send + 'static,
+        T: Send + 'static,
+    {
+        // Try to acquire a query semaphore permit
+        let permit = self.query_semaphore.clone().try_acquire_owned()
+            .map_err(|_| {
+                self.connection_tracker.record_rejected_query();
+                "Too many concurrent queries. Please reduce query load and retry.".to_string()
+            })?;
+
+        // Spawn the blocking work in a new thread (DataFusion needs its own tokio runtime).
+        // The semaphore permit is held for the duration of the spawned thread,
+        // preventing thread explosion under high concurrency.
+        match std::thread::spawn(move || {
+            let _permit = permit; // Hold permit for this thread's lifetime
+            f()
+        }).join() {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::error!("DataFusion query thread panicked");
+                Err("Internal error: query thread panicked".to_string())
+            }
+        }
     }
 
     /// Transaction operations

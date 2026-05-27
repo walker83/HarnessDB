@@ -4,6 +4,7 @@ mod ddl_handler;
 mod dml_handler;
 mod utils;
 mod connection_tracker;
+mod metrics;
 mod web;
 
 use anyhow::Result;
@@ -74,7 +75,7 @@ impl QueryHandler for RorisQueryHandler {
                 // Other DML (like SELECT) goes to DataFusion
                 // Create a per-query context with the correct default schema for this connection
                 let current_db = self.get_session(conn_id);
-                let result = std::thread::spawn({
+                let result = self.run_datafusion({
                     let catalog = self.catalog.clone();
                     let storage = self.storage.clone();
                     let sql = trimmed.to_string();
@@ -91,31 +92,23 @@ impl QueryHandler for RorisQueryHandler {
                             register_doris_udfs(&mut ctx);
                             register_misc_udfs(&mut ctx);
                             fe_datafusion::register_date_udfs(&mut ctx);
-                            let df = ctx.sql(&sql).await?;
+                            let df = ctx.sql(&sql).await.map_err(|e| e.to_string())?;
                             let schema = df.schema().clone();
-                            let batches = df.collect().await?;
-                            Ok::<_, datafusion::error::DataFusionError>((batches, schema))
+                            let batches = df.collect().await.map_err(|e| e.to_string())?;
+                            Ok::<_, String>((batches, schema))
                         })
                     }
-                })
-                .join();
+                });
 
                 match result {
-                    Ok(Ok((batches, df_schema))) => {
+                    Ok((batches, df_schema)) => {
                         record_batches_to_query_result_with_df_schema(&batches, &df_schema)
                     }
-                    Ok(Err(df_err)) => {
-                        tracing::error!("DataFusion error: {}", df_err);
-                        QueryResult::with_rows(
-                            vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
-                            vec![vec![Some(format!("ERROR: {}", df_err))]],
-                        )
-                    }
                     Err(e) => {
-                        tracing::error!("Thread error: {:?}", e);
+                        tracing::error!("DataFusion error: {}", e);
                         QueryResult::with_rows(
                             vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
-                            vec![vec![Some(format!("ERROR: thread panicked"))]],
+                            vec![vec![Some(format!("ERROR: {}", e))]],
                         )
                     }
                 }
@@ -141,9 +134,18 @@ impl QueryHandler for RorisQueryHandler {
         let slow_threshold = self.sys_vars.get("slow_query_threshold", None)
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(1000);
-        if duration_ms >= slow_threshold {
+        let is_slow = duration_ms >= slow_threshold;
+        if is_slow {
             self.connection_tracker.record_slow_query();
         }
+
+        // Record Prometheus metrics
+        crate::metrics::record_query(
+            trimmed,
+            duration_ms as f64,
+            is_slow,
+            has_error,
+        );
 
         let audit_enabled = self.sys_vars.get("enable_audit_log", None)
             .map(|v| v == "true" || v == "1")
@@ -320,6 +322,7 @@ async fn main() -> Result<()> {
         port: config.server.mysql_port,
         default_auth_plugin: AuthPluginType::NativePassword,
         auth_timeout_secs: 30,
+        max_connections: config.server.max_connections,
     };
     let mysql_server = MysqlServer::new(mysql_config, query_handler.clone());
 
@@ -345,6 +348,18 @@ async fn main() -> Result<()> {
     });
 
     tracing::info!("RorisDB MySQL server started on port {}", config.server.mysql_port);
+
+    // Initialize Prometheus server info metric
+    crate::metrics::RORIS_SERVER_INFO.set(1.0);
+
+    // Periodic memory usage collection (every 15 seconds)
+    tokio::spawn(async {
+        let mut ticker = interval(Duration::from_secs(15));
+        loop {
+            ticker.tick().await;
+            crate::metrics::update_process_memory();
+        }
+    });
 
     // Start Web SQL Editor if enabled
     if config.server.http_port > 0 {
