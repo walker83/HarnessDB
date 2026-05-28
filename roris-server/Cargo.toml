@@ -32,6 +32,9 @@ fe-storage = { workspace = true }
 fe-config = { workspace = true }
 fe-backup = { workspace = true }
 mysql-protocol = { workspace = true }
+maxcompute-protocol = { workspace = true }
+pg-protocol = { workspace = true }
+sql-translators = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }
 datafusion = { workspace = true }

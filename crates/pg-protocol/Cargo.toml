@@ -1,0 +1,32 @@
+[package]
+name = "pg-protocol"
+version.workspace = true
+edition.workspace = true
+description = "PostgreSQL wire protocol v3 compatibility layer for RorisDB (Hologres compatible)"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+md-5 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+rand = "0.8"
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+byteorder = "1.5"
+hex = { workspace = true }
+anyhow = { workspace = true }
+
+# Internal crates
+mysql-protocol = { workspace = true }
+fe-sql-parser = { workspace = true }
+fe-catalog = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

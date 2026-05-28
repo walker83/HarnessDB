@@ -23,6 +23,8 @@ use fe_config::SystemVariableManager;
 use fe_backup::BackupManager;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
 use mysql_protocol::server::{ColumnDef, ColumnType};
+use maxcompute_protocol::{start_mc_server, McServerConfig, McServerState};
+use pg_protocol::{PgServer, PgServerConfig};
 use fe_sql_parser::{parse_sql, is_dml_sql};
 use fe_storage::{ParquetCatalogProvider, InformationSchemaProvider};
 use fe_datafusion::{register_doris_udfs, register_misc_udfs};
@@ -41,6 +43,12 @@ struct Args {
 
     #[arg(long, default_value = "9030")]
     mysql_port: u16,
+
+    #[arg(long, default_value = "9031")]
+    maxcompute_port: u16,
+
+    #[arg(long, default_value = "5432")]
+    hologres_port: u16,
 
     #[arg(long, default_value = "data/fe/storage")]
     data_dir: String,
@@ -333,6 +341,38 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Start MaxCompute protocol server (HTTP/REST on port 9031)
+    let mc_config = McServerConfig {
+        bind_addr: config.server.bind_addr.clone(),
+        port: args.maxcompute_port,
+        access_key_id: "roris".to_string(),
+        access_key_secret: "roris-secret".to_string(),
+        default_project: "default".to_string(),
+        region: None,
+    };
+    let mc_handler = query_handler.clone();
+    tokio::spawn(async move {
+        if let Err(e) = start_mc_server(mc_handler, mc_config).await {
+            tracing::error!("MaxCompute server failed: {}", e);
+        }
+    });
+
+    // Start Hologres protocol server (PostgreSQL wire protocol on port 5432)
+    let pg_config = PgServerConfig {
+        bind_addr: config.server.bind_addr.clone(),
+        port: args.hologres_port,
+        max_connections: config.server.max_connections,
+        username: "roris".to_string(),
+        password: "roris-secret".to_string(),
+        accept_any_password: false,
+    };
+    let pg_server = PgServer::new(pg_config, query_handler.clone());
+    tokio::spawn(async move {
+        if let Err(e) = pg_server.run().await {
+            tracing::error!("Hologres (PG) server failed: {}", e);
+        }
+    });
+
     let edit_log_clone = edit_log.clone();
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(10));
@@ -347,7 +387,8 @@ async fn main() -> Result<()> {
         }
     });
 
-    tracing::info!("RorisDB MySQL server started on port {}", config.server.mysql_port);
+    tracing::info!("RorisDB servers started: MySQL={}, MaxCompute={}, Hologres={}",
+        config.server.mysql_port, args.maxcompute_port, args.hologres_port);
 
     // Initialize Prometheus server info metric
     crate::metrics::RORIS_SERVER_INFO.set(1.0);

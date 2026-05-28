@@ -1,0 +1,17 @@
+[package]
+name = "sql-translators"
+version.workspace = true
+edition.workspace = true
+description = "SQL dialect translators for RorisDB database chameleon (MaxCompute, Hologres, etc.)"
+
+[dependencies]
+tracing = { workspace = true }
+thiserror = { workspace = true }
+regex = "1"
+
+# Internal crates
+fe-sql-parser = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }
+
+[dev-dependencies]

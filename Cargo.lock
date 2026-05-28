@@ -2683,6 +2683,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "maxcompute-protocol"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64",
+ "chrono",
+ "common",
+ "dashmap",
+ "fe-catalog",
+ "fe-sql-parser",
+ "hex",
+ "hmac",
+ "mysql-protocol",
+ "quick-xml",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "types",
+ "uuid",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3158,6 +3189,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "pg-protocol"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "common",
+ "fe-catalog",
+ "fe-sql-parser",
+ "hex",
+ "hmac",
+ "md-5",
+ "mysql-protocol",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "types",
+]
+
+[[package]]
 name = "phf"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3337,6 +3394,16 @@ checksum = "645dbe486e346d9b5de3ef16ede18c26e6c70ad97418f4874b8b1889d6e761ea"
 dependencies = [
  "ar_archive_writer",
  "cc",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
+ "serde",
 ]
 
 [[package]]
@@ -3580,12 +3647,15 @@ dependencies = [
  "fe-sql-parser",
  "fe-storage",
  "lazy_static",
+ "maxcompute-protocol",
  "mysql-protocol",
  "parking_lot",
  "parquet",
+ "pg-protocol",
  "prometheus",
  "serde",
  "serde_json",
+ "sql-translators",
  "sysinfo",
  "tokio",
  "toml",
@@ -3912,6 +3982,18 @@ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sql-translators"
+version = "0.3.0"
+dependencies = [
+ "common",
+ "fe-sql-parser",
+ "regex",
+ "thiserror 2.0.18",
+ "tracing",
+ "types",
 ]
 
 [[package]]

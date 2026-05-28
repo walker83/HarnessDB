@@ -1,0 +1,37 @@
+[package]
+name = "maxcompute-protocol"
+version.workspace = true
+edition.workspace = true
+description = "MaxCompute (ODPS) REST API protocol compatibility layer for RorisDB"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
+chrono = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+uuid = { workspace = true }
+dashmap = { workspace = true }
+quick-xml = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+regex = "1"
+anyhow = { workspace = true }
+
+# Internal crates
+mysql-protocol = { workspace = true }
+fe-sql-parser = { workspace = true }
+fe-catalog = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { workspace = true, features = ["test-util"] }
