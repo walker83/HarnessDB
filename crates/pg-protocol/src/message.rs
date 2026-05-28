@@ -1339,4 +1339,103 @@ mod tests {
         let result = FrontendMessage::decode(&mut buf);
         assert!(result.is_err(), "Bind with value_len exceeding buffer should return error, got: {:?}", result);
     }
+
+    #[test]
+    fn test_decode_empty_query_message() {
+        // Query message with empty SQL string
+        let mut buf = BytesMut::new();
+        buf.put_u8(b'Q');
+        let sql = "";
+        buf.put_i32((sql.len() + 1 + 4) as i32); // length = self(4) + string + null
+        put_cstring(&mut buf, sql);
+
+        let msg = FrontendMessage::decode(&mut buf).unwrap().unwrap();
+        match msg {
+            FrontendMessage::Query { sql: s } => {
+                assert_eq!(s, "");
+            }
+            _ => panic!("Expected Query message"),
+        }
+    }
+
+    #[test]
+    fn test_encode_error_response_with_multiple_fields() {
+        // ErrorResponse with Severity, Code, Message, Detail, Hint
+        let mut buf = BytesMut::new();
+        let msg = BackendMessage::ErrorResponse {
+            fields: vec![
+                (error_fields::SEVERITY, "ERROR".to_string()),
+                (error_fields::SQLSTATE, "42P01".to_string()),
+                (error_fields::MESSAGE, "table not found".to_string()),
+                (error_fields::DETAIL, "relation \"users\" does not exist".to_string()),
+                (error_fields::HINT, "check the table name".to_string()),
+            ],
+        };
+        msg.encode(&mut buf);
+
+        assert_eq!(buf[0], b'E');
+        assert!(buf.last() == Some(&0)); // terminated by \0
+
+        // Verify all field types are present in the encoded output
+        let body = &buf[5..buf.len() - 1]; // skip type(1) + length(4) + terminator(1)
+        let mut pos = 0;
+        let expected_fields = [b'S', b'C', b'M', b'D', b'H'];
+        for &expected_type in &expected_fields {
+            assert_eq!(
+                body[pos], expected_type,
+                "Expected field type '{}' at position {}",
+                expected_type as char, pos
+            );
+            // Skip field value to next null terminator
+            while body[pos] != 0 {
+                pos += 1;
+            }
+            pos += 1; // skip null
+        }
+    }
+
+    #[test]
+    fn test_startup_message_with_extra_params() {
+        // StartupMessage with application_name, client_encoding, etc.
+        let mut buf = BytesMut::new();
+        let version = PG_PROTOCOL_VERSION_3;
+        let params = [
+            ("user", "testuser"),
+            ("database", "testdb"),
+            ("application_name", "psql"),
+            ("client_encoding", "UTF8"),
+            ("extra_float_digits", "3"),
+        ];
+
+        // Calculate total length: self(4) + version(4) + each pair (key\0 + value\0) + final \0
+        let mut body_len = 4; // version
+        for (k, v) in &params {
+            body_len += k.len() + 1 + v.len() + 1;
+        }
+        body_len += 1; // final \0
+        buf.put_i32((body_len + 4) as i32); // total length includes itself
+        buf.put_i32(version);
+        for (k, v) in &params {
+            put_cstring(&mut buf, k);
+            put_cstring(&mut buf, v);
+        }
+        buf.put_u8(0); // final \0
+
+        let msg = FrontendMessage::decode_startup(&mut buf).unwrap().unwrap();
+        match msg {
+            FrontendMessage::StartupMessage {
+                version: v,
+                params: p,
+            } => {
+                assert_eq!(v, PG_PROTOCOL_VERSION_3);
+                assert_eq!(p.get("user").unwrap(), "testuser");
+                assert_eq!(p.get("database").unwrap(), "testdb");
+                assert_eq!(p.get("application_name").unwrap(), "psql");
+                assert_eq!(p.get("client_encoding").unwrap(), "UTF8");
+                assert_eq!(p.get("extra_float_digits").unwrap(), "3");
+                assert_eq!(p.len(), 5, "expected exactly 5 parameters");
+            }
+            _ => panic!("Expected StartupMessage"),
+        }
+    }
 }

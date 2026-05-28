@@ -205,6 +205,13 @@ impl PgConnection {
 
         if !validate_password(&self.auth_config, &self.session.username, &password, &salt) {
             warn!("PG conn {}: auth failed for user '{}'", self.conn_id, self.session.username);
+            create_error_response(
+                "FATAL",
+                sqlstate::INVALID_PASSWORD,
+                "password authentication failed for user",
+            )
+            .encode(&mut self.write_buf);
+            self.flush_write().await?;
             return Err(PgProtocolError::AuthenticationFailed(
                 "password authentication failed".to_string(),
             ));
@@ -301,7 +308,7 @@ impl PgConnection {
                 FrontendMessage::Describe { target, name } => {
                     self.handle_describe(target, &name).await;
                 }
-                FrontendMessage::Execute { portal, .. } => self.handle_execute(&portal).await,
+                FrontendMessage::Execute { portal, max_rows } => self.handle_execute(&portal, max_rows).await,
                 FrontendMessage::Close { target, name } => self.handle_close(target, &name).await,
                 FrontendMessage::Sync => self.send_ready_for_query().await?,
                 other => {
@@ -420,6 +427,24 @@ impl PgConnection {
             statement.to_string()
         };
 
+        // Validate that the referenced prepared statement exists
+        if !self.session.prepared_statements.contains_key(&stmt_name) {
+            error!(
+                "PG conn {}: bind to non-existent prepared statement '{}'",
+                self.conn_id, stmt_name
+            );
+            create_error_response(
+                "ERROR",
+                sqlstate::INVALID_SQL_STATEMENT_NAME,
+                &format!("prepared statement '{}' does not exist", statement),
+            )
+            .encode(&mut self.write_buf);
+            if let Err(e) = self.flush_write().await {
+                error!("PG conn {}: flush error in handle_bind: {}", self.conn_id, e);
+            }
+            return;
+        }
+
         self.session.portals.insert(portal_name, stmt_name);
         BackendMessage::BindComplete.encode(&mut self.write_buf);
         if let Err(e) = self.flush_write().await {
@@ -463,7 +488,11 @@ impl PgConnection {
         }
     }
 
-    async fn handle_execute(&mut self, portal: &str) {
+    async fn handle_execute(&mut self, portal: &str, max_rows: i32) {
+        // TODO: max_rows support - when max_rows > 0, limit the returned rows
+        // and send PortalSuspended instead of CommandComplete if more rows exist.
+        // For Phase 1, we return all rows regardless of max_rows.
+        let _ = max_rows;
         let portal_name = if portal.is_empty() {
             format!("_pg3_portal_{}", self.conn_id)
         } else {
@@ -572,16 +601,23 @@ impl PgConnection {
     }
 
     async fn handle_close(&mut self, target: DescribeTarget, name: &str) {
-        let stmt_name = if name.is_empty() {
-            format!("_pg3_{}", self.conn_id)
-        } else {
-            name.to_string()
-        };
         match target {
             DescribeTarget::Statement => {
+                let stmt_name = if name.is_empty() {
+                    format!("_pg3_{}", self.conn_id)
+                } else {
+                    name.to_string()
+                };
                 self.session.prepared_statements.remove(&stmt_name);
             }
-            DescribeTarget::Portal => {}
+            DescribeTarget::Portal => {
+                let portal_name = if name.is_empty() {
+                    format!("_pg3_portal_{}", self.conn_id)
+                } else {
+                    name.to_string()
+                };
+                self.session.portals.remove(&portal_name);
+            }
         }
         BackendMessage::CloseComplete.encode(&mut self.write_buf);
         if let Err(e) = self.flush_write().await {

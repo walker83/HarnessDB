@@ -1498,4 +1498,285 @@ mod tests {
             "INSERT INTO t VALUES (1, 'this should STORED AS is fine')"
         );
     }
+
+    // ── Edge case tests ──
+
+    #[test]
+    fn test_complex_partitioned_by_with_many_columns() {
+        let result = translator().translate(
+            "CREATE TABLE t (col1 STRING) PARTITIONED BY (ds STRING, hr STRING, region STRING)",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE t (col1 STRING, ds STRING, hr STRING, region STRING)"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("PARTITIONED BY")),
+            "Expected warning about PARTITIONED BY, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_create_table_with_all_mc_types() {
+        assert_translated(
+            "CREATE TABLE t (a BIGINT, b INT, c SMALLINT, d TINYINT, e STRING, f DOUBLE, g FLOAT, h DECIMAL(10,2), i BOOLEAN, j DATETIME, k DATE, l TIMESTAMP, m BINARY)",
+            "CREATE TABLE t (a BIGINT, b INT, c SMALLINT, d TINYINT, e STRING, f DOUBLE, g FLOAT, h DECIMAL(10,2), i BOOLEAN, j DATETIME, k DATE, l TIMESTAMP, m BINARY)",
+        );
+    }
+
+    #[test]
+    fn test_insert_overwrite_preserves_complex_select() {
+        let result = translator().translate(
+            "INSERT OVERWRITE TABLE t PARTITION(ds='2024') SELECT a, b, c FROM (SELECT x.id, x.name, y.val FROM x JOIN y ON x.id = y.id WHERE x.active = 1) sub",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "INSERT INTO TABLE t SELECT a, b, c FROM (SELECT x.id, x.name, y.val FROM x JOIN y ON x.id = y.id WHERE x.active = 1) sub"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+            "Expected warning about INSERT OVERWRITE, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_set_with_and_without_equals() {
+        // SET with equals sign and value -> no-op
+        let result1 = translator().translate("SET odps.sql.allow.fullscan=true");
+        assert!(result1.success);
+        assert!(
+            result1.sql.is_empty(),
+            "SET with = value should be no-op, got: '{}'",
+            result1.sql
+        );
+
+        // SET without equals sign and value -> not treated as no-op, passes through as SET statement
+        let result2 = translator().translate("SET odps.sql.allow.fullscan");
+        assert!(result2.success);
+        assert_eq!(
+            result2.sql,
+            "SET odps.sql.allow.fullscan",
+            "SET without value should pass through as SET statement"
+        );
+    }
+
+    // ── Data Lake Scenario Tests ─────────────────────────────────────────
+    //
+    // These tests verify end-to-end SQL translation for realistic MaxCompute
+    // data lake workloads. They test the full translation pipeline (not just
+    // individual sub-operations) on production-like SQL.
+
+    mod data_lake_tests {
+        use super::*;
+
+        #[test]
+        fn test_data_lake_create_partitioned_table() {
+            let result = translator().translate(
+                "CREATE TABLE IF NOT EXISTS user_events (\
+                     user_id BIGINT COMMENT '用户ID', \
+                     event_type STRING COMMENT '事件类型', \
+                     event_time DATETIME COMMENT '事件时间', \
+                     properties STRING COMMENT '属性JSON' \
+                 ) PARTITIONED BY (ds STRING COMMENT '日期分区') \
+                 LIFECYCLE 365 \
+                 COMMENT '用户事件表'",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "CREATE TABLE IF NOT EXISTS user_events (\
+                 user_id BIGINT COMMENT '用户ID', \
+                 event_type STRING COMMENT '事件类型', \
+                 event_time DATETIME COMMENT '事件时间', \
+                 properties STRING COMMENT '属性JSON', \
+                 ds STRING COMMENT '日期分区') COMMENT '用户事件表'"
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("PARTITIONED BY")),
+                "Expected warning about PARTITIONED BY, got: {:?}",
+                result.warnings
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("LIFECYCLE")),
+                "Expected warning about LIFECYCLE, got: {:?}",
+                result.warnings
+            );
+        }
+
+        #[test]
+        fn test_data_lake_insert_overwrite_partition() {
+            let result = translator().translate(
+                "INSERT OVERWRITE TABLE user_events PARTITION(ds='2024-01-01') \
+                 SELECT user_id, event_type, event_time, properties \
+                 FROM staging_events \
+                 WHERE ds = '2024-01-01'",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "INSERT INTO TABLE user_events \
+                 SELECT user_id, event_type, event_time, properties \
+                 FROM staging_events \
+                 WHERE ds = '2024-01-01'"
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+                "Expected warning about INSERT OVERWRITE, got: {:?}",
+                result.warnings
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("PARTITION")),
+                "Expected warning about PARTITION, got: {:?}",
+                result.warnings
+            );
+        }
+
+        #[test]
+        fn test_data_lake_complex_query() {
+            let result = translator().translate(
+                "SELECT /*+ MAPJOIN(b) */ \
+                     a.user_id, \
+                     a.event_type, \
+                     b.user_name \
+                 FROM user_events a \
+                 JOIN user_dim b ON a.user_id = b.user_id \
+                 WHERE a.ds = '2024-01-01' \
+                 DISTRIBUTE BY a.user_id \
+                 SORT BY a.event_time DESC",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert!(!result.sql.contains("MAPJOIN"), "MAPJOIN hint should be stripped");
+            assert!(result.sql.contains("ORDER BY"), "Should contain ORDER BY");
+            assert!(result.sql.contains("a.event_time DESC"), "Should preserve sort column and direction");
+            assert!(
+                result.warnings.iter().any(|w| w.contains("MAPJOIN")),
+                "Expected warning about MAPJOIN hint, got: {:?}",
+                result.warnings
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("DISTRIBUTE BY")),
+                "Expected warning about DISTRIBUTE BY, got: {:?}",
+                result.warnings
+            );
+        }
+
+        #[test]
+        fn test_data_lake_set_statements() {
+            // All SET / SETPROJECT statements should be no-ops
+            assert_noop("SET odps.sql.allow.fullscan=true;");
+            assert_noop("SET odps.sql.type.system.odps2=true;");
+            assert_noop("SETPROJECT odps.instance.priority=1;");
+        }
+
+        #[test]
+        fn test_data_lake_etl_workflow() {
+            // Simulate a complete ETL workflow translating each statement individually.
+            //
+            // Step 1: SET statement (no-op)
+            {
+                let result = translator().translate("SET odps.sql.allow.fullscan=true;");
+                assert!(result.success, "SET should be no-op");
+                assert!(
+                    result.sql.is_empty(),
+                    "SET should produce empty SQL"
+                );
+            }
+
+            // Step 2: CREATE TABLE with PARTITIONED BY and LIFECYCLE
+            {
+                let result = translator().translate(
+                    "CREATE TABLE IF NOT EXISTS etl_results (\
+                         id BIGINT COMMENT '主键', \
+                         name STRING COMMENT '名称', \
+                         created_at DATETIME \
+                     ) PARTITIONED BY (ds STRING) \
+                     LIFECYCLE 90",
+                );
+                assert!(result.success, "CREATE TABLE failed: {:?}", result.error);
+                assert_eq!(
+                    result.sql,
+                    "CREATE TABLE IF NOT EXISTS etl_results (\
+                     id BIGINT COMMENT '主键', \
+                     name STRING COMMENT '名称', \
+                     created_at DATETIME, \
+                     ds STRING)"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("PARTITIONED BY")),
+                    "Expected PARTITIONED BY warning"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("LIFECYCLE")),
+                    "Expected LIFECYCLE warning"
+                );
+            }
+
+            // Step 3: INSERT OVERWRITE ... PARTITION -> INSERT INTO
+            {
+                let result = translator().translate(
+                    "INSERT OVERWRITE TABLE etl_results PARTITION(ds='2024-06-01') \
+                     SELECT id, name, created_at FROM raw_source WHERE ds = '2024-06-01'",
+                );
+                assert!(result.success, "INSERT failed: {:?}", result.error);
+                assert_eq!(
+                    result.sql,
+                    "INSERT INTO TABLE etl_results \
+                     SELECT id, name, created_at FROM raw_source WHERE ds = '2024-06-01'"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+                    "Expected INSERT OVERWRITE warning"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("PARTITION")),
+                    "Expected PARTITION warning"
+                );
+            }
+
+            // Step 4: SELECT with DISTRIBUTE BY + SORT BY -> ORDER BY
+            {
+                let result = translator().translate(
+                    "SELECT * FROM etl_results DISTRIBUTE BY id SORT BY created_at DESC",
+                );
+                assert!(result.success, "SELECT failed: {:?}", result.error);
+                assert_eq!(
+                    result.sql,
+                    "SELECT * FROM etl_results ORDER BY created_at DESC"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("DISTRIBUTE BY")),
+                    "Expected DISTRIBUTE BY warning"
+                );
+            }
+        }
+
+        #[test]
+        fn test_data_lake_stored_as_formats() {
+            let result = translator().translate(
+                "CREATE TABLE ext_logs (col1 STRING, col2 BIGINT) \
+                 STORED AS INPUTFORMAT 'com.hadoop.mapred.TextInputFormat' \
+                 OUTPUTFORMAT 'com.hadoop.mapred.TextOutputFormat' \
+                 LIFECYCLE 30",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "CREATE TABLE ext_logs (col1 STRING, col2 BIGINT)"
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("STORED AS")),
+                "Expected warning about STORED AS, got: {:?}",
+                result.warnings
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("LIFECYCLE")),
+                "Expected warning about LIFECYCLE, got: {:?}",
+                result.warnings
+            );
+        }
+    }
 }

@@ -1386,4 +1386,303 @@ mod tests {
         assert!(result.success);
         assert_eq!(result.sql, "INSERT INTO t (id, val) VALUES (1, 'a')");
     }
+
+    // ── Edge case tests ──
+
+    #[test]
+    fn test_very_long_table_name() {
+        // Table name with 63 chars (PG max identifier length)
+        let long_name = "a".repeat(63);
+        let sql = format!("CREATE TABLE {} (col1 TEXT)", long_name);
+        assert_translated(
+            &sql,
+            &format!("CREATE TABLE {} (col1 STRING)", long_name),
+        );
+    }
+
+    #[test]
+    fn test_nested_parens_in_with_clause() {
+        let result = translator().translate(
+            "CREATE TABLE t (col1 TEXT) WITH (orientation = 'column', clustering_key = 'a', dictionary_encoding_columns = 'a,b,c')",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("WITH")),
+            "Expected warning about WITH clause, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_multiple_on_conflict_patterns() {
+        // INSERT ... ON CONFLICT DO NOTHING
+        let result1 = translator().translate(
+            "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING",
+        );
+        assert!(result1.success);
+        assert_eq!(result1.sql, "INSERT INTO t VALUES (1, 'a')");
+
+        // INSERT ... ON CONFLICT (id) DO UPDATE SET x = EXCLUDED.x
+        let result2 = translator().translate(
+            "INSERT INTO t (id, x) VALUES (1, 'b') ON CONFLICT (id) DO UPDATE SET x = EXCLUDED.x",
+        );
+        assert!(result2.success);
+        assert_eq!(result2.sql, "INSERT INTO t (id, x) VALUES (1, 'b')");
+    }
+
+    #[test]
+    fn test_create_table_with_all_hologres_types() {
+        assert_translated(
+            "CREATE TABLE t (a BIGINT, b INTEGER, c SMALLINT, d TEXT, e VARCHAR(10), f CHAR(5), g REAL, h DOUBLE PRECISION, i BOOLEAN, j NUMERIC(10,2), k TIMESTAMP, l TIMESTAMPTZ, m DATE, n BYTEA)",
+            "CREATE TABLE t (a BIGINT, b INTEGER, c SMALLINT, d STRING, e VARCHAR(10), f CHAR(5), g REAL, h DOUBLE PRECISION, i BOOLEAN, j NUMERIC(10,2), k TIMESTAMP, l TIMESTAMP, m DATE, n BLOB)",
+        );
+    }
+
+    // ── Data Lake Scenario Tests ─────────────────────────────────────────
+    //
+    // These tests verify end-to-end SQL translation for realistic Hologres
+    // data lake workloads. They test the full translation pipeline on
+    // production-like SQL including multi-step workflows.
+
+    mod data_lake_tests {
+        use super::*;
+
+        #[test]
+        fn test_data_lake_column_table() {
+            let result = translator().translate(
+                "CREATE TABLE metrics (\
+                     metric_id BIGINT NOT NULL, \
+                     metric_name TEXT NOT NULL, \
+                     metric_value DOUBLE PRECISION, \
+                     recorded_at TIMESTAMPTZ NOT NULL, \
+                     tags TEXT, \
+                     PRIMARY KEY (metric_id)\
+                 ) WITH (\
+                     orientation = 'column', \
+                     distribution_key = 'metric_id', \
+                     clustering_key = 'recorded_at', \
+                     time_to_live_in_seconds = '2592000'\
+                 )",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "CREATE TABLE metrics (\
+                 metric_id BIGINT NOT NULL, \
+                 metric_name STRING NOT NULL, \
+                 metric_value DOUBLE PRECISION, \
+                 recorded_at TIMESTAMP NOT NULL, \
+                 tags STRING, \
+                 PRIMARY KEY (metric_id))"
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("WITH")),
+                "Expected warning about WITH clause, got: {:?}",
+                result.warnings
+            );
+        }
+
+        #[test]
+        fn test_data_lake_partitioned_table() {
+            let result = translator().translate(
+                "CREATE TABLE events (\
+                     event_id BIGINT NOT NULL, \
+                     event_type TEXT, \
+                     event_data TEXT, \
+                     created_at TIMESTAMP NOT NULL, \
+                     ds TEXT NOT NULL, \
+                     PRIMARY KEY (event_id, ds)\
+                 ) PARTITION BY LIST(ds)",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "CREATE TABLE events (\
+                 event_id BIGINT NOT NULL, \
+                 event_type STRING, \
+                 event_data STRING, \
+                 created_at TIMESTAMP NOT NULL, \
+                 ds STRING NOT NULL, \
+                 PRIMARY KEY (event_id, ds))"
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("PARTITION BY LIST")),
+                "Expected warning about PARTITION BY LIST, got: {:?}",
+                result.warnings
+            );
+        }
+
+        #[test]
+        fn test_data_lake_set_table_property() {
+            assert_noop("CALL set_table_property('metrics', 'orientation', 'column');");
+            assert_noop("CALL set_table_property('metrics', 'distribution_key', 'metric_id');");
+        }
+
+        #[test]
+        fn test_data_lake_upsert() {
+            let result = translator().translate(
+                "INSERT INTO metrics (metric_id, metric_name, metric_value) \
+                 VALUES (1, 'cpu_usage', 85.5), (2, 'mem_usage', 72.3) \
+                 ON CONFLICT (metric_id) DO UPDATE SET \
+                     metric_value = EXCLUDED.metric_value",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "INSERT INTO metrics (metric_id, metric_name, metric_value) \
+                 VALUES (1, 'cpu_usage', 85.5), (2, 'mem_usage', 72.3)"
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("ON CONFLICT")),
+                "Expected warning about ON CONFLICT, got: {:?}",
+                result.warnings
+            );
+        }
+
+        #[test]
+        fn test_data_lake_complex_query() {
+            // Ordinary SELECT with no Hologres-specific syntax should pass through unchanged.
+            // Type references like '2024-01-01'::timestamp are PostgreSQL cast syntax,
+            // which is not in DDL context so type mappings don't apply.
+            let result = translator().translate(
+                "SELECT \
+                     metric_name, \
+                     AVG(metric_value) as avg_value, \
+                     COUNT(*) as cnt \
+                 FROM metrics \
+                 WHERE recorded_at >= '2024-01-01'::timestamp \
+                 GROUP BY metric_name \
+                 HAVING COUNT(*) > 10 \
+                 ORDER BY avg_value DESC",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "SELECT \
+                 metric_name, \
+                 AVG(metric_value) as avg_value, \
+                 COUNT(*) as cnt \
+                 FROM metrics \
+                 WHERE recorded_at >= '2024-01-01'::timestamp \
+                 GROUP BY metric_name \
+                 HAVING COUNT(*) > 10 \
+                 ORDER BY avg_value DESC"
+            );
+        }
+
+        #[test]
+        fn test_data_lake_explain() {
+            let result = translator().translate(
+                "EXPLAIN ANALYZE SELECT * FROM metrics WHERE metric_id = 1",
+            );
+            assert!(result.success, "Failed: {:?}", result.error);
+            assert_eq!(
+                result.sql,
+                "EXPLAIN SELECT * FROM metrics WHERE metric_id = 1"
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("EXPLAIN ANALYZE")),
+                "Expected warning about EXPLAIN ANALYZE, got: {:?}",
+                result.warnings
+            );
+        }
+
+        #[test]
+        fn test_data_lake_hologres_full_workflow() {
+            // Step 1: CREATE TABLE with WITH clause -> clean DDL with types mapped
+            {
+                let result = translator().translate(
+                    "CREATE TABLE user_profiles (\
+                         user_id BIGINT NOT NULL, \
+                         user_name TEXT NOT NULL, \
+                         email TEXT, \
+                         created_at TIMESTAMPTZ DEFAULT NOW(), \
+                         PRIMARY KEY (user_id)\
+                     ) WITH (orientation = 'column', clustering_key = 'created_at')",
+                );
+                assert!(result.success, "CREATE TABLE failed: {:?}", result.error);
+                assert_eq!(
+                    result.sql,
+                    "CREATE TABLE user_profiles (\
+                     user_id BIGINT NOT NULL, \
+                     user_name STRING NOT NULL, \
+                     email STRING, \
+                     created_at TIMESTAMP DEFAULT NOW(), \
+                     PRIMARY KEY (user_id))"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("WITH")),
+                    "Expected WITH clause warning"
+                );
+            }
+
+            // Step 2: CALL set_table_property -> no-op
+            {
+                let result = translator().translate(
+                    "CALL set_table_property('user_profiles', 'time_to_live_in_days', '180')",
+                );
+                assert!(result.success, "set_table_property should be no-op");
+                assert!(
+                    result.sql.is_empty(),
+                    "set_table_property should produce empty SQL"
+                );
+            }
+
+            // Step 3: INSERT INTO ... ON CONFLICT DO UPDATE -> INSERT INTO
+            {
+                let result = translator().translate(
+                    "INSERT INTO user_profiles (user_id, user_name, email) \
+                     VALUES (42, 'alice', 'alice@example.com') \
+                     ON CONFLICT (user_id) DO UPDATE SET \
+                         user_name = EXCLUDED.user_name, \
+                         email = EXCLUDED.email",
+                );
+                assert!(result.success, "INSERT failed: {:?}", result.error);
+                assert_eq!(
+                    result.sql,
+                    "INSERT INTO user_profiles (user_id, user_name, email) \
+                     VALUES (42, 'alice', 'alice@example.com')"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("ON CONFLICT")),
+                    "Expected ON CONFLICT warning"
+                );
+            }
+
+            // Step 4: SELECT with type references -> correct types preserved
+            {
+                let result = translator().translate(
+                    "SELECT u.user_id, u.user_name, p.metric_value \
+                     FROM user_profiles u \
+                     JOIN metrics p ON u.user_id = p.metric_id \
+                     WHERE p.recorded_at >= '2024-06-01'::timestamp",
+                );
+                assert!(result.success, "SELECT failed: {:?}", result.error);
+                assert!(result.sql.contains("user_profiles"));
+                assert!(result.sql.contains("metrics"));
+                // The ::timestamp cast should be preserved (not in DDL context)
+                assert!(
+                    result.sql.contains("'2024-06-01'::timestamp"),
+                    "PostgreSQL cast syntax should be preserved in DML"
+                );
+            }
+
+            // Step 5: EXPLAIN ANALYZE -> EXPLAIN
+            {
+                let result = translator().translate(
+                    "EXPLAIN ANALYZE SELECT * FROM user_profiles WHERE user_id = 42",
+                );
+                assert!(result.success, "EXPLAIN failed: {:?}", result.error);
+                assert_eq!(
+                    result.sql,
+                    "EXPLAIN SELECT * FROM user_profiles WHERE user_id = 42"
+                );
+                assert!(
+                    result.warnings.iter().any(|w| w.contains("EXPLAIN ANALYZE")),
+                    "Expected EXPLAIN ANALYZE warning"
+                );
+            }
+        }
+    }
 }
