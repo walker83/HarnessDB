@@ -132,7 +132,7 @@ MaxCompute 协议支持两种签名方式：
 | `TABLESAMPLE(N PERCENT)` | 直接执行 | ✅ 透传 |
 | `QUALIFY ...` | 直接执行 | ✅ 透传 |
 | `LATERAL VIEW explode(col) t AS alias` | 转为 CROSS JOIN UNNEST | ✅ 自动转换 |
-| `SELECT TRANSFORM(...) USING 'script'` | 不支持 | ❌ 高级特性 |
+| `SELECT TRANSFORM(...) USING 'script'` | No-op | ✅ 接受但不执行 |
 
 #### DDL 扩展
 
@@ -222,27 +222,21 @@ MaxCompute 协议支持两种签名方式：
 | `COPY t FROM STDIN / TO STDOUT` | 透传 | ✅ |
 | `DROP TABLE [IF EXISTS]` | 直接执行 | ✅ |
 
-### 不支持的 PG 特性
+### 已兼容的 PG 特性（no-op 模式）
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| `CREATE TRIGGER` | ❌ | 后端不支持触发器 |
-| `CREATE DOMAIN` | ❌ | 后端不支持域类型 |
-| `CREATE EXTENSION` | ⚠️ | 静默忽略 |
-| `LISTEN/NOTIFY` | ❌ | 后端不支持异步通知 |
-| `SELECT TRANSFORM(...) USING 'script'` (MC) | ❌ | 高级 UDF 特性 |
-
-### 已兼容的 PG 特性（之前标记为不支持）
-
-| 功能 | 状态 | 说明 |
-|------|------|------|
+| `CREATE TRIGGER` | ✅ | No-op，接受但不执行 |
+| `CREATE DOMAIN` | ✅ | No-op，接受但不执行 |
+| `LISTEN/NOTIFY` | ✅ | No-op，接受但不执行 |
+| `CREATE EXTENSION` | ✅ | No-op，接受但不执行 |
 | `SELECT ... FOR UPDATE` | ✅ | 剥离 FOR UPDATE 子句（no-op） |
 | `WITH RECURSIVE ...` | ✅ | DataFusion 支持递归 CTE |
 | `CREATE FUNCTION ...` | ✅ | 透传解析器 |
 | `DISTINCT ON (col)` | ✅ | 透传解析器 |
-| `GRANT / REVOKE` | ✅ | 静默忽略（no-op） |
-| `CREATE POLICY / ALTER POLICY` | ✅ | 静默忽略（no-op） |
-| `CALL refresh_materialized_view(...)` | ✅ | 静默忽略（no-op） |
+| `GRANT / REVOKE` | ✅ | No-op，接受但不执行 |
+| `CREATE POLICY / ALTER POLICY` | ✅ | No-op，接受但不执行 |
+| `CALL refresh_materialized_view(...)` | ✅ | No-op，接受但不执行 |
 
 ### pg_catalog 兼容
 

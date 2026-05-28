@@ -617,16 +617,16 @@ fn translate_lateral_view(sql: &str) -> (String, Vec<String>) {
     (result, warnings)
 }
 
-/// Check for unsupported features and return an error if found.
+/// Check for unsupported features and convert them to no-ops.
+/// For a simulation database, we accept syntax but don't execute behavior.
 fn check_unsupported(sql: &str) -> Option<TranslateResult> {
     let trimmed = sql.trim();
 
-    // SELECT TRANSFORM ... USING 'script'
+    // SELECT TRANSFORM ... USING 'script' -> no-op with warning
     let transform_re = Regex::new(r"(?i)\bTRANSFORM\s*\(.+?\)\s+USING\b").unwrap();
     if transform_re.is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "SELECT TRANSFORM is not supported by RorisDB",
-        ));
+        return Some(TranslateResult::ok(String::new())
+            .with_warning("SELECT TRANSFORM USING is accepted but not executed (no-op in simulation mode)"));
     }
 
     // Complex types (ARRAY, MAP, STRUCT) are now passed through to DataFusion
@@ -882,7 +882,7 @@ impl DialectTranslator for MaxComputeTranslator {
 
     fn unsupported_features(&self) -> &[&str] {
         &[
-            "SELECT TRANSFORM ... USING 'script'",
+            "SELECT TRANSFORM ... USING 'script' (no-op, accepted but not executed)",
             "LATERAL VIEW EXPLODE (translated to CROSS JOIN UNNEST)",
             "Complex types (ARRAY, MAP, STRUCT) - passed through to DataFusion",
             "MERGE INTO - passed through to DataFusion",
@@ -1966,6 +1966,21 @@ mod tests {
         assert_translated(
             "SELECT * FROM (SELECT id, name FROM users WHERE active = 1) sub",
             "SELECT * FROM (SELECT id, name FROM users WHERE active = 1) sub",
+        );
+    }
+
+    #[test]
+    fn test_select_transform_using_noop() {
+        // SELECT TRANSFORM USING is now a no-op (accepted but not executed)
+        let result = translator().translate(
+            "SELECT TRANSFORM(col1, col2) USING 'python script.py' FROM t",
+        );
+        assert!(result.success, "SELECT TRANSFORM USING should succeed as no-op");
+        assert_eq!(result.sql, "", "SELECT TRANSFORM USING should return empty SQL");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("SELECT TRANSFORM USING")),
+            "Expected warning about SELECT TRANSFORM USING, got: {:?}",
+            result.warnings
         );
     }
 

@@ -97,7 +97,7 @@ fn is_create_policy(sql: &str) -> bool {
     re.is_match(sql)
 }
 
-/// Check if the SQL is a LISTEN or NOTIFY statement (error).
+/// Check if the SQL is a LISTEN or NOTIFY statement (no-op).
 fn is_listen_notify(sql: &str) -> bool {
     let listen_re = Regex::new(r"(?i)^\s*LISTEN\b").unwrap();
     let notify_re = Regex::new(r"(?i)^\s*NOTIFY\b").unwrap();
@@ -106,25 +106,27 @@ fn is_listen_notify(sql: &str) -> bool {
 
 // ── Unsupported Feature Detection ──────────────────────────────────────
 
-/// Check for unsupported features and return an error result if found.
+/// Check for unsupported features and convert them to no-ops.
+/// For a simulation database, we accept syntax but don't execute behavior.
 fn check_unsupported(sql: &str) -> Option<TranslateResult> {
     let trimmed = sql.trim();
 
-    // CREATE TRIGGER
+    // CREATE TRIGGER -> no-op with warning
     if Regex::new(r"(?i)^\s*CREATE\s+TRIGGER\b").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::error("Hologres does not support triggers"));
+        return Some(TranslateResult::ok(String::new())
+            .with_warning("CREATE TRIGGER is accepted but not executed (no-op in simulation mode)"));
     }
 
-    // CREATE DOMAIN
+    // CREATE DOMAIN -> no-op with warning
     if Regex::new(r"(?i)^\s*CREATE\s+DOMAIN\b").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::error("CREATE DOMAIN is not supported by RorisDB"));
+        return Some(TranslateResult::ok(String::new())
+            .with_warning("CREATE DOMAIN is accepted but not executed (no-op in simulation mode)"));
     }
 
-    // LISTEN / NOTIFY
+    // LISTEN / NOTIFY -> no-op with warning
     if is_listen_notify(trimmed) {
-        return Some(TranslateResult::error(
-            "LISTEN/NOTIFY is not supported by RorisDB",
-        ));
+        return Some(TranslateResult::ok(String::new())
+            .with_warning("LISTEN/NOTIFY is accepted but not executed (no-op in simulation mode)"));
     }
 
     // The following features are now passed through instead of blocked:
@@ -939,9 +941,9 @@ impl DialectTranslator for HologresTranslator {
 
     fn unsupported_features(&self) -> &[&str] {
         &[
-            "CREATE TRIGGER (Hologres does not support triggers)",
-            "CREATE DOMAIN (not supported)",
-            "LISTEN / NOTIFY (not supported)",
+            "CREATE TRIGGER (no-op, accepted but not executed)",
+            "CREATE DOMAIN (no-op, accepted but not executed)",
+            "LISTEN / NOTIFY (no-op, accepted but not executed)",
             "CALL set_table_property (silently ignored)",
             "CALL set_table_group (silently ignored)",
             "CALL refresh_materialized_view (silently ignored)",
@@ -1258,17 +1260,31 @@ mod tests {
 
     #[test]
     fn test_create_trigger_error() {
-        assert_error(
+        // CREATE TRIGGER is now a no-op (accepted but not executed)
+        let result = translator().translate(
             "CREATE TRIGGER update_trigger BEFORE UPDATE ON t FOR EACH ROW EXECUTE FUNCTION f()",
-            "triggers",
+        );
+        assert!(result.success, "CREATE TRIGGER should succeed as no-op");
+        assert_eq!(result.sql, "", "CREATE TRIGGER should return empty SQL");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("CREATE TRIGGER")),
+            "Expected warning about CREATE TRIGGER, got: {:?}",
+            result.warnings
         );
     }
 
     #[test]
     fn test_create_domain_error() {
-        assert_error(
+        // CREATE DOMAIN is now a no-op (accepted but not executed)
+        let result = translator().translate(
             "CREATE DOMAIN positive_int AS INT CHECK (VALUE > 0)",
-            "CREATE DOMAIN",
+        );
+        assert!(result.success, "CREATE DOMAIN should succeed as no-op");
+        assert_eq!(result.sql, "", "CREATE DOMAIN should return empty SQL");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("CREATE DOMAIN")),
+            "Expected warning about CREATE DOMAIN, got: {:?}",
+            result.warnings
         );
     }
 
@@ -1316,12 +1332,28 @@ mod tests {
 
     #[test]
     fn test_listen_error() {
-        assert_error("LISTEN my_channel", "LISTEN/NOTIFY");
+        // LISTEN is now a no-op (accepted but not executed)
+        let result = translator().translate("LISTEN my_channel");
+        assert!(result.success, "LISTEN should succeed as no-op");
+        assert_eq!(result.sql, "", "LISTEN should return empty SQL");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("LISTEN/NOTIFY")),
+            "Expected warning about LISTEN/NOTIFY, got: {:?}",
+            result.warnings
+        );
     }
 
     #[test]
     fn test_notify_error() {
-        assert_error("NOTIFY my_channel, 'hello'", "LISTEN/NOTIFY");
+        // NOTIFY is now a no-op (accepted but not executed)
+        let result = translator().translate("NOTIFY my_channel, 'hello'");
+        assert!(result.success, "NOTIFY should succeed as no-op");
+        assert_eq!(result.sql, "", "NOTIFY should return empty SQL");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("LISTEN/NOTIFY")),
+            "Expected warning about LISTEN/NOTIFY, got: {:?}",
+            result.warnings
+        );
     }
 
     // ── EXPLAIN ANALYZE → EXPLAIN ──
