@@ -25,7 +25,7 @@ pub fn build_router() -> Router<std::sync::Arc<crate::server::McServerState>> {
         )
         .route(
             "/projects/{project}/tables/{table}",
-            axum::routing::get(tables::get_table),
+            axum::routing::get(tables::get_table).delete(tables::delete_table),
         )
         // Instance endpoints
         .route(

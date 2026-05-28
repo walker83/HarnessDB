@@ -1,9 +1,10 @@
-//! Handlers for table listing and detail endpoints.
+//! Handlers for table listing, detail, and deletion endpoints.
 //!
-//! - `GET /api/projects/{project}/tables`       → list_tables
-//! - `GET /api/projects/{project}/tables/{table}` → get_table
+//! - `GET    /api/projects/{project}/tables`       → list_tables
+//! - `GET    /api/projects/{project}/tables/{table}` → get_table
+//! - `DELETE /api/projects/{project}/tables/{table}` → delete_table
 //!
-//! Both delegate to the `QueryHandler` and format results as MaxCompute XML.
+//! All delegate to the `QueryHandler` and format results as MaxCompute XML.
 
 use axum::{
     extract::{Path, Query, State},
@@ -231,6 +232,66 @@ pub async fn get_table(
     (StatusCode::OK, XmlResponse(xml)).into_response()
 }
 
+/// Delete a table.
+///
+/// Uses `DROP TABLE IF EXISTS <table>` internally.
+/// Returns 200 OK even if the table does not exist (DROP TABLE IF EXISTS semantics).
+pub async fn delete_table(
+    State(state): State<Arc<McServerState>>,
+    Path((project, table)): Path<(String, String)>,
+) -> impl IntoResponse {
+    info!("DELETE /api/projects/{}/tables/{}", project, table);
+
+    // Validate the project.
+    if !project.eq_ignore_ascii_case(&state.config.default_project) {
+        return (
+            StatusCode::NOT_FOUND,
+            crate::error_xml(
+                "ODPS-0130161",
+                &format!("Project '{}' not found", project),
+            ),
+        )
+            .into_response();
+    }
+
+    // Validate table name to prevent SQL injection
+    if !validate_sql_identifier(&table) {
+        return (
+            StatusCode::BAD_REQUEST,
+            crate::error_xml(
+                "ODPS-0130011",
+                &format!("Invalid table name: '{}'", table),
+            ),
+        )
+            .into_response();
+    }
+
+    // Execute DROP TABLE IF EXISTS in a blocking thread
+    let handler = state.handler.clone();
+    let conn_id = state.next_conn_id();
+    let table_name = table.clone();
+    let _result = tokio::task::spawn_blocking(move || {
+        handler.handle_query(conn_id, &format!("DROP TABLE IF EXISTS {}", table_name))
+    })
+    .await
+    .unwrap_or_else(|join_err| {
+        tracing::error!("Blocking task join error: {}", join_err);
+        mysql_protocol::server::QueryResult::ok()
+    });
+
+    // Build a success response. Note: even if the table didn't exist,
+    // DROP TABLE IF EXISTS succeeds, so we always return 200.
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Table>
+  <Name>{table}</Name>
+</Table>"#,
+        table = crate::handlers::projects::escape_xml(&table),
+    );
+
+    (StatusCode::OK, XmlResponse(xml)).into_response()
+}
+
 /// Map a MySQL type name to its MaxCompute equivalent.
 fn mysql_type_to_maxcompute(mysql_type: &str) -> &'static str {
     let lower = mysql_type.to_lowercase();
@@ -350,5 +411,87 @@ mod tests {
         .await;
         let resp = resp.into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_delete_table_success() {
+        use crate::server::{McServerConfig, McServerState, MockQueryHandler};
+        let state = Arc::new(McServerState::new(
+            Arc::new(MockQueryHandler::new()),
+            McServerConfig {
+                default_project: "myproject".to_string(),
+                ..McServerConfig::default()
+            },
+        ));
+        let resp = delete_table(
+            State(state),
+            Path(("myproject".to_string(), "test_table".to_string())),
+        )
+        .await;
+        let resp = resp.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Should contain the table name in the response body
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<Name>test_table</Name>"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_table_project_not_found() {
+        use crate::server::{McServerConfig, McServerState, MockQueryHandler};
+        let state = Arc::new(McServerState::new(
+            Arc::new(MockQueryHandler::new()),
+            McServerConfig {
+                default_project: "myproject".to_string(),
+                ..McServerConfig::default()
+            },
+        ));
+        let resp = delete_table(
+            State(state),
+            Path(("wrong".to_string(), "mytable".to_string())),
+        )
+        .await;
+        let resp = resp.into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_table_invalid_table_name_sql_injection() {
+        use crate::server::{McServerConfig, McServerState, MockQueryHandler};
+        let state = Arc::new(McServerState::new(
+            Arc::new(MockQueryHandler::new()),
+            McServerConfig {
+                default_project: "myproject".to_string(),
+                ..McServerConfig::default()
+            },
+        ));
+        let resp = delete_table(
+            State(state),
+            Path(("myproject".to_string(), "users; DROP TABLE users".to_string())),
+        )
+        .await;
+        let resp = resp.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_delete_table_nonexistent_table_still_ok() {
+        // DROP TABLE IF EXISTS should succeed even if the table doesn't exist
+        use crate::server::{McServerConfig, McServerState, MockQueryHandler};
+        let state = Arc::new(McServerState::new(
+            Arc::new(MockQueryHandler::new()),
+            McServerConfig {
+                default_project: "myproject".to_string(),
+                ..McServerConfig::default()
+            },
+        ));
+        let resp = delete_table(
+            State(state),
+            Path(("myproject".to_string(), "nonexistent_table".to_string())),
+        )
+        .await;
+        let resp = resp.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }
