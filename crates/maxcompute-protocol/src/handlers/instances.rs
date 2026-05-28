@@ -365,6 +365,416 @@ fn build_result_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handlers::{InstanceInfo, InstanceStatus, InstanceManager};
+    use crate::server::{McServerConfig, McServerState, MockQueryHandler};
+    use axum::extract::Query;
+    use std::collections::HashMap;
+
+    fn make_state(default_project: &str) -> Arc<McServerState> {
+        let config = McServerConfig {
+            default_project: default_project.to_string(),
+            ..McServerConfig::default()
+        };
+        let handler = Arc::new(MockQueryHandler::new());
+        Arc::new(McServerState::new(handler, config))
+    }
+
+    // ======================================================================
+    // submit_instance tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn test_submit_instance_sql_ok() {
+        let state = make_state("test_project");
+        let body = Bytes::from(
+            r#"<Instance><Job><Priority>9</Priority><Tasks><SQL><Name>AnonymousSQLTask</Name><Query>SELECT 1</Query></SQL></Tasks></Job></Instance>"#,
+        );
+
+        let response = submit_instance(
+            State(state),
+            Path("test_project".to_string()),
+            body,
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::CREATED, "Submit should return 201");
+        let location = response.headers().get(header::LOCATION).and_then(|v| v.to_str().ok());
+        assert!(location.is_some(), "Should have Location header");
+        assert!(location.unwrap().starts_with("/api/projects/test_project/instances/"));
+    }
+
+    #[tokio::test]
+    async fn test_submit_instance_wrong_project() {
+        let state = make_state("test_project");
+        let body = Bytes::from(
+            r#"<Instance><Job><Tasks><SQL><Query>SELECT 1</Query></SQL></Tasks></Job></Instance>"#,
+        );
+
+        let response = submit_instance(
+            State(state),
+            Path("nonexistent".to_string()),
+            body,
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_submit_instance_empty_sql() {
+        let state = make_state("test_project");
+        let body = Bytes::from(
+            r#"<Instance><Job><Tasks><SQL><Name>AnonymousSQLTask</Name><Query></Query></SQL></Tasks></Job></Instance>"#,
+        );
+
+        let response = submit_instance(
+            State(state),
+            Path("test_project".to_string()),
+            body,
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_submit_instance_show_tables_is_noop() {
+        let state = make_state("test_project");
+        let body = Bytes::from(
+            r#"<Instance><Job><Priority>9</Priority><Tasks><SQL><Name>AnonymousSQLTask</Name><Query>SHOW TABLES</Query></SQL></Tasks></Job></Instance>"#,
+        );
+
+        let response = submit_instance(
+            State(state.clone()),
+            Path("test_project".to_string()),
+            body,
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let location = response.headers().get(header::LOCATION).and_then(|v| v.to_str().ok()).unwrap().to_string();
+
+        // The instance should be immediately completed with Success
+        let instance_id = location.rsplit('/').next().unwrap();
+        let info = state.instance_manager.get(instance_id);
+        assert!(info.is_some(), "Instance should exist in manager");
+        assert_eq!(info.unwrap().status, InstanceStatus::Success);
+    }
+
+    // ======================================================================
+    // get_instance tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn test_get_instance_not_found() {
+        let state = make_state("test_project");
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), "nonexistent-id".to_string())),
+            Query(HashMap::new()),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_instance_full_info() {
+        let state = make_state("test_project");
+        let instance_id = "test-instance-1";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "SELECT 1".to_string(),
+            status: InstanceStatus::Success,
+            result: Some(mysql_protocol::server::QueryResult::ok()),
+            error: None,
+            start_time: chrono::Utc::now(),
+            end_time: Some(chrono::Utc::now()),
+        };
+        state.instance_manager.insert(info);
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), instance_id.to_string())),
+            Query(HashMap::new()),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<Instance>"), "Should contain Instance element");
+        assert!(body_str.contains("<Status>Success</Status>"), "Should contain status");
+    }
+
+    #[tokio::test]
+    async fn test_get_instance_with_result_param() {
+        let state = make_state("test_project");
+        let instance_id = "test-instance-2";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "SELECT 1".to_string(),
+            status: InstanceStatus::Success,
+            result: Some(mysql_protocol::server::QueryResult::with_rows(
+                vec![mysql_protocol::server::ColumnDef {
+                    name: "result".to_string(),
+                    col_type: mysql_protocol::server::ColumnType::String,
+                }],
+                vec![vec![Some("1".to_string())]],
+            )),
+            error: None,
+            start_time: chrono::Utc::now(),
+            end_time: Some(chrono::Utc::now()),
+        };
+        state.instance_manager.insert(info);
+
+        let mut params = HashMap::new();
+        params.insert("result".to_string(), String::new());
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), instance_id.to_string())),
+            Query(params),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<Result>"), "Should contain Result element");
+        assert!(body_str.contains("<IsSelect>true</IsSelect>"), "Should indicate SELECT query");
+    }
+
+    #[tokio::test]
+    async fn test_get_instance_with_taskstatus_param() {
+        let state = make_state("test_project");
+        let instance_id = "test-instance-taskstatus";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "SELECT 1".to_string(),
+            status: InstanceStatus::Running,
+            result: None,
+            error: None,
+            start_time: chrono::Utc::now(),
+            end_time: None,
+        };
+        state.instance_manager.insert(info);
+
+        let mut params = HashMap::new();
+        params.insert("taskstatus".to_string(), String::new());
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), instance_id.to_string())),
+            Query(params),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<Task Name=\"AnonymousSQLTask\""));
+        assert!(body_str.contains("Status=\"Running\""), "TaskStatus XML should contain Status=Running: {}", body_str);
+    }
+
+    #[tokio::test]
+    async fn test_get_instance_with_instancestatus_param() {
+        let state = make_state("test_project");
+        let instance_id = "test-instance-istatus";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "SELECT 1".to_string(),
+            status: InstanceStatus::Failed,
+            result: None,
+            error: Some("syntax error".to_string()),
+            start_time: chrono::Utc::now(),
+            end_time: Some(chrono::Utc::now()),
+        };
+        state.instance_manager.insert(info);
+
+        let mut params = HashMap::new();
+        params.insert("instancestatus".to_string(), String::new());
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), instance_id.to_string())),
+            Query(params),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<Status>Failed</Status>"));
+    }
+
+    // ======================================================================
+    // stop_instance tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn test_stop_instance_found() {
+        let state = make_state("test_project");
+        let instance_id = "test-instance-stop";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "SELECT 1".to_string(),
+            status: InstanceStatus::Running,
+            result: None,
+            error: None,
+            start_time: chrono::Utc::now(),
+            end_time: None,
+        };
+        state.instance_manager.insert(info);
+
+        let response = stop_instance(
+            State(state.clone()),
+            Path(("test_project".to_string(), instance_id.to_string())),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let retrieved = state.instance_manager.get(instance_id).unwrap();
+        assert_eq!(retrieved.status, InstanceStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_stop_instance_not_found() {
+        let state = make_state("test_project");
+
+        let response = stop_instance(
+            State(state),
+            Path(("test_project".to_string(), "nonexistent-id".to_string())),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ======================================================================
+    // build_result_response tests (via get_instance with ?result)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn test_get_instance_result_failed_instance() {
+        let state = make_state("test_project");
+        let instance_id = "failed-instance";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "BAD SQL".to_string(),
+            status: InstanceStatus::Failed,
+            result: None,
+            error: Some("Syntax error near 'BAD'".to_string()),
+            start_time: chrono::Utc::now(),
+            end_time: Some(chrono::Utc::now()),
+        };
+        state.instance_manager.insert(info);
+
+        let mut params = HashMap::new();
+        params.insert("result".to_string(), String::new());
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), instance_id.to_string())),
+            Query(params),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<Status>Failed</Status>"));
+        assert!(body_str.contains("Syntax error near"));
+    }
+
+    #[tokio::test]
+    async fn test_get_instance_result_ddl_no_columns() {
+        let state = make_state("test_project");
+        let instance_id = "ddl-instance";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "CREATE TABLE t (id INT)".to_string(),
+            status: InstanceStatus::Success,
+            result: Some(mysql_protocol::server::QueryResult::ok()),
+            error: None,
+            start_time: chrono::Utc::now(),
+            end_time: Some(chrono::Utc::now()),
+        };
+        state.instance_manager.insert(info);
+
+        let mut params = HashMap::new();
+        params.insert("result".to_string(), String::new());
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), instance_id.to_string())),
+            Query(params),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<IsSelect>false</IsSelect>"), "DDL should have IsSelect=false");
+    }
+
+    #[tokio::test]
+    async fn test_get_instance_result_no_result_none() {
+        let state = make_state("test_project");
+        let instance_id = "no-result-instance";
+        let info = InstanceInfo {
+            id: instance_id.to_string(),
+            project: "test_project".to_string(),
+            sql: "SET x = y".to_string(),
+            status: InstanceStatus::Success,
+            result: None,
+            error: None,
+            start_time: chrono::Utc::now(),
+            end_time: Some(chrono::Utc::now()),
+        };
+        state.instance_manager.insert(info);
+
+        let mut params = HashMap::new();
+        params.insert("result".to_string(), String::new());
+
+        let response = get_instance(
+            State(state),
+            Path(("test_project".to_string(), instance_id.to_string())),
+            Query(params),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<Result><![CDATA[]]></Result>"), "No-result instance should have empty CDATA");
+    }
+
+    // ======================================================================
+    // is_error_result tests (existing)
+    // ======================================================================
 
     #[test]
     fn test_is_error_result_detects_error() {

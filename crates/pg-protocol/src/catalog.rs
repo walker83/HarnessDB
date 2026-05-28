@@ -1494,6 +1494,23 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_postmaster_start_time() {
+        let result = handle_postmaster_start_time("2025-01-01 00:00:00");
+        assert_eq!(result.columns.len(), 1);
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(
+            result.rows[0][0].as_deref(),
+            Some("2025-01-01 00:00:00")
+        );
+        assert_eq!(
+            result.columns[0].col_type,
+            ColumnType::DateTime,
+            "start_time should be DateTime type"
+        );
+        assert_eq!(result.columns[0].name, "pg_postmaster_start_time");
+    }
+
+    #[test]
     fn test_handle_pg_database() {
         let catalog = CatalogManager::new();
         let result = handle_pg_database(&catalog, "");
@@ -1536,6 +1553,48 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_show_client_encoding() {
+        let result = handle_show_variable("SHOW client_encoding");
+        assert_eq!(result.rows[0][0].as_deref(), Some("UTF8"));
+    }
+
+    #[test]
+    fn test_handle_show_timezone() {
+        let result = handle_show_variable("SHOW timezone");
+        assert_eq!(result.rows[0][0].as_deref(), Some("UTC"));
+    }
+
+    #[test]
+    fn test_handle_show_time_zone() {
+        let result = handle_show_variable("SHOW TIME ZONE");
+        assert_eq!(result.rows[0][0].as_deref(), Some("UTC"));
+    }
+
+    #[test]
+    fn test_handle_show_datestyle() {
+        let result = handle_show_variable("SHOW datestyle");
+        assert_eq!(result.rows[0][0].as_deref(), Some("ISO, MDY"));
+    }
+
+    #[test]
+    fn test_handle_show_max_connections() {
+        let result = handle_show_variable("SHOW max_connections");
+        assert_eq!(result.rows[0][0].as_deref(), Some("100"));
+    }
+
+    #[test]
+    fn test_handle_show_transaction_isolation() {
+        let result = handle_show_variable("SHOW transaction_isolation");
+        assert_eq!(result.rows[0][0].as_deref(), Some("read committed"));
+    }
+
+    #[test]
+    fn test_handle_show_unknown_variable() {
+        let result = handle_show_variable("SHOW some_unknown_var");
+        assert_eq!(result.rows[0][0].as_deref(), Some(""));
+    }
+
+    #[test]
     fn test_handle_pg_tables_with_catalog() {
         let catalog = CatalogManager::new();
         catalog.create_database("testdb").unwrap();
@@ -1563,6 +1622,15 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_pg_tables_with_empty_db() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+        let result = handle_pg_tables(&catalog, "testdb");
+        assert_eq!(result.columns.len(), 8);
+        assert!(result.rows.is_empty(), "Should have no tables in empty db");
+    }
+
+    #[test]
     fn test_handle_pg_namespace() {
         let result = handle_pg_namespace();
         assert!(result.rows.iter().any(|r| r[1].as_deref() == Some("public")));
@@ -1579,12 +1647,157 @@ mod tests {
     fn test_handle_pg_settings() {
         let result = handle_pg_settings();
         assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("server_version")));
+        assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("server_encoding")));
+        assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("max_connections")));
     }
 
     #[test]
     fn test_handle_pg_available_extensions() {
         let result = handle_pg_available_extensions();
         assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("hologres")));
+    }
+
+    #[test]
+    fn test_handle_pg_matviews_empty() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_matviews(&catalog, "testdb");
+        assert_eq!(result.columns.len(), 7);
+        assert!(result.rows.is_empty());
+    }
+
+    #[test]
+    fn test_handle_pg_class_with_tables() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+        let table = fe_catalog::Table {
+            id: 1,
+            tablet_id: 0,
+            name: "users".to_string(),
+            database: "testdb".to_string(),
+            columns: vec![],
+            keys_type: fe_catalog::table::KeysType::Duplicate,
+            unique_keys: vec![],
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: std::collections::HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: None,
+        };
+        catalog.create_table("testdb", table).unwrap();
+
+        let result = handle_pg_class(&catalog, "testdb");
+        assert_eq!(result.columns.len(), 14);
+        assert!(!result.rows.is_empty());
+        assert!(result.rows.iter().any(|r| r[1].as_deref() == Some("users")));
+        // OID should be set starting from 10000
+        assert_eq!(result.rows[0][0].as_deref(), Some("10000"));
+    }
+
+    #[test]
+    fn test_handle_pg_class_empty_db() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("emptydb").unwrap();
+        let result = handle_pg_class(&catalog, "emptydb");
+        assert!(result.rows.is_empty());
+    }
+
+    #[test]
+    fn test_handle_pg_attribute_with_columns() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+        let table = fe_catalog::Table {
+            id: 1,
+            tablet_id: 0,
+            name: "users".to_string(),
+            database: "testdb".to_string(),
+            columns: vec![
+                fe_catalog::table::TableColumn {
+                    name: "id".to_string(),
+                    data_type: types::DataType::Int32,
+                    nullable: false,
+                    default_value: None,
+                    agg_type: None,
+                    comment: String::new(),
+                },
+                fe_catalog::table::TableColumn {
+                    name: "name".to_string(),
+                    data_type: types::DataType::String,
+                    nullable: true,
+                    default_value: None,
+                    agg_type: None,
+                    comment: String::new(),
+                },
+                fe_catalog::table::TableColumn {
+                    name: "salary".to_string(),
+                    data_type: types::DataType::Float64,
+                    nullable: true,
+                    default_value: None,
+                    agg_type: None,
+                    comment: String::new(),
+                },
+                fe_catalog::table::TableColumn {
+                    name: "active".to_string(),
+                    data_type: types::DataType::Boolean,
+                    nullable: false,
+                    default_value: None,
+                    agg_type: None,
+                    comment: String::new(),
+                },
+            ],
+            keys_type: fe_catalog::table::KeysType::Duplicate,
+            unique_keys: vec![],
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: std::collections::HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: None,
+        };
+        catalog.create_table("testdb", table).unwrap();
+
+        let result = handle_pg_attribute(&catalog, "testdb");
+        assert_eq!(result.columns.len(), 24);
+        assert_eq!(result.rows.len(), 4, "Should have 4 rows for 4 columns");
+
+        // Check first column: id (Int32, not nullable)
+        assert_eq!(result.rows[0][0].as_deref(), Some("10000"), "attrelid should start at 10000");
+        assert_eq!(result.rows[0][1].as_deref(), Some("id"), "attname");
+        assert_eq!(result.rows[0][2].as_deref(), Some("23"), "atttypid for Int32 should be 23");
+        assert_eq!(result.rows[0][4].as_deref(), Some("4"), "attlen for Int32 should be 4");
+        assert_eq!(result.rows[0][5].as_deref(), Some("1"), "attnum should be 1");
+        assert_eq!(result.rows[0][12].as_deref(), Some("true"), "attnotnull should be true for non-nullable");
+
+        // Check second column: name (String/text, nullable)
+        assert_eq!(result.rows[1][1].as_deref(), Some("name"));
+        assert_eq!(result.rows[1][2].as_deref(), Some("25"), "atttypid for String should be 25");
+        assert_eq!(result.rows[1][4].as_deref(), Some("-1"), "attlen for String should be -1");
+        assert_eq!(result.rows[1][5].as_deref(), Some("2"), "attnum should be 2");
+        assert_eq!(result.rows[1][12].as_deref(), Some("false"), "attnotnull should be false for nullable");
+
+        // Check third column: salary (Float64, nullable)
+        assert_eq!(result.rows[2][1].as_deref(), Some("salary"));
+        assert_eq!(result.rows[2][2].as_deref(), Some("701"), "atttypid for Float64 should be 701");
+        assert_eq!(result.rows[2][4].as_deref(), Some("8"), "attlen for Float64 should be 8");
+
+        // Check fourth column: active (Boolean, not nullable)
+        assert_eq!(result.rows[3][1].as_deref(), Some("active"));
+        assert_eq!(result.rows[3][2].as_deref(), Some("16"), "atttypid for Boolean should be 16");
+        assert_eq!(result.rows[3][4].as_deref(), Some("1"), "attlen for Boolean should be 1");
+        assert_eq!(result.rows[3][12].as_deref(), Some("true"), "attnotnull should be true for non-nullable");
+    }
+
+    #[test]
+    fn test_handle_pg_attribute_empty_db() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("emptydb").unwrap();
+        let result = handle_pg_attribute(&catalog, "emptydb");
+        assert_eq!(result.columns.len(), 24);
+        assert!(result.rows.is_empty());
     }
 
     #[test]
@@ -1658,6 +1871,9 @@ mod tests {
         assert_eq!(result.rows.len(), 2);
         assert!(result.rows.iter().any(|r| r[3].as_deref() == Some("id")));
         assert!(result.rows.iter().any(|r| r[3].as_deref() == Some("name")));
+        // Check nullable mapping
+        assert!(result.rows.iter().any(|r| r[5].as_deref() == Some("NO")));
+        assert!(result.rows.iter().any(|r| r[5].as_deref() == Some("YES")));
     }
 
     #[test]
@@ -1666,6 +1882,88 @@ mod tests {
         catalog.create_database("mydb").unwrap();
         let result = handle_information_schema_schemata(&catalog);
         assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("mydb")));
+    }
+
+    #[test]
+    fn test_handle_information_schema_views_no_views() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+        let table = fe_catalog::Table {
+            id: 1,
+            tablet_id: 0,
+            name: "regular_table".to_string(),
+            database: "testdb".to_string(),
+            columns: vec![],
+            keys_type: fe_catalog::table::KeysType::Duplicate,
+            unique_keys: vec![],
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: std::collections::HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: None,
+        };
+        catalog.create_table("testdb", table).unwrap();
+
+        let result = handle_information_schema_views(&catalog, "testdb");
+        assert_eq!(result.columns.len(), 4);
+        assert!(result.rows.is_empty(), "Should be empty when no tables have view_definitions");
+    }
+
+    #[test]
+    fn test_handle_information_schema_views_with_view() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+
+        // Table with view_definition
+        let view_table = fe_catalog::Table {
+            id: 2,
+            tablet_id: 0,
+            name: "user_view".to_string(),
+            database: "testdb".to_string(),
+            columns: vec![],
+            keys_type: fe_catalog::table::KeysType::Duplicate,
+            unique_keys: vec![],
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: std::collections::HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: Some("SELECT * FROM users WHERE active = true".to_string()),
+        };
+        catalog.create_table("testdb", view_table).unwrap();
+
+        // Also add a regular table (no view_definition)
+        let regular_table = fe_catalog::Table {
+            id: 1,
+            tablet_id: 0,
+            name: "regular_table".to_string(),
+            database: "testdb".to_string(),
+            columns: vec![],
+            keys_type: fe_catalog::table::KeysType::Duplicate,
+            unique_keys: vec![],
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: std::collections::HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: None,
+        };
+        catalog.create_table("testdb", regular_table).unwrap();
+
+        let result = handle_information_schema_views(&catalog, "testdb");
+        assert_eq!(result.rows.len(), 1, "Should have 1 view");
+        assert_eq!(result.rows[0][2].as_deref(), Some("user_view"));
+        assert_eq!(
+            result.rows[0][3].as_deref(),
+            Some("SELECT * FROM users WHERE active = true")
+        );
     }
 
     #[test]
@@ -1695,6 +1993,77 @@ mod tests {
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(r.rows[0][0].as_ref().unwrap().contains("PostgreSQL"));
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_current_database() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT current_database()",
+            &catalog,
+            "mydb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("mydb"));
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_current_schema() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT current_schema()",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("public"));
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_current_user() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT current_user",
+            &catalog,
+            "testdb",
+            "myuser",
+            "",
+        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("myuser"));
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_current_user_func() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT current_user()",
+            &catalog,
+            "testdb",
+            "myuser",
+            "",
+        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("myuser"));
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_postmaster_start_time() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT pg_postmaster_start_time()",
+            &catalog,
+            "testdb",
+            "admin",
+            "2025-06-01 12:00:00",
+        );
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.rows[0][0].as_deref(), Some("2025-06-01 12:00:00"));
     }
 
     #[test]
@@ -1741,12 +2110,269 @@ mod tests {
     }
 
     #[test]
+    fn test_pg_catalog_routing_pg_class() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+        let table = fe_catalog::Table {
+            id: 1,
+            tablet_id: 0,
+            name: "orders".to_string(),
+            database: "testdb".to_string(),
+            columns: vec![],
+            keys_type: fe_catalog::table::KeysType::Duplicate,
+            unique_keys: vec![],
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: std::collections::HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: None,
+        };
+        catalog.create_table("testdb", table).unwrap();
+
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM pg_class",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(r.rows.iter().any(|row| row[1].as_deref() == Some("orders")));
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_pg_attribute() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+        let table = fe_catalog::Table {
+            id: 1,
+            tablet_id: 0,
+            name: "items".to_string(),
+            database: "testdb".to_string(),
+            columns: vec![
+                fe_catalog::table::TableColumn {
+                    name: "id".to_string(),
+                    data_type: types::DataType::Int32,
+                    nullable: false,
+                    default_value: None,
+                    agg_type: None,
+                    comment: String::new(),
+                },
+            ],
+            keys_type: fe_catalog::table::KeysType::Duplicate,
+            unique_keys: vec![],
+            partition_info: None,
+            distribution_info: None,
+            replication_num: 1,
+            properties: std::collections::HashMap::new(),
+            row_count: 0,
+            data_size: 0,
+            stats: None,
+            view_definition: None,
+        };
+        catalog.create_table("testdb", table).unwrap();
+
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM pg_attribute",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.rows[0][1].as_deref(), Some("id"));
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_pg_namespace() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM pg_namespace",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_pg_tables() {
+        let catalog = CatalogManager::new();
+        catalog.create_database("testdb").unwrap();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM pg_tables",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_pg_settings() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM pg_settings",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_information_schema_tables() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM information_schema.tables",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_information_schema_columns() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM information_schema.columns",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_information_schema_schemata() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM information_schema.schemata",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_information_schema_views() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM information_schema.views",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_stub_tables() {
+        let catalog = CatalogManager::new();
+        // Stub handlers should return QueryResult::ok()
+        for query in &[
+            "SELECT * FROM pg_index",
+            "SELECT * FROM pg_description",
+            "SELECT * FROM pg_proc",
+            "SELECT * FROM pg_trigger",
+            "SELECT * FROM pg_enum",
+            "SELECT * FROM pg_range",
+            "SELECT * FROM pg_cast",
+            "SELECT * FROM pg_opclass",
+            "SELECT * FROM pg_views",
+            "SELECT * FROM pg_extension",
+            "SELECT * FROM pg_timezone_names",
+            "SELECT * FROM pg_collation",
+            "SELECT * FROM pg_foreign_table",
+        ] {
+            let result = handle_pg_catalog_query(query, &catalog, "testdb", "admin", "");
+            assert!(result.is_some(), "Expected handler for: {}", query);
+        }
+    }
+
+    #[test]
+    fn test_pg_catalog_routing_hg_stat_activity() {
+        let catalog = CatalogManager::new();
+        let result = handle_pg_catalog_query(
+            "SELECT * FROM hg_stat_activity",
+            &catalog,
+            "testdb",
+            "admin",
+            "",
+        );
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.columns.len(), 11);
+    }
+
+    #[test]
     fn test_map_type_oids() {
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int32), 23);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Boolean), 16);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::String), 25);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Varchar(255)), 1043);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Float64), 701);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Null), 0);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int8), 21);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int16), 21);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int64), 20);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Float32), 700);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Decimal(types::DecimalType { precision: 38, scale: 10 })), 1700);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Date), 1082);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::DateTime), 1114);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Char(10)), 1042);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Binary), 17);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Json), 25);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Array(Box::new(types::DataType::String))), 1009);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Map(Box::new(types::DataType::String), Box::new(types::DataType::Int32))), 25);
+        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Struct(vec![])), 25);
+        assert_eq!(
+            map_roris_type_to_pg_oid(&types::DataType::Float32Vector(128)),
+            25
+        );
+    }
+
+    #[test]
+    fn test_map_type_to_len() {
+        // Fixed-length types
+        assert_eq!(map_roris_type_to_len(&types::DataType::Null), 0);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Boolean), 1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Int8), 2);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Int16), 2);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Int32), 4);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Int64), 8);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Float32), 4);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Float64), 8);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Date), 4);
+        assert_eq!(map_roris_type_to_len(&types::DataType::DateTime), 8);
+
+        // Variable-length types
+        assert_eq!(map_roris_type_to_len(&types::DataType::Int128), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Decimal(types::DecimalType { precision: 38, scale: 10 })), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Varchar(255)), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Char(10)), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::String), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Binary), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Json), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Array(Box::new(types::DataType::Int32))), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Map(Box::new(types::DataType::String), Box::new(types::DataType::String))), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Struct(vec![])), -1);
+        assert_eq!(map_roris_type_to_len(&types::DataType::Float32Vector(256)), -1);
     }
 
     #[test]
@@ -1754,5 +2380,11 @@ mod tests {
         assert_eq!(map_roris_type_to_sql_type(&types::DataType::Int32), "integer");
         assert_eq!(map_roris_type_to_sql_type(&types::DataType::String), "text");
         assert_eq!(map_roris_type_to_sql_type(&types::DataType::Varchar(100)), "character varying(100)");
+        assert_eq!(map_roris_type_to_sql_type(&types::DataType::Boolean), "boolean");
+        assert_eq!(map_roris_type_to_sql_type(&types::DataType::Float64), "double precision");
+        assert_eq!(
+            map_roris_type_to_sql_type(&types::DataType::Decimal(types::DecimalType { precision: 38, scale: 10 })),
+            "numeric(38,10)"
+        );
     }
 }

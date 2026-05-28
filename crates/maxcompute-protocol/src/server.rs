@@ -111,7 +111,105 @@ impl QueryHandler for MockQueryHandler {
     }
 }
 
-/// Authentication middleware for MaxCompute REST API.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ======================================================================
+    // health_check unit test
+    // ======================================================================
+
+    #[tokio::test]
+    async fn test_health_check_response() {
+        let response = health_check().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/json");
+
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("ok"));
+        assert!(body_str.contains("maxcompute"));
+    }
+
+    // ======================================================================
+    // McServerState
+    // ======================================================================
+
+    #[test]
+    fn test_mc_server_state_conn_id() {
+        let handler = Arc::new(MockQueryHandler::new());
+        let config = McServerConfig::default();
+        let state = McServerState::new(handler, config);
+
+        let id1 = state.next_conn_id();
+        let id2 = state.next_conn_id();
+        assert_eq!(id2, id1 + 1, "Connection IDs should be sequential");
+    }
+
+    #[test]
+    fn test_mc_server_state_instance_manager_initialized() {
+        let handler = Arc::new(MockQueryHandler::new());
+        let config = McServerConfig::default();
+        let state = McServerState::new(handler, config);
+
+        assert!(state.instance_manager.is_empty(), "Instance manager should be empty initially");
+    }
+
+    // ======================================================================
+    // McServerConfig
+    // ======================================================================
+
+    #[test]
+    fn test_mc_server_config_default() {
+        let config = McServerConfig::default();
+        assert_eq!(config.bind_addr, "127.0.0.1");
+        assert_eq!(config.port, 9031);
+        assert_eq!(config.access_key_id, "roris");
+        assert_eq!(config.access_key_secret, "roris-secret");
+        assert_eq!(config.default_project, "default");
+        assert!(config.region.is_none());
+    }
+
+    // ======================================================================
+    // MockQueryHandler
+    // ======================================================================
+
+    #[test]
+    fn test_mock_query_handler_show_tables() {
+        let handler = MockQueryHandler::new();
+        let result = handler.handle_query(1, "SHOW TABLES");
+        assert_eq!(result.columns.len(), 1);
+        assert_eq!(result.columns[0].name, "table_name");
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0].as_deref(), Some("test_table"));
+    }
+
+    #[test]
+    fn test_mock_query_handler_describe() {
+        let handler = MockQueryHandler::new();
+        let result = handler.handle_query(1, "DESCRIBE mytable");
+        assert_eq!(result.columns.len(), 2);
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn test_mock_query_handler_ok() {
+        let handler = MockQueryHandler::new();
+        let result = handler.handle_query(1, "SELECT 1");
+        assert!(result.columns.is_empty() && result.rows.is_empty(),
+                "Unrecognized queries should return QueryResult::ok()");
+    }
+}
+
+// ---------------------------------------------------------------------------
 async fn auth_middleware(
     State(state): State<Arc<McServerState>>,
     request: axum::extract::Request,

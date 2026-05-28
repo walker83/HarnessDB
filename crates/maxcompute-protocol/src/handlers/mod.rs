@@ -264,6 +264,12 @@ mod tests {
     }
 
     #[test]
+    fn test_instance_manager_get_nonexistent() {
+        let mgr = InstanceManager::new();
+        assert!(mgr.get("nonexistent").is_none());
+    }
+
+    #[test]
     fn test_instance_manager_cancel() {
         let mgr = InstanceManager::new();
         let info = make_info("test-1", Utc::now());
@@ -279,6 +285,106 @@ mod tests {
     fn test_instance_manager_cancel_nonexistent() {
         let mgr = InstanceManager::new();
         assert!(!mgr.cancel("nonexistent"), "cancel should return false for missing id");
+    }
+
+    #[test]
+    fn test_instance_manager_set_result() {
+        let mgr = InstanceManager::new();
+        let info = make_info("test-1", Utc::now());
+        mgr.insert(info);
+
+        let result = mysql_protocol::server::QueryResult::with_rows(
+            vec![mysql_protocol::server::ColumnDef {
+                name: "col1".to_string(),
+                col_type: mysql_protocol::server::ColumnType::String,
+            }],
+            vec![vec![Some("value".to_string())]],
+        );
+
+        assert!(mgr.set_result("test-1", result.clone()), "set_result should succeed");
+
+        let retrieved = mgr.get("test-1").unwrap();
+        assert_eq!(retrieved.status, InstanceStatus::Success);
+        assert!(retrieved.result.is_some(), "result should be set");
+        assert!(retrieved.end_time.is_some(), "end_time should be set on success");
+    }
+
+    #[test]
+    fn test_instance_manager_set_result_nonexistent() {
+        let mgr = InstanceManager::new();
+        let result = mysql_protocol::server::QueryResult::ok();
+        assert!(!mgr.set_result("nonexistent", result), "set_result should return false for missing id");
+    }
+
+    #[test]
+    fn test_instance_manager_set_error() {
+        let mgr = InstanceManager::new();
+        let info = make_info("test-1", Utc::now());
+        mgr.insert(info);
+
+        assert!(mgr.set_error("test-1", "Something went wrong".to_string()), "set_error should succeed");
+
+        let retrieved = mgr.get("test-1").unwrap();
+        assert_eq!(retrieved.status, InstanceStatus::Failed);
+        assert_eq!(retrieved.error.as_deref(), Some("Something went wrong"));
+        assert!(retrieved.end_time.is_some(), "end_time should be set on error");
+    }
+
+    #[test]
+    fn test_instance_manager_set_error_nonexistent() {
+        let mgr = InstanceManager::new();
+        assert!(!mgr.set_error("nonexistent", "error".to_string()), "set_error should return false for missing id");
+    }
+
+    #[test]
+    fn test_instance_manager_remove() {
+        let mgr = InstanceManager::new();
+        let info = make_info("test-1", Utc::now());
+        mgr.insert(info);
+
+        let removed = mgr.remove("test-1");
+        assert!(removed.is_some(), "remove should return the removed entry");
+        assert_eq!(removed.unwrap().0, "test-1");
+        assert!(mgr.get("test-1").is_none(), "removed entry should not exist anymore");
+    }
+
+    #[test]
+    fn test_instance_manager_remove_nonexistent() {
+        let mgr = InstanceManager::new();
+        assert!(mgr.remove("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_instance_manager_len_and_is_empty() {
+        let mgr = InstanceManager::new();
+        assert!(mgr.is_empty());
+        assert_eq!(mgr.len(), 0);
+
+        let info = make_info("test-1", Utc::now());
+        mgr.insert(info);
+        assert!(!mgr.is_empty());
+        assert_eq!(mgr.len(), 1);
+
+        mgr.remove("test-1");
+        assert!(mgr.is_empty());
+        assert_eq!(mgr.len(), 0);
+    }
+
+    #[test]
+    fn test_instance_manager_update_status() {
+        let mgr = InstanceManager::new();
+        let info = make_info("test-1", Utc::now());
+        mgr.insert(info);
+
+        assert!(mgr.update_status("test-1", InstanceStatus::Success, Some(Utc::now())));
+        let retrieved = mgr.get("test-1").unwrap();
+        assert_eq!(retrieved.status, InstanceStatus::Success);
+    }
+
+    #[test]
+    fn test_instance_manager_update_status_nonexistent() {
+        let mgr = InstanceManager::new();
+        assert!(!mgr.update_status("nonexistent", InstanceStatus::Success, None));
     }
 
     #[test]
@@ -310,6 +416,21 @@ mod tests {
     }
 
     #[test]
+    fn test_instance_manager_eviction_not_triggered_below_capacity() {
+        let mgr = InstanceManager::new();
+        let base_time = Utc::now();
+
+        // Insert just under MAX_INSTANCES entries - eviction should NOT trigger
+        for i in 0..(MAX_INSTANCES - 10) {
+            let t = base_time + Duration::seconds(i as i64);
+            let info = make_info(&format!("id-{:04}", i), t);
+            mgr.insert(info);
+        }
+
+        assert_eq!(mgr.len(), MAX_INSTANCES - 10, "No eviction should happen before capacity");
+    }
+
+    #[test]
     fn test_instance_manager_cleanup_removes_old_instances() {
         let mgr = InstanceManager::new();
         let now = Utc::now();
@@ -330,5 +451,27 @@ mod tests {
         assert_eq!(mgr.len(), 1, "old instance should be cleaned up");
         assert!(mgr.get("old-instance").is_none(), "old instance should be removed");
         assert!(mgr.get("recent-instance").is_some(), "recent instance should remain");
+    }
+
+    #[test]
+    fn test_instance_manager_cleanup_empty() {
+        let mgr = InstanceManager::new();
+        // Cleanup on empty manager should not panic
+        mgr.cleanup();
+        assert!(mgr.is_empty());
+    }
+
+    #[test]
+    fn test_instance_status_as_xml_str() {
+        assert_eq!(InstanceStatus::Running.as_xml_str(), "Running");
+        assert_eq!(InstanceStatus::Success.as_xml_str(), "Success");
+        assert_eq!(InstanceStatus::Failed.as_xml_str(), "Failed");
+        assert_eq!(InstanceStatus::Cancelled.as_xml_str(), "Cancelled");
+    }
+
+    #[test]
+    fn test_instance_manager_default() {
+        let mgr = InstanceManager::default();
+        assert!(mgr.is_empty());
     }
 }

@@ -1395,4 +1395,343 @@ mod tests {
             "server should have finished after decode error"
         );
     }
+
+    // ======================================================================
+    // Extended query error path tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn test_bind_to_nonexistent_statement_returns_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handler = Arc::new(MockHandler);
+        let auth_config = AuthConfig {
+            accept_any_password: true,
+            ..Default::default()
+        };
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut conn = PgConnection::new(stream, 1, handler, auth_config);
+            let _ = conn.run().await;
+        });
+
+        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut reader, mut writer) = tokio::io::split(client_stream);
+
+        startup_and_auth(&mut reader, &mut writer, "user", "db").await;
+
+        // Bind to a statement that was never parsed
+        let bind_msg = build_bind_message("", "nonexistent_stmt", &[]);
+        writer.write_all(&bind_msg).await.unwrap();
+
+        // Should get ErrorResponse ('E'), NOT BindComplete ('2')
+        let (msg_type, body) = read_pg_message(&mut reader).await;
+        assert_eq!(
+            msg_type, b'E',
+            "expected ErrorResponse for bind to nonexistent statement, got 0x{:02x}",
+            msg_type
+        );
+        let error_str = String::from_utf8_lossy(&body);
+        assert!(
+            error_str.contains("does not exist"),
+            "Error should mention nonexistent statement: {}",
+            error_str
+        );
+
+        // Sync and expect ReadyForQuery (error does not break connection)
+        writer.write_all(&build_sync_message()).await.unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'Z', "expected ReadyForQuery after error + Sync");
+    }
+
+    #[tokio::test]
+    async fn test_execute_unknown_portal_returns_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handler = Arc::new(MockHandler);
+        let auth_config = AuthConfig {
+            accept_any_password: true,
+            ..Default::default()
+        };
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut conn = PgConnection::new(stream, 1, handler, auth_config);
+            let _ = conn.run().await;
+        });
+
+        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut reader, mut writer) = tokio::io::split(client_stream);
+
+        startup_and_auth(&mut reader, &mut writer, "user", "db").await;
+
+        // Execute with a portal that was never bound
+        let execute_msg = build_execute_message("unknown_portal", 0);
+        writer.write_all(&execute_msg).await.unwrap();
+
+        // Should get ErrorResponse ('E')
+        let (msg_type, body) = read_pg_message(&mut reader).await;
+        assert_eq!(
+            msg_type, b'E',
+            "expected ErrorResponse for execute unknown portal, got 0x{:02x}",
+            msg_type
+        );
+        let error_str = String::from_utf8_lossy(&body);
+        assert!(
+            error_str.contains("not found"),
+            "Error should mention portal not found: {}",
+            error_str
+        );
+
+        // ReadyForQuery should follow (handle_execute sends it after error)
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'Z', "expected ReadyForQuery after execute error");
+    }
+
+    #[tokio::test]
+    async fn test_execute_portal_after_close_returns_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handler = Arc::new(MockHandler);
+        let auth_config = AuthConfig {
+            accept_any_password: true,
+            ..Default::default()
+        };
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut conn = PgConnection::new(stream, 1, handler, auth_config);
+            let _ = conn.run().await;
+        });
+
+        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut reader, mut writer) = tokio::io::split(client_stream);
+
+        startup_and_auth(&mut reader, &mut writer, "user", "db").await;
+
+        // Parse a statement
+        writer
+            .write_all(&build_parse_message("mystmt", "SELECT 1", &[]))
+            .await
+            .unwrap();
+        loop {
+            let (msg_type, _body) = read_pg_message(&mut reader).await;
+            if msg_type == b'1' {
+                break;
+            }
+        }
+
+        // Bind to create portal for mystmt
+        writer
+            .write_all(&build_bind_message("", "mystmt", &[]))
+            .await
+            .unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'2');
+
+        // Close the unnamed portal
+        let mut close_body = vec![b'P', 0x00]; // target: Portal + empty name + null
+        let mut close_msg = vec![b'C'];
+        close_msg.extend_from_slice(&(close_body.len() as i32 + 4).to_be_bytes());
+        close_msg.extend_from_slice(&close_body);
+        writer.write_all(&close_msg).await.unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'3', "expected CloseComplete after closing portal");
+
+        // Execute the now-closed portal -> should get error
+        let execute_msg = build_execute_message("", 0);
+        writer.write_all(&execute_msg).await.unwrap();
+
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(
+            msg_type, b'E',
+            "expected ErrorResponse for execute closed portal, got 0x{:02x}",
+            msg_type
+        );
+
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'Z');
+    }
+
+    #[tokio::test]
+    async fn test_close_nonexistent_statement() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handler = Arc::new(MockHandler);
+        let auth_config = AuthConfig {
+            accept_any_password: true,
+            ..Default::default()
+        };
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut conn = PgConnection::new(stream, 1, handler, auth_config);
+            let _ = conn.run().await;
+        });
+
+        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut reader, mut writer) = tokio::io::split(client_stream);
+
+        startup_and_auth(&mut reader, &mut writer, "user", "db").await;
+
+        // Close a statement that was never parsed — should still get CloseComplete
+        let mut close_body = vec![b'S'];
+        close_body.extend_from_slice(b"nonexistent_stmt");
+        close_body.push(0);
+        let mut close_msg = vec![b'C'];
+        close_msg.extend_from_slice(&(close_body.len() as i32 + 4).to_be_bytes());
+        close_msg.extend_from_slice(&close_body);
+        writer.write_all(&close_msg).await.unwrap();
+
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(
+            msg_type, b'3',
+            "expected CloseComplete even for nonexistent statement, got 0x{:02x}",
+            msg_type
+        );
+
+        writer.write_all(&build_sync_message()).await.unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'Z');
+    }
+
+    #[tokio::test]
+    async fn test_close_nonexistent_portal() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handler = Arc::new(MockHandler);
+        let auth_config = AuthConfig {
+            accept_any_password: true,
+            ..Default::default()
+        };
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut conn = PgConnection::new(stream, 1, handler, auth_config);
+            let _ = conn.run().await;
+        });
+
+        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut reader, mut writer) = tokio::io::split(client_stream);
+
+        startup_and_auth(&mut reader, &mut writer, "user", "db").await;
+
+        // Close a portal that was never bound — should still get CloseComplete
+        let mut close_body = vec![b'P'];
+        close_body.extend_from_slice(b"nonexistent_portal");
+        close_body.push(0);
+        let mut close_msg = vec![b'C'];
+        close_msg.extend_from_slice(&(close_body.len() as i32 + 4).to_be_bytes());
+        close_msg.extend_from_slice(&close_body);
+        writer.write_all(&close_msg).await.unwrap();
+
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(
+            msg_type, b'3',
+            "expected CloseComplete even for nonexistent portal, got 0x{:02x}",
+            msg_type
+        );
+
+        writer.write_all(&build_sync_message()).await.unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'Z');
+    }
+
+    #[tokio::test]
+    async fn test_describe_nonexistent_statement_returns_nodata() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handler = Arc::new(MockHandler);
+        let auth_config = AuthConfig {
+            accept_any_password: true,
+            ..Default::default()
+        };
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut conn = PgConnection::new(stream, 1, handler, auth_config);
+            let _ = conn.run().await;
+        });
+
+        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut reader, mut writer) = tokio::io::split(client_stream);
+
+        startup_and_auth(&mut reader, &mut writer, "user", "db").await;
+
+        // Describe a statement that was never parsed
+        writer
+            .write_all(&build_describe_message(b'S', "nonexistent_stmt"))
+            .await
+            .unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(
+            msg_type, b'n',
+            "expected NoData for nonexistent statement, got 0x{:02x}",
+            msg_type
+        );
+
+        writer.write_all(&build_sync_message()).await.unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'Z');
+    }
+
+    #[tokio::test]
+    async fn test_describe_unnamed_portal_returns_nodata() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handler = Arc::new(MockHandler);
+        let auth_config = AuthConfig {
+            accept_any_password: true,
+            ..Default::default()
+        };
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut conn = PgConnection::new(stream, 1, handler, auth_config);
+            let _ = conn.run().await;
+        });
+
+        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut reader, mut writer) = tokio::io::split(client_stream);
+
+        startup_and_auth(&mut reader, &mut writer, "user", "db").await;
+
+        // Describe the unnamed portal without binding first — should return NoData
+        writer
+            .write_all(&build_describe_message(b'P', ""))
+            .await
+            .unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(
+            msg_type, b'n',
+            "expected NoData for unnamed portal, got 0x{:02x}",
+            msg_type
+        );
+
+        writer.write_all(&build_sync_message()).await.unwrap();
+        let (msg_type, _body) = read_pg_message(&mut reader).await;
+        assert_eq!(msg_type, b'Z');
+    }
 }
