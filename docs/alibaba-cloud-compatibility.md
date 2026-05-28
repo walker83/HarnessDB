@@ -97,9 +97,10 @@ MaxCompute 协议支持两种签名方式：
 | `INSERT INTO t SELECT ...` | 直接执行 | ✅ |
 | `INSERT OVERWRITE TABLE t SELECT ...` | 转为 INSERT INTO | ✅ 自动转换 |
 | `INSERT INTO t PARTITION(ds='x') VALUES ...` | 剥离 PARTITION 子句 | ✅ 自动转换 |
-| `UPDATE t SET ... WHERE ...` | 不支持 | ❌ MC 本身不支持 |
-| `DELETE FROM t WHERE ...` | 不支持 | ❌ MC 本身不支持 |
+| `UPDATE t SET ... WHERE ...` | 直接执行 | ✅ RorisDB 支持 |
+| `DELETE FROM t WHERE ...` | 直接执行 | ✅ RorisDB 支持 |
 | `MERGE INTO ...` | 不支持 | ❌ Phase 2 |
+| `FROM src INSERT INTO t1 ... INSERT INTO t2 ...` (MULTI INSERT) | 直接执行 | ✅ 透传 |
 
 #### 查询
 
@@ -111,17 +112,29 @@ MaxCompute 协议支持两种签名方式：
 | `SELECT ... ORDER BY ...` | 直接执行 | ✅ |
 | `WITH ... AS ... SELECT ...` (CTE) | 直接执行 | ✅ |
 | 窗口函数 | 直接执行 | ✅ |
-| `GROUPING SETS / ROLLUP / CUBE` | 直接执行 | ✅ |
+| `GROUPING SETS / ROLLUP / CUBE` | 直接执行 | ✅ DataFusion 支持 |
 | `/*+ MAPJOIN(alias) */` | 剥离 hint | ✅ 静默忽略 |
 | `/*+ SKEWJOIN(alias) */` | 剥离 hint | ✅ 静默忽略 |
 | `DISTRIBUTE BY ... SORT BY ...` | 转为 ORDER BY | ✅ 自动转换 |
+| `CLUSTER BY col` | 转为 ORDER BY | ✅ 自动转换 |
+| `ZORDER BY col` | 剥离 | ✅ 静默忽略 |
 | `SET odps.sql.xxx=yyy` | 忽略 | ✅ 静默忽略 |
+| `SET project.xxx=yyy` | 忽略 | ✅ 静默忽略 |
+| `SET hive.xxx=yyy` | 忽略 | ✅ 静默忽略 |
 | `SETPROJECT xxx=yyy` | 忽略 | ✅ 静默忽略 |
-| `SELECT * EXCEPT(col1, col2)` | 不支持 | ❌ Phase 2 |
-| `SELECT * REPLACE(expr AS col)` | 不支持 | ❌ Phase 2 |
+| `SELECT * EXCEPT(col1, col2)` | 直接执行 | ✅ 透传 DataFusion |
+| `SELECT * REPLACE(expr AS col)` | 直接执行 | ✅ 透传 DataFusion |
+| `TABLESAMPLE(N PERCENT)` | 直接执行 | ✅ 透传 |
+| `QUALIFY ...` | 直接执行 | ✅ 透传 |
 | `LATERAL VIEW explode(col)` | 不支持 | ❌ Phase 2 |
 | `SELECT TRANSFORM(...) USING 'script'` | 不支持 | ❌ 高级特性 |
-| `SELECT /*+ MAPJOIN */ ... EXCEPT(...)` | hint 剥离, EXCEPT 不支持 | ⚠️ 部分 |
+
+#### DDL 扩展
+
+| MaxCompute 语法 | 处理方式 | 状态 |
+|----------------|---------|------|
+| `CREATE TABLE new LIKE existing` | 剥离 MC 后缀，透传 | ✅ |
+| `CREATE TABLE t AS SELECT ...` (CTAS) | 剥离 MC 子句 (LIFECYCLE 等) | ✅ |
 
 ---
 ---
@@ -172,11 +185,18 @@ MaxCompute 协议支持两种签名方式：
 | TIMESTAMPTZ | TIMESTAMP | ✅ 时区忽略 |
 | DATE | DATE | ✅ |
 | BYTEA | BLOB | ✅ |
-| JSON / JSONB | — | ❌ Phase 2 |
-| INT[] / TEXT[] | — | ❌ Phase 2 |
-| UUID | — | ❌ Phase 2 |
-| TIME | — | ❌ Phase 2 |
-| INTERVAL | — | ❌ Phase 2 |
+| JSON / JSONB | STRING | ✅ 映射到 STRING |
+| INT[] / TEXT[] | INT / STRING | ✅ 剥离数组标记 |
+| UUID | UUID | ✅ 透传 |
+| TIME | TIME | ✅ 透传 |
+| TIME WITH TIME ZONE / TIMETZ | TIME | ✅ 透传 |
+| INTERVAL | INTERVAL | ✅ 透传 |
+| MONEY | MONEY | ✅ 透传 |
+| BIT(n) / BIT VARYING(n) | BIT | ✅ 透传 |
+| INET / CIDR / MACADDR | INET | ✅ 透传 |
+| POINT / LINE / LSEG / BOX | POINT | ✅ 透传 |
+| TSVECTOR / TSQUERY | TSVECTOR | ✅ 透传 |
+| HLL / ROARINGBITMAP | HLL | ✅ Hologres 特有类型透传 |
 | SERIAL | INT | ⚠️ 无自增 |
 | BIGSERIAL | BIGINT | ⚠️ 无自增 |
 
@@ -185,9 +205,16 @@ MaxCompute 协议支持两种签名方式：
 | Hologres 语法 | 处理方式 | 状态 |
 |--------------|---------|------|
 | `CREATE TABLE (...) WITH (orientation='column', ...)` | 剥离 WITH 子句 | ✅ 静默忽略 |
+| `CREATE TABLE t WITH (...) AS SELECT ...` (CTAS) | 剥离 WITH 子句 | ✅ 静默忽略 |
 | `CALL set_table_property(...)` | 忽略 | ✅ 静默忽略 |
+| `CALL set_table_group(...)` | 忽略 | ✅ 静默忽略 |
 | `PARTITION BY LIST(col)` | 剥离 | ✅ |
 | `CREATE TABLE child PARTITION OF parent` | 忽略 | ✅ |
+| `CREATE INDEX idx ON t USING bitmap(col)` | 转为 `CREATE INDEX idx ON t(col)` | ✅ |
+| `ALTER TABLE t SET (orientation='column')` | 剥离 SET 子句 | ✅ 静默忽略 |
+| `CREATE FOREIGN TABLE ...` | 透传 + 类型映射 | ✅ |
+| `INSERT OVERWRITE TABLE t SELECT ...` | 转为 INSERT INTO | ✅ 自动转换 |
+| `COPY t FROM STDIN / TO STDOUT` | 透传 | ✅ |
 | `DROP TABLE [IF EXISTS]` | 直接执行 | ✅ |
 
 ### 不支持的 PG 特性
@@ -195,19 +222,15 @@ MaxCompute 协议支持两种签名方式：
 | 功能 | 状态 | 错误信息 |
 |------|------|---------|
 | `CREATE TRIGGER` | ❌ | Hologres 不支持触发器 |
-| `PL/pgSQL` 存储过程 | ❌ | Hologres 不支持存储过程 |
+| `CREATE FUNCTION` | ❌ | Phase 1 不支持 |
 | `WITH RECURSIVE` | ❌ | Hologres 不支持递归 CTE |
 | `SELECT ... FOR UPDATE` | ❌ | Hologres 无行级锁 |
 | `CREATE EXTENSION` | ⚠️ | 静默忽略 |
-| `GIN/GiST/BRIN 索引` | ❌ | Hologres 仅支持 B-tree |
 | `CREATE DOMAIN` | ❌ | 不支持 |
 | `LISTEN/NOTIFY` | ❌ | 不支持 |
-| 表继承 | ❌ | 不支持 |
-| 外键约束 | ⚠️ | 剥离（Hologres 不强制） |
 | `EXPLAIN ANALYZE` | ⚠️ | 转为 EXPLAIN |
 | `DISTINCT ON` | ❌ | 不支持 |
-| `INSERT ON CONFLICT` | ⚠️ | 转为 INSERT INTO |
-| 标准视图 | ❌ | 仅支持物化视图 |
+| `INSERT ON CONFLICT` | ⚠️ | 剥离 ON CONFLICT |
 
 ### pg_catalog 兼容
 

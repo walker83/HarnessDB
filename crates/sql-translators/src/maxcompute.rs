@@ -200,11 +200,52 @@ fn process_create_table(sql: &str) -> (String, Vec<String>) {
     // Find the first opening paren that starts the column definition block.
     // We need to skip past "CREATE TABLE [IF NOT EXISTS] [db.]name"
     let after_create = create_re.find(trimmed).unwrap().end();
+
+    // Check for CTAS (CREATE TABLE ... AS SELECT)
+    // This needs to be checked before looking for column definitions
+    // because CTAS might have a subquery with parentheses
+    let as_select_re = Regex::new(r"(?i)\bAS\s+SELECT\b").unwrap();
+    let after_create_rest = &trimmed[after_create..];
+    if as_select_re.is_match(after_create_rest) {
+        // CTAS - strip MC clauses from the tail
+        let mut result = trimmed.to_string();
+        let (r1, w1) = strip_lifecycle(&result);
+        result = r1;
+        warnings.extend(w1);
+        let (r2, w2) = strip_stored_as(&result);
+        result = r2;
+        warnings.extend(w2);
+        let (r3, w3) = strip_clustered_by(&result);
+        result = r3;
+        warnings.extend(w3);
+        let (r4, w4) = strip_tblproperties(&result);
+        result = r4;
+        warnings.extend(w4);
+        return (result.trim().to_string(), warnings);
+    }
+
     // The column defs start with the first '(' that is not part of a keyword
     let col_def_start = find_col_def_start(trimmed, after_create);
     let col_def_start = match col_def_start {
         Some(pos) => pos,
-        None => return (trimmed.to_string(), Vec::new()),
+        None => {
+            // No column definitions - could be CREATE TABLE LIKE or similar
+            // Strip MC-specific clauses from the tail
+            let mut result = trimmed.to_string();
+            let (r1, w1) = strip_lifecycle(&result);
+            result = r1;
+            warnings.extend(w1);
+            let (r2, w2) = strip_stored_as(&result);
+            result = r2;
+            warnings.extend(w2);
+            let (r3, w3) = strip_clustered_by(&result);
+            result = r3;
+            warnings.extend(w3);
+            let (r4, w4) = strip_tblproperties(&result);
+            result = r4;
+            warnings.extend(w4);
+            return (result.trim().to_string(), warnings);
+        },
     };
 
     // Extract column definitions
@@ -515,7 +556,7 @@ fn translate_distribute_sort(sql: &str) -> (String, Vec<String>) {
 /// Handle SET/SETPROJECT statements (no-op).
 fn is_noop_set_statement(sql: &str) -> bool {
     let trimmed = sql.trim();
-    let set_re = Regex::new(r"(?i)^\s*SET\s+odps\.\S+\s*=\s*\S*\s*;?\s*$").unwrap();
+    let set_re = Regex::new(r"(?i)^\s*SET\s+(?:odps|project|hive)\.\S+\s*=\s*\S*\s*;?\s*$").unwrap();
     let setproject_re = Regex::new(r"(?i)^\s*SETPROJECT\s+\S+\s*=\s*\S*\s*;?\s*$").unwrap();
     set_re.is_match(trimmed) || setproject_re.is_match(trimmed)
 }
@@ -540,28 +581,11 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
         ));
     }
 
-    // SELECT * REPLACE(expr AS col)
-    let replace_re = Regex::new(r"(?i)\*\s+REPLACE\s*\(").unwrap();
-    if replace_re.is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "SELECT * REPLACE is not supported by RorisDB",
-        ));
-    }
-
     // MERGE INTO
     let merge_re = Regex::new(r"(?i)^\s*MERGE\s+INTO\b").unwrap();
     if merge_re.is_match(trimmed) {
         return Some(TranslateResult::error(
             "MERGE INTO is not supported by RorisDB",
-        ));
-    }
-
-    // SELECT * EXCEPT(col1, col2) - cannot expand without schema
-    let except_re = Regex::new(r"(?i)\*\s+EXCEPT\s*\(").unwrap();
-    if except_re.is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "SELECT * EXCEPT cannot be translated without schema information. \
-             Please specify the column list explicitly.",
         ));
     }
 
@@ -576,21 +600,145 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
         }
     }
 
-    // UPDATE / DELETE on MaxCompute (not supported by MaxCompute either, but handle anyway)
-    let update_re = Regex::new(r"(?i)^\s*UPDATE\b").unwrap();
-    if update_re.is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "UPDATE is not supported by MaxCompute dialect",
-        ));
-    }
-    let delete_re = Regex::new(r"(?i)^\s*DELETE\b").unwrap();
-    if delete_re.is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "DELETE is not supported by MaxCompute dialect",
-        ));
+    None
+}
+
+/// Convert `CLUSTER BY col` to `ORDER BY col`.
+/// Uses string literal masking and paren-depth tracking to avoid matching
+/// keywords inside subqueries or string values.
+fn translate_cluster_by(sql: &str) -> (String, Vec<String>) {
+    let mut warnings = Vec::new();
+    let trimmed = sql.trim();
+
+    // Mask string literals to avoid matching keywords inside string values
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
+    let cluster_re = Regex::new(r"(?i)\bCLUSTER\s+BY\b").unwrap();
+
+    if let Some(cluster_pos) = cluster_re.find(&masked) {
+        warnings.push("CLUSTER BY converted to ORDER BY".to_string());
+
+        // Extract the CLUSTER BY columns
+        let after_cluster = &masked[cluster_pos.end()..];
+
+        // Find end of CLUSTER BY columns with paren-depth tracking
+        let mut cluster_end = masked.len();
+        let mut paren_depth: u32 = 0;
+        let bytes = after_cluster.as_bytes();
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                _ => {}
+            }
+            if paren_depth > 0 {
+                continue;
+            }
+            if i + 1 < bytes.len() {
+                let remaining = &after_cluster[i..];
+                let remaining_upper = remaining.to_uppercase();
+                let end_keywords = [
+                    " FROM ", " WHERE ", " GROUP ", " HAVING ", " ORDER ", " LIMIT ",
+                    " UNION ", " INTERSECT ", " EXCEPT ", ";",
+                ];
+                for kw in &end_keywords {
+                    if remaining_upper.starts_with(kw) {
+                        let candidate = cluster_pos.end() + i;
+                        if candidate < cluster_end {
+                            cluster_end = candidate;
+                        }
+                        break;
+                    }
+                }
+            }
+            if b == b';' {
+                let candidate = cluster_pos.end() + i;
+                if candidate < cluster_end {
+                    cluster_end = candidate;
+                }
+            }
+        }
+
+        let cluster_cols = &masked[cluster_pos.end()..cluster_end].trim();
+
+        let final_sql_masked = format!(
+            "{} ORDER BY {}{}",
+            &masked[..cluster_pos.start()],
+            cluster_cols,
+            &masked[cluster_end..]
+        );
+
+        let final_sql = crate::restore_string_literals(&final_sql_masked, &original_strings);
+        return (final_sql.trim().to_string(), warnings);
     }
 
-    None
+    let result = crate::restore_string_literals(&masked, &original_strings);
+    (result, warnings)
+}
+
+/// Strip `ZORDER BY (...)` clauses for compatibility.
+/// ZORDER BY is a MaxCompute data skipping optimization not supported by RorisDB.
+fn strip_zorder_by(sql: &str) -> (String, Vec<String>) {
+    let mut warnings = Vec::new();
+    let (masked, original_strings) = crate::mask_string_literals(sql);
+    let mut result = masked.trim_end().to_string();
+
+    // Match ZORDER BY (col1, col2) or ZORDER BY col1, col2
+    let re = Regex::new(r"(?i)\s+ZORDER\s+BY\b").unwrap();
+    while let Some(cap) = re.find(&result) {
+        let start = cap.start();
+        let after = &result[cap.end()..];
+        let trimmed_after = after.trim_start();
+        let mut end_pos = result.len();
+
+        if trimmed_after.starts_with('(') {
+            // Parenthesized form: ZORDER BY (col1, col2)
+            let paren_offset = after.len() - trimmed_after.len();
+            let paren_start = cap.end() + paren_offset;
+            if let Some((_content, paren_end)) = extract_paren_content(&result, paren_start) {
+                end_pos = paren_end + 1;
+            } else {
+                break; // unbalanced parens, stop
+            }
+        } else {
+            // Non-parenthesized form: ZORDER BY col1, col2
+            let mut paren_depth: u32 = 0;
+            let bytes = after.as_bytes();
+            for (i, &b) in bytes.iter().enumerate() {
+                match b {
+                    b'(' => paren_depth += 1,
+                    b')' => paren_depth = paren_depth.saturating_sub(1),
+                    _ => {}
+                }
+                if paren_depth > 0 {
+                    continue;
+                }
+                let remaining = &after[i..];
+                let remaining_upper = remaining.to_uppercase();
+                for kw in &[
+                    " FROM ", " WHERE ", " GROUP ", " HAVING ", " ORDER ", " LIMIT ",
+                    " UNION ", " INTERSECT ", " EXCEPT ", ";",
+                ] {
+                    if remaining_upper.starts_with(kw) {
+                        end_pos = cap.end() + i;
+                        break;
+                    }
+                }
+                if end_pos < result.len() {
+                    break;
+                }
+            }
+        }
+
+        warnings.push(format!(
+            "ZORDER BY clause stripped: '{}'",
+            result[start..end_pos].trim()
+        ));
+        result = format!("{}{}", &result[..start], &result[end_pos..]);
+    }
+
+    let result = crate::restore_string_literals(&result, &original_strings);
+    (result, warnings)
 }
 
 /// Map MaxCompute types to RorisDB types in column definitions.
@@ -664,6 +812,20 @@ impl DialectTranslator for MaxComputeTranslator {
             warnings.extend(w);
         }
 
+        // Step 4b: Handle CLUSTER BY -> ORDER BY
+        {
+            let (r, w) = translate_cluster_by(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 4c: Handle ZORDER BY (strip for compatibility)
+        {
+            let (r, w) = strip_zorder_by(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
         // Step 5: Map types
         result = map_types_in_ddl(&result);
 
@@ -684,10 +846,7 @@ impl DialectTranslator for MaxComputeTranslator {
             "MERGE INTO",
             "SELECT TRANSFORM ... USING 'script'",
             "LATERAL VIEW EXPLODE",
-            "SELECT * REPLACE(expr AS col)",
             "Complex types (ARRAY, MAP, STRUCT)",
-            "SELECT * EXCEPT(col1, col2) (without schema)",
-            "UPDATE / DELETE",
             "MAPJOIN / SKEWJOIN hints (silently stripped)",
             "PARTITIONED BY (converted to regular columns)",
             "LIFECYCLE (silently stripped)",
@@ -697,7 +856,9 @@ impl DialectTranslator for MaxComputeTranslator {
             "INSERT OVERWRITE (converted to INSERT INTO)",
             "INSERT with PARTITION (partition clause stripped)",
             "DISTRIBUTE BY (converted to ORDER BY via SORT BY)",
-            "SET odps.* (no-op)",
+            "CLUSTER BY (converted to ORDER BY)",
+            "ZORDER BY (silently stripped)",
+            "SET odps.* / project.* / hive.* (no-op)",
             "SETPROJECT (no-op)",
         ]
     }
@@ -1063,6 +1224,74 @@ mod tests {
         assert!(result.sql.contains("ORDER BY col2 DESC LIMIT 10"));
     }
 
+    // ── CLUSTER BY → ORDER BY ──
+
+    #[test]
+    fn test_cluster_by_to_order_by() {
+        let result = translator().translate(
+            "SELECT * FROM t CLUSTER BY col1",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t ORDER BY col1");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("CLUSTER BY")),
+            "Expected warning about CLUSTER BY, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_cluster_by_multiple_cols() {
+        let result = translator().translate(
+            "SELECT * FROM t CLUSTER BY col1, col2",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t ORDER BY col1, col2");
+    }
+
+    #[test]
+    fn test_cluster_by_with_clause() {
+        let result = translator().translate(
+            "SELECT * FROM t CLUSTER BY col1 LIMIT 10",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t ORDER BY col1 LIMIT 10");
+    }
+
+    // ── ZORDER BY ──
+
+    #[test]
+    fn test_zorder_by_stripped() {
+        let result = translator().translate(
+            "SELECT * FROM t ZORDER BY (col1, col2)",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("ZORDER BY")),
+            "Expected warning about ZORDER BY, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_zorder_by_simple() {
+        let result = translator().translate(
+            "SELECT * FROM t ZORDER BY col1",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t");
+    }
+
+    #[test]
+    fn test_zorder_by_with_select() {
+        let result = translator().translate(
+            "SELECT * FROM t ZORDER BY (a, b) LIMIT 10",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t LIMIT 10");
+    }
+
     // ── SET/SETPROJECT (no-op) ──
 
     #[test]
@@ -1080,37 +1309,217 @@ mod tests {
         assert_noop("SETPROJECT my_project=value;");
     }
 
-    // ── Unsupported features ──
+    #[test]
+    fn test_set_project_prefix() {
+        assert_noop("SET project.name=my_project;");
+    }
 
     #[test]
-    fn test_select_transform_error() {
-        assert_error(
-            "SELECT TRANSFORM (col) USING 'python script.py' FROM t",
-            "SELECT TRANSFORM",
+    fn test_set_hive_prefix() {
+        assert_noop("SET hive.exec.dynamic.partition=true;");
+    }
+
+    #[test]
+    fn test_set_hive_without_semicolon() {
+        assert_noop("SET hive.mapred.mode=nonstrict");
+    }
+
+    #[test]
+    fn test_set_project_without_semicolon() {
+        assert_noop("SET project.name=my_project");
+    }
+
+    // ── CREATE TABLE LIKE ──
+
+    #[test]
+    fn test_create_table_like() {
+        let result = translator().translate(
+            "CREATE TABLE new_table LIKE existing_table",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE new_table LIKE existing_table");
+    }
+
+    #[test]
+    fn test_create_table_like_with_suffixes() {
+        let result = translator().translate(
+            "CREATE TABLE new_table LIKE existing_table LIFECYCLE 30 STORED AS PARQUET",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE new_table LIKE existing_table");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("LIFECYCLE")),
+            "Expected warning about LIFECYCLE"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("STORED AS")),
+            "Expected warning about STORED AS"
         );
     }
 
     #[test]
-    fn test_lateral_view_explode_error() {
-        assert_error(
-            "SELECT col, tag FROM t LATERAL VIEW EXPLODE(tags) t AS tag",
-            "LATERAL VIEW EXPLODE",
+    fn test_create_table_like_if_not_exists() {
+        let result = translator().translate(
+            "CREATE TABLE IF NOT EXISTS new_table LIKE existing_table TBLPROPERTIES ('k'='v')",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE IF NOT EXISTS new_table LIKE existing_table");
+    }
+
+    // ── CREATE TABLE AS SELECT (CTAS) ──
+
+    #[test]
+    fn test_create_table_as_select() {
+        let result = translator().translate(
+            "CREATE TABLE new_table AS SELECT * FROM src",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE new_table AS SELECT * FROM src");
+    }
+
+    #[test]
+    fn test_create_table_as_select_with_if_not_exists() {
+        let result = translator().translate(
+            "CREATE TABLE IF NOT EXISTS db.new_table AS SELECT id, name FROM src WHERE active = 1",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE IF NOT EXISTS db.new_table AS SELECT id, name FROM src WHERE active = 1"
         );
     }
 
     #[test]
-    fn test_select_replace_error() {
-        assert_error(
+    fn test_ctas_with_mc_clauses() {
+        let result = translator().translate(
+            "CREATE TABLE new_table AS SELECT * FROM src LIFECYCLE 90 STORED AS ORC",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE new_table AS SELECT * FROM src");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("LIFECYCLE")),
+            "Expected warning about LIFECYCLE"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("STORED AS")),
+            "Expected warning about STORED AS"
+        );
+    }
+
+    #[test]
+    fn test_ctas_with_subquery_parens() {
+        // CTAS with parenthesized subquery should not confuse column def detection
+        let result = translator().translate(
+            "CREATE TABLE t AS SELECT * FROM (SELECT * FROM src WHERE active = 1) sub",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE t AS SELECT * FROM (SELECT * FROM src WHERE active = 1) sub"
+        );
+    }
+
+    // ── MULTI INSERT ──
+
+    #[test]
+    fn test_multi_insert_passthrough() {
+        let result = translator().translate(
+            "FROM src INSERT INTO t1 SELECT a, b WHERE cond INSERT INTO t2 SELECT a, c WHERE cond2",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "FROM src INSERT INTO t1 SELECT a, b WHERE cond INSERT INTO t2 SELECT a, c WHERE cond2"
+        );
+    }
+
+    #[test]
+    fn test_multi_insert_overwrite_passthrough() {
+        let result = translator().translate(
+            "FROM src INSERT OVERWRITE TABLE t1 SELECT a, b INSERT OVERWRITE TABLE t2 SELECT a, c",
+        );
+        assert!(result.success);
+        // INSERT OVERWRITE not converted because MULTI INSERT starts with FROM, not INSERT
+        // The INSERT OVERWRITE regex uses ^ so it won't match nested INSERTs
+        assert_eq!(
+            result.sql,
+            "FROM src INSERT OVERWRITE TABLE t1 SELECT a, b INSERT OVERWRITE TABLE t2 SELECT a, c"
+        );
+    }
+
+    // ── Features now passed through to RorisDB ──
+    fn test_select_replace_passthrough() {
+        // SELECT * REPLACE now passes through to DataFusion
+        assert_translated(
             "SELECT * REPLACE (col1 + 1 AS col1) FROM t",
-            "SELECT * REPLACE",
+            "SELECT * REPLACE (col1 + 1 AS col1) FROM t",
         );
     }
 
     #[test]
-    fn test_select_except_error() {
-        assert_error(
+    fn test_select_except_passthrough() {
+        // SELECT * EXCEPT now passes through to DataFusion
+        assert_translated(
             "SELECT * EXCEPT (col1, col2) FROM t",
-            "SELECT * EXCEPT",
+            "SELECT * EXCEPT (col1, col2) FROM t",
+        );
+    }
+
+    #[test]
+    fn test_update_passthrough() {
+        // UPDATE now passes through (RorisDB supports it)
+        assert_translated(
+            "UPDATE t SET col1 = 1 WHERE id = 1",
+            "UPDATE t SET col1 = 1 WHERE id = 1",
+        );
+    }
+
+    #[test]
+    fn test_delete_passthrough() {
+        // DELETE now passes through (RorisDB supports it)
+        assert_translated(
+            "DELETE FROM t WHERE id = 1",
+            "DELETE FROM t WHERE id = 1",
+        );
+    }
+
+    #[test]
+    fn test_tablesample_passthrough() {
+        assert_translated(
+            "SELECT * FROM t TABLESAMPLE(10 PERCENT)",
+            "SELECT * FROM t TABLESAMPLE(10 PERCENT)",
+        );
+    }
+
+    #[test]
+    fn test_qualify_passthrough() {
+        assert_translated(
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
+        );
+    }
+
+    #[test]
+    fn test_grouping_sets_passthrough() {
+        assert_translated(
+            "SELECT col1, col2, COUNT(*) FROM t GROUP BY GROUPING SETS ((col1), (col2))",
+            "SELECT col1, col2, COUNT(*) FROM t GROUP BY GROUPING SETS ((col1), (col2))",
+        );
+    }
+
+    #[test]
+    fn test_rollup_passthrough() {
+        assert_translated(
+            "SELECT col1, col2, COUNT(*) FROM t GROUP BY ROLLUP (col1, col2)",
+            "SELECT col1, col2, COUNT(*) FROM t GROUP BY ROLLUP (col1, col2)",
+        );
+    }
+
+    #[test]
+    fn test_cube_passthrough() {
+        assert_translated(
+            "SELECT col1, col2, COUNT(*) FROM t GROUP BY CUBE (col1, col2)",
+            "SELECT col1, col2, COUNT(*) FROM t GROUP BY CUBE (col1, col2)",
         );
     }
 
@@ -1120,16 +1529,6 @@ mod tests {
             "CREATE TABLE t (col1 ARRAY<STRING>)",
             "Complex types",
         );
-    }
-
-    #[test]
-    fn test_update_error() {
-        assert_error("UPDATE t SET col1 = 1 WHERE id = 1", "UPDATE");
-    }
-
-    #[test]
-    fn test_delete_error() {
-        assert_error("DELETE FROM t WHERE id = 1", "DELETE");
     }
 
     // ── Type Mapping ──
@@ -1669,6 +2068,8 @@ mod tests {
             // All SET / SETPROJECT statements should be no-ops
             assert_noop("SET odps.sql.allow.fullscan=true;");
             assert_noop("SET odps.sql.type.system.odps2=true;");
+            assert_noop("SET project.name=my_project;");
+            assert_noop("SET hive.exec.dynamic.partition=true;");
             assert_noop("SETPROJECT odps.instance.priority=1;");
         }
 

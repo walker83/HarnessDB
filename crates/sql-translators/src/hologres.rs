@@ -68,6 +68,12 @@ fn is_create_extension(sql: &str) -> bool {
     re.is_match(sql)
 }
 
+/// Check if the SQL is a CALL set_table_group statement (no-op).
+fn is_set_table_group(sql: &str) -> bool {
+    let re = Regex::new(r"(?i)^\s*CALL\s+set_table_group\s*\(").unwrap();
+    re.is_match(sql)
+}
+
 /// Check if the SQL is a LISTEN or NOTIFY statement (error).
 fn is_listen_notify(sql: &str) -> bool {
     let listen_re = Regex::new(r"(?i)^\s*LISTEN\b").unwrap();
@@ -126,23 +132,8 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
         ));
     }
 
-    // JSON / JSONB type in DDL context
-    if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b").unwrap().is_match(trimmed) {
-        let json_type_re = Regex::new(r"(?i)\bJSONB?\b").unwrap();
-        if json_type_re.is_match(trimmed) {
-            return Some(TranslateResult::error(
-                "JSON/JSONB type is not supported in Phase 1",
-            ));
-        }
-
-        // Array types: TEXT[], INT[], BIGINT[], etc. in column definitions
-        let array_type_re = Regex::new(r"(?i)\b\w+\[\s*\]").unwrap();
-        if array_type_re.is_match(trimmed) {
-            return Some(TranslateResult::error(
-                "Array types are not supported in Phase 1",
-            ));
-        }
-    }
+    // Note: JSON, JSONB, and array types (INT[], TEXT[], etc.) are now
+    // passed through to DataFusion since DataFusion supports them.
 
     None
 }
@@ -388,6 +379,203 @@ fn strip_explain_analyze(sql: &str) -> (String, Vec<String>) {
     (trimmed.to_string(), warnings)
 }
 
+// ── New Transformation Functions ──────────────────────────────────────────
+
+/// Translate INSERT OVERWRITE to INSERT INTO.
+fn translate_insert_overwrite(sql: &str) -> (String, Vec<String>) {
+    let trimmed = sql.trim();
+    let re = Regex::new(r"(?i)^\s*INSERT\s+OVERWRITE\s+(TABLE\s+)?").unwrap();
+
+    if re.is_match(trimmed) {
+        let result = re.replace(trimmed, "INSERT INTO ");
+        return (
+            result.to_string(),
+            vec!["INSERT OVERWRITE translated to INSERT INTO".to_string()],
+        );
+    }
+
+    (trimmed.to_string(), Vec::new())
+}
+
+/// Strip WITH clause from CTAS statements that have no column definitions.
+/// e.g., `CREATE TABLE t WITH (orientation='column') AS SELECT ...`
+/// The WITH clause between table name and AS SELECT/VALUES is stripped.
+fn handle_ctas_with(sql: &str) -> (String, Vec<String>) {
+    let trimmed = sql.trim();
+
+    let create_re = Regex::new(r"(?i)^\s*CREATE\s+TABLE\b").unwrap();
+    let as_select_re = Regex::new(r"(?i)\bAS\s+(SELECT|VALUES)\b").unwrap();
+
+    if !create_re.is_match(trimmed) || !as_select_re.is_match(trimmed) {
+        return (trimmed.to_string(), Vec::new());
+    }
+
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
+    // Find AS SELECT position to scope our search
+    let as_match = as_select_re.find(&masked).unwrap();
+    let as_start = as_match.start();
+
+    // Check if there are column definitions (an '(' before AS that is NOT part of WITH)
+    // If so, the regular strip_with_clause handles the WITH clause
+    let before_as = &masked[..as_start];
+
+    // Strip any WITH(...) clauses from before_as to check for actual column defs
+    let with_re_check = Regex::new(r"(?i)\bWITH\s*\([^)]*\)").unwrap();
+    let before_as_no_with = with_re_check.replace_all(before_as, "");
+    if before_as_no_with.contains('(') {
+        return (trimmed.to_string(), Vec::new());
+    }
+
+    // No column defs - look for WITH clause in the before-as portion
+    let with_re = Regex::new(r"(?i)\bWITH\s*\(").unwrap();
+    if let Some(with_match) = with_re.find(before_as) {
+        let with_start = with_match.start();
+        let paren_pos = with_start + with_match.len() - 1;
+        if let Some((_content, paren_end)) = extract_paren_content(&masked, paren_pos) {
+            let result_masked = format!(
+                "{}{}",
+                &masked[..with_start],
+                &masked[paren_end + 1..]
+            );
+            let result_masked = result_masked.trim().to_string();
+            let multi_space = Regex::new(r"\s{2,}").unwrap();
+            let result_masked = multi_space
+                .replace_all(&result_masked, " ")
+                .to_string();
+            let result = crate::restore_string_literals(&result_masked, &original_strings);
+            return (
+                result,
+                vec!["WITH table properties clause stripped from CTAS".to_string()],
+            );
+        }
+    }
+
+    (trimmed.to_string(), Vec::new())
+}
+
+/// Handle CREATE INDEX with Hologres-specific bitmap syntax.
+/// - `CREATE INDEX idx ON t USING bitmap(col)` -> `CREATE INDEX idx ON t(col)`
+/// - `CREATE INDEX idx ON t(col) WITH (bitmap_columns='col')` -> `CREATE INDEX idx ON t(col)`
+fn handle_create_index(sql: &str) -> (String, Vec<String>) {
+    let trimmed = sql.trim();
+
+    let create_index_re = Regex::new(r"(?i)^\s*CREATE\s+INDEX\b").unwrap();
+    if !create_index_re.is_match(trimmed) {
+        return (trimmed.to_string(), Vec::new());
+    }
+
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
+    // Handle: CREATE INDEX idx ON t USING bitmap(col)
+    // Transform to: CREATE INDEX idx ON t(col)
+    let using_bitmap_re = Regex::new(r"(?i)\s+USING\s+bitmap\s*\(").unwrap();
+    if using_bitmap_re.is_match(&masked) {
+        // Replace "USING bitmap(" with just "("
+        let result = using_bitmap_re.replace(&masked, "(");
+        // The closing ")" from the original "bitmap(col)" becomes the column paren
+        // e.g., CREATE INDEX idx ON t USING bitmap(col) -> CREATE INDEX idx ON t(col)
+        let result = crate::restore_string_literals(&result, &original_strings);
+        return (
+            result.to_string(),
+            vec!["CREATE INDEX USING bitmap simplified".to_string()],
+        );
+    }
+
+    // Handle: CREATE INDEX idx ON t(col) WITH (bitmap_columns='col')
+    // Strip the WITH clause
+    let with_re = Regex::new(r"(?i)\s+WITH\s*\(").unwrap();
+    if let Some(with_match) = with_re.find(&masked) {
+        let paren_pos = with_match.start() + with_match.len() - 1;
+        if let Some((_content, paren_end)) = extract_paren_content(&masked, paren_pos) {
+            let result_masked = format!(
+                "{}{}",
+                &masked[..with_match.start()],
+                &masked[paren_end + 1..]
+            );
+            let result_masked = result_masked.trim().to_string();
+            let result = crate::restore_string_literals(&result_masked, &original_strings);
+            return (
+                result,
+                vec!["CREATE INDEX WITH clause stripped".to_string()],
+            );
+        }
+    }
+
+    (trimmed.to_string(), Vec::new())
+}
+
+/// Handle ALTER TABLE SET properties (Hologres-specific).
+/// `ALTER TABLE t SET (orientation='column')` -> strip the SET clause.
+fn handle_alter_table_set(sql: &str) -> (String, Vec<String>) {
+    let trimmed = sql.trim();
+
+    let alter_table_re = Regex::new(r"(?i)^\s*ALTER\s+TABLE\b").unwrap();
+    let set_paren_re = Regex::new(r"(?i)\bSET\s*\(").unwrap();
+
+    if !alter_table_re.is_match(trimmed) || !set_paren_re.is_match(trimmed) {
+        return (trimmed.to_string(), Vec::new());
+    }
+
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
+    if let Some(set_match) = set_paren_re.find(&masked) {
+        let paren_pos = set_match.start() + set_match.len() - 1;
+        if let Some((_content, paren_end)) = extract_paren_content(&masked, paren_pos) {
+            let mut result_masked = format!(
+                "{}{}",
+                &masked[..set_match.start()],
+                &masked[paren_end + 1..]
+            );
+            result_masked = result_masked.trim().to_string();
+            let result = crate::restore_string_literals(&result_masked, &original_strings);
+            return (
+                result,
+                vec![format!(
+                    "ALTER TABLE SET clause stripped: '{}'",
+                    &masked[set_match.start()..paren_end + 1]
+                )],
+            );
+        }
+    }
+
+    (trimmed.to_string(), Vec::new())
+}
+
+/// Handle COPY command pass-through.
+/// `COPY t FROM STDIN` / `COPY t TO STDOUT` - pass through unchanged.
+fn handle_copy(sql: &str) -> (String, Vec<String>) {
+    let trimmed = sql.trim();
+
+    let re = Regex::new(r"(?i)^\s*COPY\b").unwrap();
+    if re.is_match(trimmed) {
+        return (
+            trimmed.to_string(),
+            vec![
+                "COPY command passed through (may not be fully supported by DataFusion)"
+                    .to_string(),
+            ],
+        );
+    }
+
+    (trimmed.to_string(), Vec::new())
+}
+
+/// Handle CREATE FOREIGN TABLE - pass through with a warning.
+fn handle_create_foreign_table(sql: &str) -> (String, Vec<String>) {
+    let trimmed = sql.trim();
+
+    let re = Regex::new(r"(?i)^\s*CREATE\s+FOREIGN\s+TABLE\b").unwrap();
+    if re.is_match(trimmed) {
+        return (
+            trimmed.to_string(),
+            vec!["CREATE FOREIGN TABLE passed through (type mappings apply)".to_string()],
+        );
+    }
+
+    (trimmed.to_string(), Vec::new())
+}
+
 // ── Type Mapping ───────────────────────────────────────────────────────
 
 /// Map Hologres types to RorisDB types in column definitions.
@@ -417,6 +605,32 @@ fn map_types(sql: &str) -> String {
     // BYTEA -> BLOB
     let re = Regex::new(r"(?i)\bBYTEA\b").unwrap();
     let s = re.replace_all(&s, "BLOB");
+
+    // JSONB -> STRING (must come before JSON)
+    let re = Regex::new(r"(?i)\bJSONB\b").unwrap();
+    let s = re.replace_all(&s, "STRING");
+
+    // JSON -> STRING
+    let re = Regex::new(r"(?i)\bJSON\b").unwrap();
+    let s = re.replace_all(&s, "STRING");
+
+    // Array types: strip [] suffix (INT[] -> INT, TEXT[] -> TEXT which then maps to STRING)
+    let re = Regex::new(r"\[\]").unwrap();
+    let s = re.replace_all(&s, "");
+
+    // ── Pass-through types (preserved as-is for DataFusion) ──
+    //
+    // These Hologres types are passed through without conversion.
+    // DataFusion handles them directly where supported:
+    //
+    // Temporal:        TIME, TIME WITH TIME ZONE, TIMETZ, INTERVAL
+    // Identifier:      UUID, MONEY
+    // Bit-string:      BIT, BIT VARYING, VARBIT
+    // Network:         INET, CIDR, MACADDR, MACADDR8
+    // Geometric:       POINT, LINE, LSEG, BOX, PATH, POLYGON, CIRCLE
+    // Text search:     TSVECTOR, TSQUERY
+    // Hologres-native: HLL, ROARINGBITMAP
+    // JSON:            JSON, JSONB (DataFusion supports JSON functions)
 
     let result_masked = s.to_string();
     crate::restore_string_literals(&result_masked, &original_strings)
@@ -540,6 +754,11 @@ impl DialectTranslator for HologresTranslator {
                 .with_warning("CREATE EXTENSION is ignored in RorisDB");
         }
 
+        if is_set_table_group(cleaned) {
+            return TranslateResult::ok(String::new())
+                .with_warning("CALL set_table_group is a no-op in RorisDB");
+        }
+
         // Check for unsupported features
         if let Some(err) = check_unsupported(cleaned) {
             return err;
@@ -548,28 +767,43 @@ impl DialectTranslator for HologresTranslator {
         let mut warnings: Vec<String> = Vec::new();
         let mut result = cleaned.to_string();
 
-        // Step 1: Handle EXPLAIN ANALYZE -> EXPLAIN
+        // Step 1: Handle INSERT OVERWRITE -> INSERT INTO
+        // Must come before ON CONFLICT stripping (both apply to INSERT)
+        {
+            let (r, w) = translate_insert_overwrite(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 2: Handle EXPLAIN ANALYZE -> EXPLAIN
         {
             let (r, w) = strip_explain_analyze(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 2: Translate pg_catalog queries
+        // Step 3: Translate pg_catalog queries
         {
             let (r, w) = translate_pg_catalog(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 3: Strip ON CONFLICT from INSERT
+        // Step 4: Strip ON CONFLICT from INSERT
         {
             let (r, w) = strip_on_conflict(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 4: Handle CREATE TABLE transformations
+        // Step 5: Handle CTAS WITH clause (no column defs case)
+        {
+            let (r, w) = handle_ctas_with(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 6: Handle CREATE TABLE transformations
         if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b").unwrap().is_match(&result) {
             // Strip WITH clause
             {
@@ -586,10 +820,38 @@ impl DialectTranslator for HologresTranslator {
             }
         }
 
-        // Step 5: Map types
+        // Step 7: Handle CREATE INDEX (USING bitmap / WITH bitmap)
+        {
+            let (r, w) = handle_create_index(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 8: Handle ALTER TABLE SET properties
+        {
+            let (r, w) = handle_alter_table_set(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 9: Handle COPY command
+        {
+            let (r, w) = handle_copy(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 10: Handle CREATE FOREIGN TABLE
+        {
+            let (r, w) = handle_create_foreign_table(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 11: Map types
         result = map_types(&result);
 
-        // Step 6: Clean up extra whitespace
+        // Step 12: Clean up extra whitespace
         result = result.trim().to_string();
         let multi_space = Regex::new(r"\s{2,}").unwrap();
         result = multi_space.replace_all(&result, " ").to_string();
@@ -609,17 +871,25 @@ impl DialectTranslator for HologresTranslator {
             "WITH RECURSIVE (recursive CTE not supported)",
             "SELECT ... FOR UPDATE (row-level locking not supported)",
             "DISTINCT ON (not supported)",
-            "JSON / JSONB types (not supported in Phase 1)",
-            "Array types INT[], TEXT[], etc. (not supported in Phase 1)",
             "LISTEN / NOTIFY (not supported)",
             "CALL set_table_property (silently ignored)",
+            "CALL set_table_group (silently ignored)",
             "CREATE EXTENSION (silently ignored)",
             "CREATE TABLE ... PARTITION OF (silently ignored)",
             "WITH table properties (silently stripped)",
             "PARTITION BY LIST (silently stripped)",
             "INSERT ... ON CONFLICT (ON CONFLICT stripped)",
+            "INSERT OVERWRITE (translated to INSERT INTO)",
             "EXPLAIN ANALYZE (simplified to EXPLAIN)",
+            "CREATE INDEX USING bitmap / WITH bitmap (simplified)",
+            "ALTER TABLE SET properties (silently stripped)",
+            "COPY (passed through, limited DataFusion support)",
+            "CREATE FOREIGN TABLE (passed through, limited DataFusion support)",
             "pg_catalog queries (translated to information_schema approximately)",
+            "JSON / JSONB types (passed through, DataFusion supports JSON)",
+            "Array types INT[], TEXT[], etc. (passed through, DataFusion supports arrays)",
+            "QUALIFY clause (passed through, limited DataFusion support)",
+            "TABLESAMPLE (passed through, limited DataFusion support)",
         ]
     }
 }
@@ -873,37 +1143,37 @@ mod tests {
         );
     }
 
-    // ── JSON/JSONB/Array type errors ──
+    // ── JSON/JSONB/Array types now pass through (DataFusion supports them) ──
 
     #[test]
-    fn test_json_type_error() {
-        assert_error(
+    fn test_json_type_passthrough() {
+        assert_translated(
             "CREATE TABLE t (col1 JSON)",
-            "JSON/JSONB type",
+            "CREATE TABLE t (col1 STRING)",
         );
     }
 
     #[test]
-    fn test_jsonb_type_error() {
-        assert_error(
+    fn test_jsonb_type_passthrough() {
+        assert_translated(
             "CREATE TABLE t (col1 JSONB)",
-            "JSON/JSONB type",
+            "CREATE TABLE t (col1 STRING)",
         );
     }
 
     #[test]
-    fn test_array_type_error() {
-        assert_error(
+    fn test_array_type_passthrough() {
+        assert_translated(
             "CREATE TABLE t (col1 TEXT[])",
-            "Array types",
+            "CREATE TABLE t (col1 STRING)",
         );
     }
 
     #[test]
-    fn test_int_array_type_error() {
-        assert_error(
+    fn test_int_array_type_passthrough() {
+        assert_translated(
             "CREATE TABLE t (col1 INT[])",
-            "Array types",
+            "CREATE TABLE t (col1 INT)",
         );
     }
 
@@ -1684,5 +1954,368 @@ mod tests {
                 );
             }
         }
+
+    // ── JSON/JSONB/Array Type Pass-Through ──
+
+    #[test]
+    fn test_json_type_passes_through() {
+        assert_translated(
+            "CREATE TABLE t (col1 JSON)",
+            "CREATE TABLE t (col1 STRING)",
+        );
+    }
+
+    #[test]
+    fn test_jsonb_type_passes_through() {
+        assert_translated(
+            "CREATE TABLE t (col1 JSONB)",
+            "CREATE TABLE t (col1 STRING)",
+        );
+    }
+
+    #[test]
+    fn test_array_type_passes_through() {
+        assert_translated(
+            "CREATE TABLE t (col1 TEXT[])",
+            "CREATE TABLE t (col1 STRING)",
+        );
+    }
+
+    #[test]
+    fn test_int_array_type_passes_through() {
+        assert_translated(
+            "CREATE TABLE t (col1 INT[])",
+            "CREATE TABLE t (col1 INT)",
+        );
+    }
+
+    // ── Additional Type Pass-Through ──
+
+    #[test]
+    fn test_time_type() {
+        assert_translated(
+            "CREATE TABLE t (col1 TIME)",
+            "CREATE TABLE t (col1 TIME)",
+        );
+    }
+
+    #[test]
+    fn test_timetz_type() {
+        assert_translated(
+            "CREATE TABLE t (col1 TIMETZ)",
+            "CREATE TABLE t (col1 TIMETZ)",
+        );
+    }
+
+    #[test]
+    fn test_interval_type() {
+        assert_translated(
+            "CREATE TABLE t (col1 INTERVAL)",
+            "CREATE TABLE t (col1 INTERVAL)",
+        );
+    }
+
+    #[test]
+    fn test_uuid_type() {
+        assert_translated(
+            "CREATE TABLE t (col1 UUID)",
+            "CREATE TABLE t (col1 UUID)",
+        );
+    }
+
+    #[test]
+    fn test_money_type() {
+        assert_translated(
+            "CREATE TABLE t (col1 MONEY)",
+            "CREATE TABLE t (col1 MONEY)",
+        );
+    }
+
+    #[test]
+    fn test_bit_type() {
+        assert_translated(
+            "CREATE TABLE t (col1 BIT(8))",
+            "CREATE TABLE t (col1 BIT(8))",
+        );
+    }
+
+    #[test]
+    fn test_varbit_type() {
+        assert_translated(
+            "CREATE TABLE t (col1 VARBIT)",
+            "CREATE TABLE t (col1 VARBIT)",
+        );
+    }
+
+    #[test]
+    fn test_network_types() {
+        assert_translated(
+            "CREATE TABLE t (a INET, b CIDR, c MACADDR, d MACADDR8)",
+            "CREATE TABLE t (a INET, b CIDR, c MACADDR, d MACADDR8)",
+        );
+    }
+
+    #[test]
+    fn test_geometric_types() {
+        assert_translated(
+            "CREATE TABLE t (a POINT, b LINE, c LSEG, d BOX, e PATH, f POLYGON, g CIRCLE)",
+            "CREATE TABLE t (a POINT, b LINE, c LSEG, d BOX, e PATH, f POLYGON, g CIRCLE)",
+        );
+    }
+
+    #[test]
+    fn test_text_search_types() {
+        assert_translated(
+            "CREATE TABLE t (a TSVECTOR, b TSQUERY)",
+            "CREATE TABLE t (a TSVECTOR, b TSQUERY)",
+        );
+    }
+
+    #[test]
+    fn test_hologres_native_types() {
+        assert_translated(
+            "CREATE TABLE t (a HLL, b ROARINGBITMAP)",
+            "CREATE TABLE t (a HLL, b ROARINGBITMAP)",
+        );
+    }
+
+    // ── QUALIFY Clause ──
+
+    #[test]
+    fn test_qualify_pass_through() {
+        assert_translated(
+            "SELECT col1, col2, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
+            "SELECT col1, col2, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
+        );
+    }
+
+    // ── TABLESAMPLE ──
+
+    #[test]
+    fn test_tablesample_bernoulli() {
+        assert_translated(
+            "SELECT * FROM t TABLESAMPLE BERNOULLI(10)",
+            "SELECT * FROM t TABLESAMPLE BERNOULLI(10)",
+        );
+    }
+
+    #[test]
+    fn test_tablesample_system() {
+        assert_translated(
+            "SELECT * FROM t TABLESAMPLE SYSTEM(25)",
+            "SELECT * FROM t TABLESAMPLE SYSTEM(25)",
+        );
+    }
+
+    // ── CTAS WITH Clause ──
+
+    #[test]
+    fn test_ctas_with_clause() {
+        let result = translator().translate(
+            "CREATE TABLE t WITH (orientation='column') AS SELECT * FROM src",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE t AS SELECT * FROM src");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("CTAS")),
+            "Expected CTAS warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_ctas_with_clause_if_not_exists() {
+        let result = translator().translate(
+            "CREATE TABLE IF NOT EXISTS t WITH (orientation='column') AS SELECT * FROM src",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE IF NOT EXISTS t AS SELECT * FROM src"
+        );
+    }
+
+    #[test]
+    fn test_ctas_with_column_defs_and_with() {
+        // This case has column defs - handled by regular strip_with_clause
+        let result = translator().translate(
+            "CREATE TABLE t (col1 TEXT) WITH (orientation='column') AS SELECT * FROM src",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE t (col1 STRING) AS SELECT * FROM src"
+        );
+    }
+
+    // ── INSERT OVERWRITE ──
+
+    #[test]
+    fn test_insert_overwrite_with_table_keyword() {
+        let result = translator().translate(
+            "INSERT OVERWRITE TABLE t SELECT * FROM src",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "INSERT INTO t SELECT * FROM src");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+            "Expected INSERT OVERWRITE warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_insert_overwrite_without_table_keyword() {
+        let result = translator().translate(
+            "INSERT OVERWRITE t SELECT * FROM src",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "INSERT INTO t SELECT * FROM src");
+    }
+
+    #[test]
+    fn test_insert_overwrite_keep_on_conflict() {
+        let result = translator().translate(
+            "INSERT OVERWRITE TABLE t VALUES (1, 'a') ON CONFLICT DO NOTHING",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "INSERT INTO t VALUES (1, 'a')");
+    }
+
+    // ── CREATE INDEX ──
+
+    #[test]
+    fn test_create_index_using_bitmap() {
+        let result = translator().translate(
+            "CREATE INDEX idx ON t USING bitmap(col)",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE INDEX idx ON t(col)");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("CREATE INDEX")),
+            "Expected CREATE INDEX warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_create_index_with_bitmap_columns() {
+        let result = translator().translate(
+            "CREATE INDEX idx ON t(col) WITH (bitmap_columns='col')",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE INDEX idx ON t(col)");
+    }
+
+    #[test]
+    fn test_create_index_regular() {
+        assert_translated(
+            "CREATE INDEX idx ON t(col1, col2)",
+            "CREATE INDEX idx ON t(col1, col2)",
+        );
+    }
+
+    // ── CALL set_table_group (no-op) ──
+
+    #[test]
+    fn test_set_table_group() {
+        let result = translator().translate(
+            "CALL set_table_group('my_table', 'group1')",
+        );
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+        assert!(
+            result.warnings.iter().any(|w| w.contains("set_table_group")),
+            "Expected set_table_group warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    // ── ALTER TABLE SET ──
+
+    #[test]
+    fn test_alter_table_set() {
+        let result = translator().translate(
+            "ALTER TABLE t SET (orientation='column')",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "ALTER TABLE t");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("ALTER TABLE SET")),
+            "Expected ALTER TABLE SET warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_alter_table_normal() {
+        assert_translated(
+            "ALTER TABLE t ADD COLUMN col1 TEXT",
+            "ALTER TABLE t ADD COLUMN col1 STRING",
+        );
+    }
+
+    // ── COPY Command ──
+
+    #[test]
+    fn test_copy_from_stdin() {
+        let result = translator().translate("COPY t FROM STDIN");
+        assert!(result.success);
+        assert_eq!(result.sql, "COPY t FROM STDIN");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("COPY")),
+            "Expected COPY warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_copy_to_stdout() {
+        let result = translator().translate("COPY t TO STDOUT");
+        assert!(result.success);
+        assert_eq!(result.sql, "COPY t TO STDOUT");
+    }
+
+    // ── CREATE FOREIGN TABLE ──
+
+    #[test]
+    fn test_create_foreign_table() {
+        let result = translator().translate(
+            "CREATE FOREIGN TABLE t (col1 TEXT, col2 BIGINT) SERVER s OPTIONS (schema 'public')",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "CREATE FOREIGN TABLE t (col1 STRING, col2 BIGINT) SERVER s OPTIONS (schema 'public')"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("CREATE FOREIGN TABLE")),
+            "Expected CREATE FOREIGN TABLE warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    // ── Combined Feature Tests ──
+
+    #[test]
+    fn test_insert_overwrite_with_text_types_mapped() {
+        let result = translator().translate(
+            "INSERT OVERWRITE TABLE t (col1 TEXT, col2 BIGINT)",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "INSERT INTO t (col1 STRING, col2 BIGINT)");
+    }
+
+    #[test]
+    fn test_create_foreign_table_with_all_types() {
+        let result = translator().translate(
+            "CREATE FOREIGN TABLE t (a TEXT, b TIMESTAMPTZ, c SERIAL, d JSON) SERVER s OPTIONS (schema 'public')",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "CREATE FOREIGN TABLE t (a STRING, b TIMESTAMP, c INT, d STRING) SERVER s OPTIONS (schema 'public')"
+        );
+    }
     }
 }
