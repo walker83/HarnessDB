@@ -46,9 +46,13 @@ pub fn build_router() -> Router<std::sync::Arc<crate::server::McServerState>> {
 // InstanceManager – shared, concurrent state for tracking SQL instances
 // ---------------------------------------------------------------------------
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use mysql_protocol::server::QueryResult;
+
+const MAX_INSTANCES: usize = 10000;
+const EVICTION_TARGET: usize = 8000; // 80% capacity
+const INSTANCE_TTL_SECS: i64 = 3600; // 1 hour
 
 /// Thread-safe registry of submitted SQL instances.
 pub struct InstanceManager {
@@ -97,8 +101,14 @@ impl InstanceManager {
         }
     }
 
-    /// Insert a new instance and return the previous value if the ID already existed.
+    /// Insert a new instance.
+    ///
+    /// If the registry is at capacity, oldest entries are evicted first.
     pub fn insert(&self, info: InstanceInfo) -> Option<InstanceInfo> {
+        // Evict old entries if at capacity
+        if self.instances.len() >= MAX_INSTANCES {
+            self.evict_oldest(EVICTION_TARGET);
+        }
         self.instances.insert(info.id.clone(), info)
     }
 
@@ -130,6 +140,20 @@ impl InstanceManager {
         }
     }
 
+    /// Atomically cancel an instance by setting its status to Cancelled.
+    ///
+    /// Returns `true` if the instance was found and cancelled, `false` otherwise.
+    /// This avoids a TOCTOU race between separate `get` and `update_status` calls.
+    pub fn cancel(&self, id: &str) -> bool {
+        if let Some(mut entry) = self.instances.get_mut(id) {
+            entry.status = InstanceStatus::Cancelled;
+            entry.end_time = Some(Utc::now());
+            true
+        } else {
+            false
+        }
+    }
+
     /// Store the query result for a completed instance.
     pub fn set_result(&self, id: &str, result: QueryResult) -> bool {
         if let Some(mut entry) = self.instances.get_mut(id) {
@@ -154,6 +178,42 @@ impl InstanceManager {
         }
     }
 
+    /// Remove the oldest entries (by start_time) until the map is at `target` entries.
+    fn evict_oldest(&self, target: usize) {
+        if self.instances.len() <= target {
+            return;
+        }
+
+        // Collect entries and sort by start_time (oldest first)
+        let mut entries: Vec<(String, DateTime<Utc>)> = self
+            .instances
+            .iter()
+            .map(|r| (r.key().clone(), r.value().start_time))
+            .collect();
+
+        entries.sort_by(|a, b| a.1.cmp(&b.1));
+
+        let to_remove = self.instances.len() - target;
+        for (id, _) in entries.iter().take(to_remove) {
+            self.instances.remove(id);
+        }
+    }
+
+    /// Remove instances older than the configured TTL (1 hour).
+    pub fn cleanup(&self) {
+        let cutoff = Utc::now() - Duration::seconds(INSTANCE_TTL_SECS);
+        let old_ids: Vec<String> = self
+            .instances
+            .iter()
+            .filter(|r| r.value().start_time < cutoff)
+            .map(|r| r.key().clone())
+            .collect();
+
+        for id in old_ids {
+            self.instances.remove(&id);
+        }
+    }
+
     /// Number of tracked instances.
     pub fn len(&self) -> usize {
         self.instances.len()
@@ -168,5 +228,107 @@ impl InstanceManager {
 impl Default for InstanceManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn make_info(id: &str, start_time: DateTime<Utc>) -> InstanceInfo {
+        InstanceInfo {
+            id: id.to_string(),
+            project: "test".to_string(),
+            sql: "SELECT 1".to_string(),
+            status: InstanceStatus::Running,
+            result: None,
+            error: None,
+            start_time,
+            end_time: None,
+        }
+    }
+
+    #[test]
+    fn test_instance_manager_insert_and_get() {
+        let mgr = InstanceManager::new();
+        let info = make_info("test-1", Utc::now());
+        mgr.insert(info.clone());
+        let retrieved = mgr.get("test-1");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().id, "test-1");
+    }
+
+    #[test]
+    fn test_instance_manager_cancel() {
+        let mgr = InstanceManager::new();
+        let info = make_info("test-1", Utc::now());
+        mgr.insert(info);
+
+        assert!(mgr.cancel("test-1"), "cancel should succeed");
+        let retrieved = mgr.get("test-1").unwrap();
+        assert_eq!(retrieved.status, InstanceStatus::Cancelled);
+        assert!(retrieved.end_time.is_some(), "end_time should be set on cancel");
+    }
+
+    #[test]
+    fn test_instance_manager_cancel_nonexistent() {
+        let mgr = InstanceManager::new();
+        assert!(!mgr.cancel("nonexistent"), "cancel should return false for missing id");
+    }
+
+    #[test]
+    fn test_instance_manager_eviction() {
+        // Create a manager and insert more than MAX_INSTANCES entries
+        let mgr = InstanceManager::new();
+        let base_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+
+        // Insert MAX_INSTANCES + 100 entries
+        let total = MAX_INSTANCES + 100;
+        for i in 0..total {
+            let t = base_time + Duration::seconds(i as i64);
+            let info = make_info(&format!("id-{:04}", i), t);
+            mgr.insert(info);
+        }
+
+        // After insertions at capacity, eviction should have occurred
+        let len = mgr.len();
+        // eviction triggers at MAX_INSTANCES, removing oldest down to EVICTION_TARGET,
+        // then remaining entries continue to be inserted without further eviction
+        assert!(
+            len < total,
+            "Eviction should have reduced entries from {} to less than {}",
+            total, total
+        );
+
+        // The oldest entries should have been evicted
+        assert!(mgr.get("id-0000").is_none(), "oldest entry should be evicted");
+    }
+
+    #[test]
+    fn test_instance_manager_cleanup_removes_old_instances() {
+        let mgr = InstanceManager::new();
+        let now = Utc::now();
+
+        // Insert an old instance (older than 1 hour)
+        let old_time = now - Duration::seconds(INSTANCE_TTL_SECS + 100);
+        let info = make_info("old-instance", old_time);
+        mgr.insert(info);
+
+        // Insert a recent instance
+        let info = make_info("recent-instance", now);
+        mgr.insert(info);
+
+        assert_eq!(mgr.len(), 2);
+
+        mgr.cleanup();
+
+        assert_eq!(mgr.len(), 1, "old instance should be cleaned up");
+        assert!(mgr.get("old-instance").is_none(), "old instance should be removed");
+        assert!(mgr.get("recent-instance").is_some(), "recent instance should remain");
     }
 }

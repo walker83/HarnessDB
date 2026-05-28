@@ -14,6 +14,22 @@ use crate::server::McServerState;
 use crate::xml_models;
 use crate::XmlResponse;
 
+/// Check if a QueryResult indicates an error by looking at the first column name.
+///
+/// Matches "Error", "ERROR", and "PARSE ERROR" (case-insensitive).
+fn is_error_result(result: &mysql_protocol::server::QueryResult) -> bool {
+    if result.columns.is_empty() {
+        return false;
+    }
+    let name = result.columns[0].name.to_uppercase();
+    name == "ERROR" || name == "PARSE ERROR"
+}
+
+/// Escape `]]>` sequences inside CDATA sections so the XML remains well-formed.
+fn escape_cdata(s: &str) -> String {
+    s.replace("]]>", "]]]]><![CDATA[>")
+}
+
 /// `POST /api/projects/{project}/instances` — submit a SQL job.
 pub async fn submit_instance(
     State(state): State<Arc<McServerState>>,
@@ -72,12 +88,20 @@ pub async fn submit_instance(
     // Generate instance ID
     let instance_id = Uuid::new_v4().to_string();
 
-    // Execute synchronously (RorisDB is single-node)
-    let result = state.handler.handle_query(0, &translated_sql);
+    // Execute in a blocking thread to avoid blocking the async worker
+    let handler = state.handler.clone();
+    let conn_id = state.next_conn_id();
+    let result = tokio::task::spawn_blocking(move || {
+        handler.handle_query(conn_id, &translated_sql)
+    })
+    .await
+    .unwrap_or_else(|join_err| {
+        error!("Blocking task join error: {}", join_err);
+        mysql_protocol::server::QueryResult::ok()
+    });
 
     // Check if the result is an error
-    let is_error = !result.columns.is_empty()
-        && result.columns.first().map(|c| c.name.as_str()) == Some("Error");
+    let is_error = is_error_result(&result);
 
     let (status, error_msg) = if is_error {
         let msg = result
@@ -205,18 +229,14 @@ pub async fn stop_instance(
 ) -> impl IntoResponse {
     info!("PUT /api/projects/{}/instances/{} (stop)", project, id);
 
-    match state.instance_manager.get(&id) {
-        Some(_) => {
-            state
-                .instance_manager
-                .update_status(&id, crate::handlers::InstanceStatus::Cancelled, Some(chrono::Utc::now()));
-            StatusCode::OK.into_response()
-        }
-        None => (
+    if state.instance_manager.cancel(&id) {
+        StatusCode::OK.into_response()
+    } else {
+        (
             StatusCode::NOT_FOUND,
             crate::error_xml("ODPS-0120035", &format!("Instance '{}' not found", id)),
         )
-            .into_response(),
+            .into_response()
     }
 }
 
@@ -242,7 +262,7 @@ fn build_result_response(
       <Result><![CDATA[{}]]></Result>
     </Task>
   </Tasks>
-</Instance>"#, error_msg
+</Instance>"#, escape_cdata(error_msg)
             )),
         )
             .into_response();
@@ -332,8 +352,100 @@ fn build_result_response(
     </Task>
   </Tasks>
 </Instance>"#,
-        csv = csv,
+        csv = escape_cdata(&csv),
     );
 
     (StatusCode::OK, XmlResponse(xml)).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_error_result_detects_error() {
+        let result = mysql_protocol::server::QueryResult::with_rows(
+            vec![mysql_protocol::server::ColumnDef {
+                name: "Error".to_string(),
+                col_type: mysql_protocol::server::ColumnType::String,
+            }],
+            vec![vec![Some("syntax error".to_string())]],
+        );
+        assert!(is_error_result(&result));
+    }
+
+    #[test]
+    fn test_is_error_result_detects_parse_error() {
+        let result = mysql_protocol::server::QueryResult::with_rows(
+            vec![mysql_protocol::server::ColumnDef {
+                name: "PARSE ERROR".to_string(),
+                col_type: mysql_protocol::server::ColumnType::String,
+            }],
+            vec![vec![Some("parse error".to_string())]],
+        );
+        assert!(is_error_result(&result));
+    }
+
+    #[test]
+    fn test_is_error_result_case_insensitive() {
+        let result = mysql_protocol::server::QueryResult::with_rows(
+            vec![mysql_protocol::server::ColumnDef {
+                name: "error".to_string(),
+                col_type: mysql_protocol::server::ColumnType::String,
+            }],
+            vec![vec![Some("err".to_string())]],
+        );
+        assert!(is_error_result(&result));
+    }
+
+    #[test]
+    fn test_is_error_result_no_columns() {
+        let result = mysql_protocol::server::QueryResult::ok();
+        assert!(!is_error_result(&result));
+    }
+
+    #[test]
+    fn test_is_error_result_normal_query() {
+        let result = mysql_protocol::server::QueryResult::with_rows(
+            vec![mysql_protocol::server::ColumnDef {
+                name: "id".to_string(),
+                col_type: mysql_protocol::server::ColumnType::String,
+            }],
+            vec![vec![Some("1".to_string())]],
+        );
+        assert!(!is_error_result(&result));
+    }
+
+    #[test]
+    fn test_escape_cdata_no_change() {
+        assert_eq!(escape_cdata("hello world"), "hello world");
+        assert_eq!(escape_cdata(""), "");
+        assert_eq!(escape_cdata("normal data"), "normal data");
+    }
+
+    #[test]
+    fn test_escape_cdata_with_terminator() {
+        let input = "data with ]]> inside";
+        let expected = "data with ]]]]><![CDATA[> inside";
+        assert_eq!(escape_cdata(input), expected);
+    }
+
+    #[test]
+    fn test_escape_cdata_multiple_terminators() {
+        let input = "a]]>b]]>c";
+        let expected = "a]]]]><![CDATA[>b]]]]><![CDATA[>c";
+        assert_eq!(escape_cdata(input), expected);
+    }
+
+    #[test]
+    fn test_escape_cdata_partial_match() {
+        // Should not escape partial sequences
+        assert_eq!(escape_cdata("]]"), "]]");
+        assert_eq!(escape_cdata("]>"), "]>");
+        assert_eq!(escape_cdata("]"), "]");
+    }
 }

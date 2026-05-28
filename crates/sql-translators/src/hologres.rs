@@ -34,24 +34,11 @@ impl Default for HologresTranslator {
 /// Find the position of a matching closing parenthesis, starting from `start`.
 /// `start` should point to the opening `(` character.
 /// Returns `None` if no matching parenthesis is found (unbalanced).
+/// Find the position of a matching closing parenthesis, starting from `start`.
+/// `start` should point to the opening `(` character.
+/// Returns `None` if no matching parenthesis is found (unbalanced).
 fn find_matching_paren(s: &str, start: usize) -> Option<usize> {
-    let bytes = s.as_bytes();
-    if start >= bytes.len() || bytes[start] != b'(' {
-        return None;
-    }
-    let mut depth: u32 = 1;
-    let mut i = start + 1;
-    while i < bytes.len() && depth > 0 {
-        match bytes[i] {
-            b'(' => depth += 1,
-            b')' => depth -= 1,
-            _ => {}
-        }
-        if depth > 0 {
-            i += 1;
-        }
-    }
-    if depth == 0 { Some(i) } else { None }
+    crate::find_matching_paren(s, start)
 }
 
 /// Extract content within matching parentheses.
@@ -163,6 +150,7 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
 // ── DDL Transformations ────────────────────────────────────────────────
 
 /// Strip the WITH (orientation='column', ...) clause from CREATE TABLE.
+/// Uses string literal masking to avoid matching WITH inside string values.
 fn strip_with_clause(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
     let trimmed = sql.trim();
@@ -172,42 +160,49 @@ fn strip_with_clause(sql: &str) -> (String, Vec<String>) {
         return (trimmed.to_string(), Vec::new());
     }
 
+    // Mask string literals to avoid matching WITH inside string values
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
     // Find the closing paren of column definitions, then look for WITH clause
     // Column defs start at the first '(' after the table name
-    let after_create = create_re.find(trimmed).unwrap().end();
-    let col_def_start = find_col_def_start(trimmed, after_create);
+    let after_create = create_re.find(&masked).unwrap().end();
+    let col_def_start = find_col_def_start(&masked, after_create);
     let col_def_start = match col_def_start {
         Some(pos) => pos,
         None => return (trimmed.to_string(), Vec::new()),
     };
 
-    let (_col_defs, col_def_end) = match extract_paren_content(trimmed, col_def_start) {
+    let (_col_defs, col_def_end) = match extract_paren_content(&masked, col_def_start) {
         Some(result) => result,
         None => return (trimmed.to_string(), Vec::new()),
     };
 
-    let tail = &trimmed[col_def_end + 1..];
-
-    // Look for WITH (...) clause
-    let with_re = Regex::new(r"(?i)^\s*WITH\s*\(").unwrap();
+    // Look for WITH (...) clause - use find (not anchored) because there may be
+    // other clauses like COMMENT before WITH
+    let tail = &masked[col_def_end + 1..];
+    let with_re = Regex::new(r"(?i)WITH\s*\(").unwrap();
     if let Some(with_match) = with_re.find(tail) {
         let with_start = with_match.start();
-        // with_match covers "WITH (", so the '(' is at with_match.end()-1
-        let paren_global = col_def_end + 1 + with_match.end() - 1;
+        // WITH\s*\( captures "WITH(" or "WITH (", etc.
+        // Find the actual '(' position
+        let paren_in_tail = with_start + with_match.as_str().len() - 1;
+        let paren_global = col_def_end + 1 + paren_in_tail;
 
-        if let Some((_content, paren_end)) = extract_paren_content(trimmed, paren_global) {
+        if let Some((_content, paren_end)) = extract_paren_content(&masked, paren_global) {
             // Everything from the start of WITH to paren_end should be stripped
             let with_start_global = col_def_end + 1 + with_start;
             warnings.push(format!(
                 "WITH table properties clause stripped: '{}'",
-                &trimmed[with_start_global..paren_end + 1]
+                &masked[with_start_global..paren_end + 1]
             ));
-            let result = format!(
+            let mut result_masked = format!(
                 "{}{}",
-                &trimmed[..with_start_global],
-                &trimmed[paren_end + 1..]
+                &masked[..with_start_global],
+                &masked[paren_end + 1..]
             );
-            return (result.trim().to_string(), warnings);
+            result_masked = result_masked.trim().to_string();
+            let result = crate::restore_string_literals(&result_masked, &original_strings);
+            return (result, warnings);
         }
     }
 
@@ -215,6 +210,8 @@ fn strip_with_clause(sql: &str) -> (String, Vec<String>) {
 }
 
 /// Find the position of the opening parenthesis for column definitions.
+/// Skips SQL comments (block comments `/* ... */` and line comments `-- ...`)
+/// as well as quoted identifiers.
 fn find_col_def_start(sql: &str, after_create: usize) -> Option<usize> {
     let rest = &sql[after_create..];
     let bytes = rest.as_bytes();
@@ -222,6 +219,28 @@ fn find_col_def_start(sql: &str, after_create: usize) -> Option<usize> {
     while i < bytes.len() {
         if bytes[i] == b'(' {
             return Some(after_create + i);
+        }
+        // Skip block comments: /* ... */
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < bytes.len() {
+                i += 2; // Skip */
+            }
+            continue;
+        }
+        // Skip line comments: -- ...
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1; // Skip newline
+            }
+            continue;
         }
         if bytes[i] == b'`' {
             i += 1;
@@ -247,22 +266,25 @@ fn strip_partition_by_list(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
     let trimmed = sql.trim();
 
+    // Mask string literals to avoid matching PARTITION BY LIST inside strings
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
     let re = Regex::new(r"(?i)\s+PARTITION\s+BY\s+LIST\s*\(").unwrap();
-    if let Some(part_match) = re.find(trimmed) {
+    if let Some(part_match) = re.find(&masked) {
         let paren_pos = part_match.start() + part_match.len() - 1; // position of '('
-        if let Some((_content, paren_end)) = extract_paren_content(trimmed, paren_pos) {
+        if let Some((_content, paren_end)) = extract_paren_content(&masked, paren_pos) {
             // After stripping PARTITION BY LIST (...), also strip any following
             // parenthesized partition definitions like (PARTITION p1 VALUES IN (...))
-            let after = trimmed[paren_end + 1..].trim_start();
+            let after = masked[paren_end + 1..].trim_start();
             let mut final_end = paren_end + 1;
 
             // Check if what follows starts with '(' (partition value definitions)
             if after.starts_with('(') {
-                let global_paren_start = trimmed.len() - after.len();
-                if let Some((_content, sub_paren_end)) = extract_paren_content(trimmed, global_paren_start) {
+                let global_paren_start = masked.len() - after.len();
+                if let Some((_content, sub_paren_end)) = extract_paren_content(&masked, global_paren_start) {
                     warnings.push(format!(
                         "PARTITION value definitions stripped: '{}'",
-                        &trimmed[global_paren_start..sub_paren_end + 1]
+                        &masked[global_paren_start..sub_paren_end + 1]
                     ));
                     final_end = sub_paren_end + 1;
                 }
@@ -270,14 +292,16 @@ fn strip_partition_by_list(sql: &str) -> (String, Vec<String>) {
 
             warnings.push(format!(
                 "PARTITION BY LIST clause stripped: '{}'",
-                &trimmed[part_match.start()..final_end]
+                &masked[part_match.start()..final_end]
             ));
-            let result = format!(
+            let mut result_masked = format!(
                 "{}{}",
-                &trimmed[..part_match.start()],
-                &trimmed[final_end..]
+                &masked[..part_match.start()],
+                &masked[final_end..]
             );
-            return (result.trim().to_string(), warnings);
+            result_masked = result_masked.trim().to_string();
+            let result = crate::restore_string_literals(&result_masked, &original_strings);
+            return (result, warnings);
         }
     }
 
@@ -287,6 +311,9 @@ fn strip_partition_by_list(sql: &str) -> (String, Vec<String>) {
 // ── DML Transformations ────────────────────────────────────────────────
 
 /// Strip ON CONFLICT clause from INSERT statements.
+/// Uses balanced-parenthesis tracking to only strip the ON CONFLICT clause,
+/// not everything after it. Also handles string literal masking to avoid
+/// matching ON CONFLICT inside string values.
 fn strip_on_conflict(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
     let trimmed = sql.trim();
@@ -296,15 +323,51 @@ fn strip_on_conflict(sql: &str) -> (String, Vec<String>) {
         return (trimmed.to_string(), Vec::new());
     }
 
-    // Find ON CONFLICT after the INSERT part
+    // Mask string literals to avoid matching keywords inside string values
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
     let on_conflict_re = Regex::new(r"(?i)\s+ON\s+CONFLICT\b").unwrap();
-    if let Some(m) = on_conflict_re.find(trimmed) {
+    if let Some(m) = on_conflict_re.find(&masked) {
+        let mut end = m.end();
+
+        // Skip whitespace and optional conflict target: (col1, col2, ...)
+        let after_match = &masked[end..].trim_start();
+        let after_match_stripped = end + (masked[end..].len() - after_match.len());
+
+        if after_match.starts_with('(') {
+            // Extract the conflict target with balanced parens
+            if let Some(paren_end) = find_matching_paren(&masked, after_match_stripped) {
+                end = paren_end + 1;
+            }
+        }
+
+        // Check for DO NOTHING or DO UPDATE SET
+        let after_do = &masked[end..].trim_start();
+        let do_nothing_re = Regex::new(r"(?i)^DO\s+NOTHING\b").unwrap();
+        let do_update_re = Regex::new(r"(?i)^DO\s+UPDATE\b").unwrap();
+
+        if do_nothing_re.is_match(after_do) {
+            let do_end = end
+                + (masked[end..].len() - after_do.len())
+                + do_nothing_re.find(after_do).unwrap().end();
+            end = do_end;
+        } else if do_update_re.is_match(after_do) {
+            // DO UPDATE SET ... strip until semicolon or end of string
+            let set_start = end + (masked[end..].len() - after_do.len());
+            let set_rest = &masked[set_start..];
+            let set_end = set_rest.find(';').unwrap_or(set_rest.len());
+            end = set_start + set_end;
+        }
+
         warnings.push(format!(
             "ON CONFLICT clause stripped: '{}'",
-            &trimmed[m.start()..]
+            &masked[m.start()..end]
         ));
-        let result = format!("{}{}", &trimmed[..m.start()], "");
-        return (result.trim().to_string(), warnings);
+
+        let mut result_masked = format!("{}{}", &masked[..m.start()], &masked[end..]);
+        result_masked = result_masked.trim().to_string();
+        let result = crate::restore_string_literals(&result_masked, &original_strings);
+        return (result, warnings);
     }
 
     (trimmed.to_string(), warnings)
@@ -328,14 +391,16 @@ fn strip_explain_analyze(sql: &str) -> (String, Vec<String>) {
 // ── Type Mapping ───────────────────────────────────────────────────────
 
 /// Map Hologres types to RorisDB types in column definitions.
+/// Masks string literals before applying regex to avoid matching type keywords
+/// inside string values (e.g., `WHERE col = 'TEXT'`).
 fn map_types(sql: &str) -> String {
-    let s = sql;
+    let (masked, original_strings) = crate::mask_string_literals(sql);
 
     // Order matters: more specific patterns first
 
     // TIMESTAMPTZ -> TIMESTAMP
     let re = Regex::new(r"(?i)\bTIMESTAMPTZ\b").unwrap();
-    let s = re.replace_all(s, "TIMESTAMP");
+    let s = re.replace_all(&masked, "TIMESTAMP");
 
     // BIGSERIAL -> BIGINT (must come before SERIAL)
     let re = Regex::new(r"(?i)\bBIGSERIAL\b").unwrap();
@@ -353,7 +418,8 @@ fn map_types(sql: &str) -> String {
     let re = Regex::new(r"(?i)\bBYTEA\b").unwrap();
     let s = re.replace_all(&s, "BLOB");
 
-    s.to_string()
+    let result_masked = s.to_string();
+    crate::restore_string_literals(&result_masked, &original_strings)
 }
 
 // ── pg_catalog Translation ─────────────────────────────────────────────
@@ -1224,5 +1290,100 @@ mod tests {
         let result = translator().translate("SELECT * FROM t;");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t");
+    }
+
+    // ── New tests for bug fixes ──
+
+    #[test]
+    fn test_on_conflict_inside_string_literal_not_stripped() {
+        // ON CONFLICT inside a string literal must NOT be stripped
+        let result = translator().translate(
+            "INSERT INTO t VALUES (1, 'ON CONFLICT should remain')",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "INSERT INTO t VALUES (1, 'ON CONFLICT should remain')"
+        );
+    }
+
+    #[test]
+    fn test_partition_by_list_inside_string_literal_not_stripped() {
+        // PARTITION BY LIST inside a string literal must NOT be stripped
+        let result = translator().translate(
+            "INSERT INTO t VALUES (1, 'PARTITION BY LIST (col1)')",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "INSERT INTO t VALUES (1, 'PARTITION BY LIST (col1)')"
+        );
+    }
+
+    #[test]
+    fn test_comment_before_with_in_create_table() {
+        // COMMENT clause before WITH must still strip the WITH clause
+        let result = translator().translate(
+            "CREATE TABLE t (col1 TEXT) COMMENT 'a table' WITH (orientation='column')",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE t (col1 STRING) COMMENT 'a table'");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("WITH")),
+            "Expected warning about WITH clause, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_sql_comment_before_column_defs() {
+        // SQL comments before column definitions should not interfere
+        let result = translator().translate(
+            "CREATE TABLE t /* comment */ (col1 TEXT)",
+        );
+        assert!(result.success);
+        // Comments are preserved in output
+        assert_eq!(result.sql, "CREATE TABLE t /* comment */ (col1 STRING)");
+    }
+
+    #[test]
+    fn test_sql_line_comment_before_column_defs() {
+        // SQL line comments before column definitions
+        let result = translator().translate(
+            "CREATE TABLE t -- line comment\n(col1 TEXT)",
+        );
+        assert!(result.success);
+        // Line comments are preserved in output
+        assert_eq!(result.sql, "CREATE TABLE t -- line comment\n(col1 STRING)");
+    }
+
+    #[test]
+    fn test_type_mapping_inside_string_survives() {
+        // Type keywords inside string literals must not be translated
+        let result = translator().translate(
+            "SELECT * FROM t WHERE col1 = 'TEXT'",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t WHERE col1 = 'TEXT'");
+    }
+
+    #[test]
+    fn test_on_conflict_with_following_clause_preserved() {
+        // ON CONFLICT should not destroy following clauses like RETURNING
+        let result = translator().translate(
+            "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING RETURNING id",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "INSERT INTO t VALUES (1, 'a') RETURNING id");
+    }
+
+    #[test]
+    fn test_on_conflict_with_conflict_target_and_update() {
+        // ON CONFLICT (col) DO UPDATE SET ... with balanced parens
+        let result = translator().translate(
+            "INSERT INTO t (id, val) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET val = EXCLUDED.val",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "INSERT INTO t (id, val) VALUES (1, 'a')");
     }
 }

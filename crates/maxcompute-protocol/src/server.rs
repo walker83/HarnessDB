@@ -1,10 +1,12 @@
 //! MaxCompute REST API server using axum.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use axum::{
+    body::Body,
     extract::State,
-    http::{header, Method, StatusCode},
+    http::{header, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     Router,
@@ -44,6 +46,7 @@ pub struct McServerState {
     pub handler: Arc<dyn QueryHandler>,
     pub config: McServerConfig,
     pub instance_manager: Arc<InstanceManager>,
+    conn_id_counter: AtomicU32,
 }
 
 impl McServerState {
@@ -52,7 +55,13 @@ impl McServerState {
             handler,
             config,
             instance_manager: Arc::new(InstanceManager::new()),
+            conn_id_counter: AtomicU32::new(1_000_000),
         }
+    }
+
+    /// Get the next connection ID for query handling.
+    pub fn next_conn_id(&self) -> u32 {
+        self.conn_id_counter.fetch_add(1, Ordering::Relaxed)
     }
 }
 
@@ -105,16 +114,16 @@ impl QueryHandler for MockQueryHandler {
 /// Authentication middleware for MaxCompute REST API.
 async fn auth_middleware(
     State(state): State<Arc<McServerState>>,
-    method: Method,
-    uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
     request: axum::extract::Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    let (parts, body) = request.into_parts();
+    let uri = &parts.uri;
     let path = uri.path();
 
     // Skip auth for health check
     if path == "/health" || path == "/" {
+        let request = Request::from_parts(parts, Body::from(body));
         return Ok(next.run(request).await);
     }
 
@@ -126,14 +135,30 @@ async fn auth_middleware(
 
     let query = uri.query().unwrap_or("");
 
-    match crate::auth::verify_request(&auth_config, method.as_str(), path, query, &headers) {
-        Ok(true) => Ok(next.run(request).await),
+    // Read body for V4 signature verification
+    let body_bytes = axum::body::to_bytes(body, 5 * 1024 * 1024)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let body_for_auth = body_bytes.clone();
+
+    match crate::auth::verify_request(
+        &auth_config,
+        parts.method.as_str(),
+        path,
+        query,
+        &parts.headers,
+        &body_for_auth,
+    ) {
+        Ok(true) => {
+            let request = Request::from_parts(parts, Body::from(body_bytes));
+            Ok(next.run(request).await)
+        }
         Ok(false) => {
-            info!("Auth signature mismatch for {} {}", method, path);
+            info!("Auth signature mismatch for {} {}", parts.method, path);
             Err(StatusCode::UNAUTHORIZED)
         }
         Err(e) => {
-            info!("Auth error for {} {}: {}", method, path, e);
+            info!("Auth error for {} {}: {}", parts.method, path, e);
             Err(StatusCode::UNAUTHORIZED)
         }
     }

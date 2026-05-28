@@ -3988,12 +3988,9 @@ dependencies = [
 name = "sql-translators"
 version = "0.3.0"
 dependencies = [
- "common",
- "fe-sql-parser",
  "regex",
  "thiserror 2.0.18",
  "tracing",
- "types",
 ]
 
 [[package]]

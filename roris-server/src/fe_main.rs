@@ -47,7 +47,7 @@ struct Args {
     #[arg(long, default_value = "9031")]
     maxcompute_port: u16,
 
-    #[arg(long, default_value = "5432")]
+    #[arg(long, default_value = "15432")]
     hologres_port: u16,
 
     #[arg(long, default_value = "data/fe/storage")]
@@ -259,8 +259,9 @@ async fn main() -> Result<()> {
         Some(args.data_dir.clone()),
         Some(args.meta_dir.clone()),
     );
-    tracing::info!("Config loaded: mysql_port={}, data_dir={}, http_port={}",
-        config.server.mysql_port, config.storage.data_dir, config.server.http_port);
+    tracing::info!("Config loaded: mysql_port={}, maxcompute_port={}, hologres_port={}, data_dir={}, http_port={}",
+        config.server.mysql_port, args.maxcompute_port, args.hologres_port,
+        config.storage.data_dir, config.server.http_port);
 
     // Initialize system variables
     let sys_vars = Arc::new(SystemVariableManager::new());
@@ -334,6 +335,7 @@ async fn main() -> Result<()> {
     };
     let mysql_server = MysqlServer::new(mysql_config, query_handler.clone());
 
+    tracing::info!("RorisDB starting MySQL server on port {} (may fail silently if port is in use)", config.server.mysql_port);
     tokio::spawn(async move {
         match mysql_server.run().await {
             Ok(()) => tracing::info!("MySQL server stopped"),
@@ -341,7 +343,8 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Start MaxCompute protocol server (HTTP/REST on port 9031)
+    // Start MaxCompute protocol server (HTTP/REST)
+    tracing::info!("RorisDB starting MaxCompute server on port {} (may fail silently if port is in use)", args.maxcompute_port);
     let mc_config = McServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.maxcompute_port,
@@ -357,7 +360,8 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Start Hologres protocol server (PostgreSQL wire protocol on port 5432)
+    // Start Hologres protocol server (PostgreSQL wire protocol)
+    tracing::info!("RorisDB starting Hologres server on port {} (may fail silently if port is in use)", args.hologres_port);
     let pg_config = PgServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.hologres_port,

@@ -33,23 +33,7 @@ impl Default for MaxComputeTranslator {
 /// `start` should point to the opening `(` character.
 /// Returns `None` if no matching parenthesis is found (unbalanced).
 fn find_matching_paren(s: &str, start: usize) -> Option<usize> {
-    let bytes = s.as_bytes();
-    if start >= bytes.len() || bytes[start] != b'(' {
-        return None;
-    }
-    let mut depth: u32 = 1;
-    let mut i = start + 1;
-    while i < bytes.len() && depth > 0 {
-        match bytes[i] {
-            b'(' => depth += 1,
-            b')' => depth -= 1,
-            _ => {}
-        }
-        if depth > 0 {
-            i += 1;
-        }
-    }
-    if depth == 0 { Some(i) } else { None }
+    crate::find_matching_paren(s, start)
 }
 
 /// Extract content within matching parentheses.
@@ -62,33 +46,64 @@ fn extract_paren_content(s: &str, start: usize) -> Option<(&str, usize)> {
 // ── DDL Transformations ────────────────────────────────────────────────
 
 /// Strip `STORED AS ...` from the tail of a CREATE TABLE statement.
+/// Handles both simple forms (`STORED AS ORC`, `STORED AS PARQUET`) and
+/// extended forms (`STORED AS INPUTFORMAT '...' OUTPUTFORMAT '...'`, `STORED AS BY '...'`).
+/// The extended form regex is applied on unmasked SQL since the quotes in the
+/// INPUTFORMAT/BY patterns are SQL syntax, not user data. The simple form is
+/// applied after string literal masking to avoid matching inside strings.
 fn strip_stored_as(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
-    let re = Regex::new(r"(?i)\s+STORED\s+AS\s+\w+").unwrap();
-    let result = re.replace_all(sql, |caps: &regex::Captures| {
+
+    // Apply extended form regex on unmasked SQL. The patterns
+    // `STORED AS INPUTFORMAT '...' OUTPUTFORMAT '...'` and
+    // `STORED AS BY '...'` are very specific and extremely unlikely
+    // to appear inside user string literals.
+    let extended_re = Regex::new(
+        r"(?i)\s+STORED\s+AS\s+(INPUTFORMAT\s+'[^']*'\s+OUTPUTFORMAT\s+'[^']*'|BY\s+'[^']*')",
+    )
+    .unwrap();
+    let after_extended = extended_re.replace_all(sql, |caps: &regex::Captures| {
         let cap = caps.get(0).map(|m| m.as_str()).unwrap_or("");
         warnings.push(format!("STORED AS clause stripped: '{}'", cap.trim()));
         ""
     });
+
+    // Now mask string literals for the simple form
+    let (masked, original_strings) = crate::mask_string_literals(&after_extended);
+
+    // Handle simple form: STORED AS <word>
+    let simple_re = Regex::new(r"(?i)\s+STORED\s+AS\s+\w+").unwrap();
+    let result_masked = simple_re.replace_all(&masked, |caps: &regex::Captures| {
+        let cap = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+        warnings.push(format!("STORED AS clause stripped: '{}'", cap.trim()));
+        ""
+    });
+
+    let result = crate::restore_string_literals(&result_masked, &original_strings);
     (result.to_string(), warnings)
 }
 
 /// Strip `LIFECYCLE N` from the tail.
+/// Uses string literal masking to avoid matching inside string values.
 fn strip_lifecycle(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
+    let (masked, original_strings) = crate::mask_string_literals(sql);
     let re = Regex::new(r"(?i)\s+LIFECYCLE\s+\d+").unwrap();
-    let result = re.replace_all(sql, |caps: &regex::Captures| {
+    let result_masked = re.replace_all(&masked, |caps: &regex::Captures| {
         let cap = caps.get(0).map(|m| m.as_str()).unwrap_or("");
         warnings.push(format!("LIFECYCLE clause stripped: '{}', not enforced", cap.trim()));
         ""
     });
+    let result = crate::restore_string_literals(&result_masked, &original_strings);
     (result.to_string(), warnings)
 }
 
 /// Strip `CLUSTERED BY (...) INTO N BUCKETS` from the tail.
+/// Uses string literal masking to avoid matching inside string values.
 fn strip_clustered_by(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
-    let s = sql.trim_end();
+    let (masked, original_strings) = crate::mask_string_literals(sql);
+    let s = masked.trim_end();
 
     // Match: CLUSTERED BY (...) [INTO N BUCKETS] [ONLY]
     let re = Regex::new(r"(?i)\s+CLUSTERED\s+BY\s*\(").unwrap();
@@ -116,6 +131,7 @@ fn strip_clustered_by(sql: &str) -> (String, Vec<String>) {
         }
     }
 
+    let result = crate::restore_string_literals(&result, &original_strings);
     (result, warnings)
 }
 
@@ -166,25 +182,7 @@ fn extract_partition_columns(sql: &str, start: usize) -> Option<(String, usize)>
 
 /// Split a SQL fragment by commas that are not inside parentheses.
 fn split_by_commas_outside_parens(s: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth: u32 = 0;
-    let mut last = 0;
-
-    for (i, ch) in s.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                parts.push(&s[last..i]);
-                last = i + 1;
-            }
-            _ => {}
-        }
-    }
-    if last <= s.len() {
-        parts.push(&s[last..]);
-    }
-    parts
+    crate::split_by_commas_outside_parens(s)
 }
 
 /// Handle the PARTITIONED BY clause and other DDL clauses in CREATE TABLE.
@@ -310,16 +308,39 @@ fn process_create_table(sql: &str) -> (String, Vec<String>) {
 }
 
 /// Find the position of the opening parenthesis for column definitions
-/// in a CREATE TABLE statement.
+/// in a CREATE TABLE statement. Skips SQL comments (block comments `/* ... */`
+/// and line comments `-- ...`) as well as quoted identifiers.
 fn find_col_def_start(sql: &str, after_create: usize) -> Option<usize> {
     let rest = &sql[after_create..];
-    // Skip past: [IF NOT EXISTS] [db.]table_name
-    // Look for first '(' that is not inside a string or comment
+    // Skip past: [IF NOT EXISTS] [db.]table_name, SQL comments
+    // Look for first '(' that is not inside a string, comment, or quoted identifier
     let mut i = 0;
     let bytes = rest.as_bytes();
     while i < bytes.len() {
         if bytes[i] == b'(' {
             return Some(after_create + i);
+        }
+        // Skip block comments: /* ... */
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < bytes.len() {
+                i += 2; // Skip */
+            }
+            continue;
+        }
+        // Skip line comments: -- ...
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1; // Skip newline
+            }
+            continue;
         }
         // Skip past identifiers (they could contain db.table patterns)
         if bytes[i] == b'`' {
@@ -343,19 +364,23 @@ fn find_col_def_start(sql: &str, after_create: usize) -> Option<usize> {
 }
 
 /// Handle INSERT OVERWRITE and INSERT INTO with PARTITION.
+/// Uses string literal masking to avoid matching keywords inside string values.
 fn translate_insert(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
     let trimmed = sql.trim();
 
+    // Mask string literals to avoid matching keywords inside string values
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
     // INSERT OVERWRITE [TABLE] t ... -> INSERT INTO [TABLE] t ...
     let overwrite_re = Regex::new(r"(?i)^(\s*INSERT\s+)OVERWRITE(\s+(?:TABLE\s+)?)").unwrap();
-    let after_overwrite = if let Some(caps) = overwrite_re.captures(trimmed) {
+    let after_overwrite = if let Some(caps) = overwrite_re.captures(&masked) {
         warnings.push("INSERT OVERWRITE converted to INSERT INTO".to_string());
         // Get the full match end position to preserve the rest of the SQL
         let full_match_end = caps.get(0).unwrap().end();
-        format!("{}INTO{}{}", &caps[1], &caps[2], &trimmed[full_match_end..])
+        format!("{}INTO{}{}", &caps[1], &caps[2], &masked[full_match_end..])
     } else {
-        trimmed.to_string()
+        masked.to_string()
     };
 
     let mut result = after_overwrite.to_string();
@@ -380,6 +405,7 @@ fn translate_insert(sql: &str) -> (String, Vec<String>) {
         }
     }
 
+    let result = crate::restore_string_literals(&result, &original_strings);
     (result.trim().to_string(), warnings)
 }
 
@@ -395,32 +421,67 @@ fn strip_hints(sql: &str) -> (String, Vec<String>) {
 }
 
 /// Convert `DISTRIBUTE BY col SORT BY col` to `ORDER BY col`.
+/// Uses string literal masking and paren-depth tracking to avoid matching
+/// keywords inside subqueries or string values.
 fn translate_distribute_sort(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
+    let trimmed = sql.trim();
+
+    // Mask string literals to avoid matching keywords inside string values
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
     let distribute_re = Regex::new(r"(?i)\bDISTRIBUTE\s+BY\b").unwrap();
     let sort_re = Regex::new(r"(?i)\bSORT\s+BY\b").unwrap();
 
-    let s = sql;
-    if let Some(dist_pos) = distribute_re.find(s) {
-        if let Some(sort_pos) = sort_re.find(s) {
+    if let Some(dist_pos) = distribute_re.find(&masked) {
+        if let Some(sort_pos) = sort_re.find(&masked) {
             if sort_pos.start() > dist_pos.end() {
                 // Extract the SORT BY columns
-                let after_sort = &s[sort_pos.end()..];
-                // Find end of SORT BY columns: up to next keyword like FROM, WHERE, GROUP, LIMIT, etc.
-                let end_keywords = [
-                    " FROM ", " WHERE ", " GROUP ", " HAVING ", " ORDER ", " LIMIT ",
-                    " UNION ", " INTERSECT ", " EXCEPT ", ";",
-                ];
-                let mut sort_end = s.len();
-                for kw in &end_keywords {
-                    if let Some(pos) = after_sort.to_uppercase().find(&kw.to_uppercase()) {
-                        let candidate = sort_pos.end() + pos;
+                let after_sort = &masked[sort_pos.end()..];
+
+                // Find end of SORT BY columns with paren-depth tracking
+                // so we don't match keywords inside subqueries
+                let mut sort_end = masked.len();
+                let mut paren_depth: u32 = 0;
+                let bytes = after_sort.as_bytes();
+                for (i, &b) in bytes.iter().enumerate() {
+                    match b {
+                        b'(' => paren_depth += 1,
+                        b')' => paren_depth = paren_depth.saturating_sub(1),
+                        _ => {}
+                    }
+                    if paren_depth > 0 {
+                        continue;
+                    }
+                    // Check for end keywords (uppercase comparison)
+                    if i + 1 < bytes.len() {
+                        // We need to check for keywords at this position
+                        let remaining = &after_sort[i..];
+                        let remaining_upper = remaining.to_uppercase();
+                        let end_keywords = [
+                            " FROM ", " WHERE ", " GROUP ", " HAVING ", " ORDER ", " LIMIT ",
+                            " UNION ", " INTERSECT ", " EXCEPT ", ";",
+                        ];
+                        for kw in &end_keywords {
+                            if remaining_upper.starts_with(kw) {
+                                let candidate = sort_pos.end() + i;
+                                if candidate < sort_end {
+                                    sort_end = candidate;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    // Also check for standalone semicolon
+                    if b == b';' {
+                        let candidate = sort_pos.end() + i;
                         if candidate < sort_end {
                             sort_end = candidate;
                         }
                     }
                 }
-                let sort_cols = &s[sort_pos.end()..sort_end].trim();
+
+                let sort_cols = &masked[sort_pos.end()..sort_end].trim();
 
                 // Replace DISTRIBUTE BY ... SORT BY col with ORDER BY col
                 warnings.push(
@@ -428,24 +489,27 @@ fn translate_distribute_sort(sql: &str) -> (String, Vec<String>) {
                 );
 
                 // The content between DISTRIBUTE BY's columns and SORT BY is the distribute columns.
-                let distribute_cols = &s[dist_pos.end()..sort_pos.start()].trim();
+                let distribute_cols = &masked[dist_pos.end()..sort_pos.start()].trim();
                 warnings.push(format!(
                     "DISTRIBUTE BY columns '{}' dropped, using SORT BY columns for ORDER BY",
                     distribute_cols
                 ));
 
-                let final_sql = format!(
+                let final_sql_masked = format!(
                     "{} ORDER BY {}{}",
-                    &s[..dist_pos.start()],
+                    &masked[..dist_pos.start()],
                     sort_cols,
-                    &s[sort_end..]
+                    &masked[sort_end..]
                 );
+                let final_sql = crate::restore_string_literals(&final_sql_masked, &original_strings);
                 return (final_sql.trim().to_string(), warnings);
             }
         }
     }
 
-    (s.to_string(), warnings)
+    // No match, restore and return original
+    let result = crate::restore_string_literals(&masked, &original_strings);
+    (result, warnings)
 }
 
 /// Handle SET/SETPROJECT statements (no-op).
@@ -530,15 +594,18 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
 }
 
 /// Map MaxCompute types to RorisDB types in column definitions.
+/// Uses string literal masking to avoid matching type keywords inside string values.
 fn map_types_in_ddl(sql: &str) -> String {
+    let (masked, original_strings) = crate::mask_string_literals(sql);
+
     // STRING(n) -> VARCHAR(n)
     let string_n_re = Regex::new(r"(?i)\bSTRING\s*\(\s*(\d+)\s*\)").unwrap();
-    let result = string_n_re.replace_all(sql, |caps: &regex::Captures| {
+    let result_masked = string_n_re.replace_all(&masked, |caps: &regex::Captures| {
         let len = caps.get(1).map(|m| m.as_str()).unwrap_or("255");
         format!("VARCHAR({})", len)
     });
 
-    result.to_string()
+    crate::restore_string_literals(&result_masked, &original_strings)
 }
 
 // ── Main Translation Logic ─────────────────────────────────────────────
@@ -1345,6 +1412,90 @@ mod tests {
         assert_translated(
             "CREATE TABLE IF NOT EXISTS db.t (id BIGINT, name STRING) LIFECYCLE 30 STORED AS ORC",
             "CREATE TABLE IF NOT EXISTS db.t (id BIGINT, name STRING)",
+        );
+    }
+
+    // ── New tests for bug fixes ──
+
+    #[test]
+    fn test_stored_as_inputformat_outputformat() {
+        let result = translator().translate(
+            "CREATE TABLE t (col1 STRING) STORED AS INPUTFORMAT 'org.apache.hadoop.mapred.TextInputFormat' OUTPUTFORMAT 'org.apache.hadoop.mapred.TextOutputFormat'",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("STORED AS")),
+            "Expected warning about STORED AS, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_stored_as_by_format() {
+        let result = translator().translate(
+            "CREATE TABLE t (col1 STRING) STORED AS BY 'com.example.CustomStorageHandler'",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("STORED AS")),
+            "Expected warning about STORED AS, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_sql_comment_before_column_defs() {
+        let result = translator().translate(
+            "CREATE TABLE t /* block comment */ (col1 STRING) LIFECYCLE 30",
+        );
+        assert!(result.success);
+        // Comments are preserved in output
+        assert_eq!(result.sql, "CREATE TABLE t /* block comment */ (col1 STRING)");
+    }
+
+    #[test]
+    fn test_sql_line_comment_before_column_defs() {
+        let result = translator().translate(
+            "CREATE TABLE t -- line comment\n(col1 STRING) LIFECYCLE 30",
+        );
+        assert!(result.success);
+        // Line comments are preserved in output
+        assert_eq!(result.sql, "CREATE TABLE t -- line comment\n(col1 STRING)");
+    }
+
+    #[test]
+    fn test_distribute_sort_with_subquery_in_columns() {
+        // DISTRIBUTE BY + SORT BY with a subquery in the SORT columns
+        let result = translator().translate(
+            "SELECT * FROM t DISTRIBUTE BY col1 SORT BY (SELECT MAX(x) FROM y)",
+        );
+        assert!(result.success);
+        assert!(result.sql.contains("ORDER BY"));
+        assert!(result.sql.contains("(SELECT MAX(x) FROM y)"));
+    }
+
+    #[test]
+    fn test_string_literal_masking_type_mapping() {
+        // STRING inside a string literal should not be translated to VARCHAR
+        let result = translator().translate(
+            "SELECT * FROM t WHERE col1 = 'STRING(10)'",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t WHERE col1 = 'STRING(10)'");
+    }
+
+    #[test]
+    fn test_stored_as_inside_string_literal_not_stripped() {
+        // STORED AS inside a string literal must NOT be stripped
+        let result = translator().translate(
+            "INSERT INTO t VALUES (1, 'this should STORED AS is fine')",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "INSERT INTO t VALUES (1, 'this should STORED AS is fine')"
         );
     }
 }

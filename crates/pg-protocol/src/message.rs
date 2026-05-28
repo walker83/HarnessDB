@@ -330,6 +330,12 @@ impl FrontendMessage {
                     if value_len == -1 {
                         // NULL value
                         values.push(None);
+                    } else if value_len > buf.remaining() as i32 {
+                        return Err(PgProtocolError::ProtocolViolation(format!(
+                            "bind value length {} exceeds remaining buffer {}",
+                            value_len,
+                            buf.remaining()
+                        )));
                     } else {
                         let mut data = vec![0u8; value_len as usize];
                         buf.copy_to_slice(&mut data);
@@ -1286,5 +1292,51 @@ mod tests {
         assert_eq!(f.type_size, 4);
         assert_eq!(f.type_modifier, -1);
         assert_eq!(f.format_code, 0);
+    }
+
+    #[test]
+    fn test_decode_bind_value_len_exceeds_buffer() {
+        // Build a Bind message with 2 values where the second value's value_len claims
+        // more data than is actually present in the buffer, but the outer message length
+        // passes the initial check because it was calculated from the actual data size.
+        let mut buf = BytesMut::new();
+        buf.put_u8(b'B');
+
+        // Two values: first is small (1 byte), second claims 999 bytes but only has 1 byte
+        let portal = "";
+        let statement = "";
+        let num_values: u16 = 2;
+
+        // Calculate actual body length based on real data:
+        // portal\0(1) + statement\0(1) + num_formats(2) + num_values(2)
+        // + value0_len(4) + value0_data(1)
+        // + value1_len(4) + value1_data(1) (actual 1 byte, but value_len claims 999)
+        // + num_result_formats(2)
+        let body_len = 1 + 1 + 2 + 2 // headers
+            + 4 + 1 // first value
+            + 4 + 1 // second value (actual data is 1 byte, but value_len will claim 999)
+            + 2; // result formats
+        buf.put_i32((body_len + 4) as i32); // msg_len = 4 + body_len
+        put_cstring(&mut buf, portal);
+        put_cstring(&mut buf, statement);
+        buf.put_u16(0); // num_formats
+        buf.put_u16(num_values);
+
+        // First value: small
+        buf.put_i32(1); // value_len = 1
+        buf.put_u8(b'X'); // 1 byte of data
+
+        // Second value: value_len claims 999 but only 1 byte of actual data follows
+        buf.put_i32(999); // value_len = 999 (corrupted)
+        buf.put_u8(b'Y'); // only 1 byte of data
+
+        buf.put_u16(0); // num_result_formats
+
+        // The total buffer is ~23 bytes, msg_len = body_len + 4 = ~22
+        // total_needed = 1 + msg_len = ~23 = buf.len(), outer length check passes
+        // But when decoding the second value, value_len(999) > remaining(~3 bytes)
+        // which triggers the ProtocolViolation error
+        let result = FrontendMessage::decode(&mut buf);
+        assert!(result.is_err(), "Bind with value_len exceeding buffer should return error, got: {:?}", result);
     }
 }

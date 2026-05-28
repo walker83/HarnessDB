@@ -17,6 +17,24 @@ use tracing::info;
 use crate::server::McServerState;
 use crate::XmlResponse;
 
+/// Validate that a string is a valid SQL identifier (prevents SQL injection).
+///
+/// Valid identifiers consist of letters, digits, and underscores, and
+/// must start with a letter or underscore.
+fn validate_sql_identifier(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut chars = s.chars();
+    // First character must be a letter or underscore
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    // Remaining characters must be letters, digits, or underscores
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Optional query parameters for `list_tables`.
 #[derive(Debug, Deserialize)]
 pub struct ListTablesParams {
@@ -31,10 +49,11 @@ pub struct ListTablesParams {
 /// List all tables in the given project (database).
 ///
 /// Uses `SHOW TABLES FROM <project>` internally.
+/// Supports `prefix`, `marker`, and `maxitem` pagination parameters.
 pub async fn list_tables(
     State(state): State<Arc<McServerState>>,
     Path(project): Path<String>,
-    Query(_params): Query<ListTablesParams>,
+    Query(params): Query<ListTablesParams>,
 ) -> impl IntoResponse {
     info!("GET /api/projects/{}/tables", project);
 
@@ -50,15 +69,43 @@ pub async fn list_tables(
             .into_response();
     }
 
-    // Execute SHOW TABLES and extract table names.
-    let result = state.handler.handle_query(0, "SHOW TABLES");
+    // Execute SHOW TABLES in a blocking thread
+    let handler = state.handler.clone();
+    let conn_id = state.next_conn_id();
+    let result = tokio::task::spawn_blocking(move || {
+        handler.handle_query(conn_id, "SHOW TABLES")
+    })
+    .await
+    .unwrap_or_else(|join_err| {
+        tracing::error!("Blocking task join error: {}", join_err);
+        mysql_protocol::server::QueryResult::ok()
+    });
 
-    let table_names: Vec<String> = result
+    let mut table_names: Vec<String> = result
         .rows
         .iter()
         .map(|r| r.first().and_then(|v| v.clone()).unwrap_or_default())
         .filter(|n| !n.is_empty())
         .collect();
+
+    // Apply prefix filter
+    if let Some(ref prefix) = params.prefix {
+        if !prefix.is_empty() {
+            table_names.retain(|name| name.starts_with(prefix));
+        }
+    }
+
+    // Skip past marker
+    if let Some(ref marker) = params.marker {
+        if let Some(pos) = table_names.iter().position(|n| n == marker) {
+            table_names.drain(0..=pos);
+        }
+    }
+
+    // Apply maxitem limit
+    if let Some(max_item) = params.max_item {
+        table_names.truncate(max_item as usize);
+    }
 
     // Build the MaxCompute Tables XML.
     let tables_xml: String = table_names
@@ -109,8 +156,30 @@ pub async fn get_table(
             .into_response();
     }
 
-    // Execute DESCRIBE to get column info.
-    let describe_result = state.handler.handle_query(0, &format!("DESCRIBE {}", table));
+    // Validate table name to prevent SQL injection
+    if !validate_sql_identifier(&table) {
+        return (
+            StatusCode::BAD_REQUEST,
+            crate::error_xml(
+                "ODPS-0130011",
+                &format!("Invalid table name: '{}'", table),
+            ),
+        )
+            .into_response();
+    }
+
+    // Execute DESCRIBE in a blocking thread
+    let handler = state.handler.clone();
+    let conn_id = state.next_conn_id();
+    let table_name = table.clone();
+    let describe_result = tokio::task::spawn_blocking(move || {
+        handler.handle_query(conn_id, &format!("DESCRIBE {}", table_name))
+    })
+    .await
+    .unwrap_or_else(|join_err| {
+        tracing::error!("Blocking task join error: {}", join_err);
+        mysql_protocol::server::QueryResult::ok()
+    });
 
     if describe_result.columns.is_empty() && describe_result.rows.is_empty() {
         return (
@@ -202,6 +271,25 @@ mod tests {
         assert_eq!(mysql_type_to_maxcompute("unknown_type"), "string");
     }
 
+    #[test]
+    fn test_validate_sql_identifier_valid() {
+        assert!(validate_sql_identifier("my_table"));
+        assert!(validate_sql_identifier("_private"));
+        assert!(validate_sql_identifier("Table123"));
+        assert!(validate_sql_identifier("a"));
+    }
+
+    #[test]
+    fn test_validate_sql_identifier_invalid() {
+        assert!(!validate_sql_identifier(""));
+        assert!(!validate_sql_identifier("123abc"));  // starts with digit
+        assert!(!validate_sql_identifier("table name"));  // space
+        assert!(!validate_sql_identifier("DROP TABLE"));  // space
+        assert!(!validate_sql_identifier("a;b"));  // semicolon
+        assert!(!validate_sql_identifier("a--"));  // dash
+        assert!(!validate_sql_identifier("' OR '1'='1"));  // SQL injection
+    }
+
     #[tokio::test]
     async fn test_list_tables_project_not_found() {
         use crate::server::{McServerConfig, McServerState, MockQueryHandler};
@@ -243,5 +331,24 @@ mod tests {
         .await;
         let resp = resp.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_table_invalid_table_name_sql_injection() {
+        use crate::server::{McServerConfig, McServerState, MockQueryHandler};
+        let state = Arc::new(McServerState::new(
+            Arc::new(MockQueryHandler::new()),
+            McServerConfig {
+                default_project: "myproject".to_string(),
+                ..McServerConfig::default()
+            },
+        ));
+        let resp = get_table(
+            State(state),
+            Path(("myproject".to_string(), "users; DROP TABLE users".to_string())),
+        )
+        .await;
+        let resp = resp.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

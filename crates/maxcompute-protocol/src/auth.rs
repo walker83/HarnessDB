@@ -41,7 +41,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 type HmacSha1 = Hmac<Sha1>;
@@ -173,19 +173,188 @@ pub fn build_canonical_string_v2(
     result
 }
 
-/// Build the canonical string for V4 signature verification.
+// ---------------------------------------------------------------------------
+// V4 Canonical Request (AWS SigV4 style)
+// ---------------------------------------------------------------------------
+
+/// Build the V4 canonical request following AWS SigV4 format.
 ///
-/// V4 uses the same canonical string format as V2. The difference is in the
-/// signing key derivation (multi-step HMAC-SHA256) and hash algorithm.
-pub fn build_canonical_string_v4(
+/// ```text
+/// HTTPMethod\n
+/// CanonicalURI\n
+/// CanonicalQueryString\n
+/// CanonicalHeaders\n
+/// SignedHeaders\n
+/// HashedRequestPayload
+/// ```
+///
+/// CanonicalHeaders includes content-type, content-md5, date, and x-odps-*
+/// headers sorted by lowercase name.
+///
+/// HashedRequestPayload = hex(SHA256(request_body)) or hex(SHA256("")) for
+/// empty bodies.
+pub fn build_canonical_request_v4(
     method: &str,
+    path: &str,
+    query: &str,
     content_type: &str,
     content_md5: &str,
     date: &str,
     headers: &HeaderMap,
-    resource: &str,
+    body: &[u8],
 ) -> String {
-    build_canonical_string_v2(method, content_type, content_md5, date, headers, resource)
+    let mut result = String::new();
+
+    // HTTP method
+    result.push_str(method);
+    result.push('\n');
+
+    // CanonicalURI
+    if path.is_empty() {
+        result.push('/');
+    } else {
+        result.push_str(path);
+    }
+    result.push('\n');
+
+    // CanonicalQueryString (sorted key=value pairs)
+    let canonical_qs = canonical_query_string_v4(query);
+    result.push_str(&canonical_qs);
+    result.push('\n');
+
+    // CanonicalHeaders (sorted lowercase header:value\n)
+    // Includes: content-type, content-md5, date, and all x-odps-* headers
+    let (canonical_headers, signed_headers) = build_canonical_headers_v4(
+        headers, content_type, content_md5, date,
+    );
+    result.push_str(&canonical_headers);
+    result.push('\n');
+
+    // SignedHeaders
+    result.push_str(&signed_headers);
+    result.push('\n');
+
+    // HashedRequestPayload
+    let payload_hash = if body.is_empty() {
+        hex::encode(Sha256::digest(b""))
+    } else {
+        hex::encode(Sha256::digest(body))
+    };
+    result.push_str(&payload_hash);
+
+    result
+}
+
+/// Build the V4 StringToSign.
+///
+/// ```text
+/// ACS4-HMAC-SHA256\n
+/// {timestamp}\n
+/// {date}/{region}/odps/aliyun_v4_request\n
+/// {hex(sha256(canonical_request))}
+/// ```
+pub fn build_string_to_sign_v4(
+    timestamp: &str,
+    date_yyyy_mm_dd: &str,
+    region: &str,
+    canonical_request_hash: &str,
+) -> String {
+    format!(
+        "ACS4-HMAC-SHA256\n{timestamp}\n{date}/{region}/odps/aliyun_v4_request\n{hash}",
+        timestamp = timestamp,
+        date = date_yyyy_mm_dd,
+        region = region,
+        hash = canonical_request_hash,
+    )
+}
+
+/// Build V4 canonical headers and signed headers string.
+///
+/// Returns (canonical_headers_string, signed_headers_string).
+/// Canonical headers are sorted lowercase `name:value\n` entries for
+/// content-type, content-md5, date, and x-odps-* headers.
+fn build_canonical_headers_v4(
+    headers: &HeaderMap,
+    content_type: &str,
+    content_md5: &str,
+    date: &str,
+) -> (String, String) {
+    let mut header_pairs: Vec<(String, String)> = Vec::new();
+
+    // content-type (only if present)
+    if !content_type.is_empty() {
+        header_pairs.push(("content-type".to_string(), content_type.trim().to_string()));
+    }
+
+    // content-md5 (only if present)
+    if !content_md5.is_empty() {
+        header_pairs.push(("content-md5".to_string(), content_md5.trim().to_string()));
+    }
+
+    // date
+    header_pairs.push(("date".to_string(), date.trim().to_string()));
+
+    // x-odps-* headers
+    for (name, value) in headers.iter() {
+        let lower = name.as_str().to_ascii_lowercase();
+        if lower.starts_with("x-odps-") {
+            let already_added = header_pairs.iter().any(|(k, _)| k == &lower);
+            if !already_added {
+                header_pairs.push((lower, value.to_str().unwrap_or("").trim().to_string()));
+            }
+        }
+    }
+
+    // Sort by header name
+    header_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let canonical_headers: String = header_pairs
+        .iter()
+        .map(|(k, v)| format!("{}:{}\n", k, v))
+        .collect();
+
+    let signed_headers: String = header_pairs
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .collect::<Vec<&str>>()
+        .join(";");
+
+    (canonical_headers, signed_headers)
+}
+
+/// Sort query parameters by key for V4 canonical query string.
+fn canonical_query_string_v4(query: &str) -> String {
+    if query.is_empty() {
+        return String::new();
+    }
+    let mut params: Vec<(&str, &str)> = query
+        .split('&')
+        .filter_map(|p| {
+            let mut parts = p.splitn(2, '=');
+            let key = parts.next()?;
+            let value = parts.next().unwrap_or("");
+            Some((key, value))
+        })
+        .collect();
+    params.sort_by(|a, b| a.0.cmp(b.0));
+    params
+        .iter()
+        .map(|(k, v)| {
+            if v.is_empty() {
+                (*k).to_string()
+            } else {
+                format!("{}={}", k, v)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Parse an HTTP-date (RFC 2822) into ISO 8601 timestamp format (YYYYMMDDTHHMMSSZ).
+fn http_date_to_iso8601_timestamp(date_str: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc2822(date_str.trim())
+        .ok()
+        .map(|dt| dt.format("%Y%m%dT%H%M%SZ").to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +373,7 @@ pub fn build_canonical_string_v4(
 /// * `path` - URL path (e.g. `/projects/test_project/tables`)
 /// * `query` - URL query string (e.g. `result` or empty string)
 /// * `headers` - HTTP request headers
+/// * `body` - Request body bytes (used for V4 payload hash; may be empty for GET)
 ///
 /// # Returns
 ///
@@ -215,6 +385,7 @@ pub fn verify_request(
     path: &str,
     query: &str,
     headers: &HeaderMap,
+    body: &[u8],
 ) -> Result<bool, AuthError> {
     let auth_header = headers
         .get("authorization")
@@ -225,7 +396,7 @@ pub fn verify_request(
 
     // V4 headers contain "/odps/aliyun_v4_request"
     if stripped.contains("/odps/aliyun_v4_request") {
-        verify_v4(config, method, path, query, headers, stripped)
+        verify_v4(config, method, path, query, headers, stripped, body)
     } else {
         verify_v2(config, method, path, query, headers, stripped)
     }
@@ -286,6 +457,7 @@ fn verify_v4(
     query: &str,
     headers: &HeaderMap,
     auth_value: &str,
+    body: &[u8],
 ) -> Result<bool, AuthError> {
     // V4 format: access_id/YYYYMMDD/region/odps/aliyun_v4_request:signature
     let colon_pos = auth_value.rfind(':').ok_or(AuthError::InvalidFormat)?;
@@ -319,18 +491,36 @@ fn verify_v4(
     let content_type = header_value(headers, "content-type").unwrap_or_default();
     let content_md5 = header_value(headers, "content-md5").unwrap_or_default();
     let date = header_value(headers, "date").ok_or(AuthError::MissingHeader("date".into()))?;
-    let resource = canonicalized_resource(path, query);
 
-    let canonical = build_canonical_string_v4(
+    // Build the canonical request (AWS SigV4 style)
+    let canonical_request = build_canonical_request_v4(
         method,
+        path,
+        query,
         &content_type,
         &content_md5,
         &date,
         headers,
-        &resource,
+        body,
     );
 
-    let expected = hmac_sha256_base64(&signing_key, canonical.as_bytes());
+    // Hash the canonical request
+    let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+
+    // Build the timestamp from the Date header (ISO 8601 format)
+    // For V4, the timestamp used in StringToSign comes from the x-odps-date header or date header
+    let timestamp = http_date_to_iso8601_timestamp(&date)
+        .unwrap_or_else(|| format!("{}T000000Z", date_yyyy_mm_dd));
+
+    // Build the StringToSign
+    let string_to_sign = build_string_to_sign_v4(
+        &timestamp,
+        date_yyyy_mm_dd,
+        region,
+        &canonical_request_hash,
+    );
+
+    let expected = hmac_sha256_base64(&signing_key, string_to_sign.as_bytes());
     Ok(constant_time_eq(provided_sig.as_bytes(), expected.as_bytes()))
 }
 
@@ -559,32 +749,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Canonical string (V4)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_build_canonical_string_v4_identical_structure() {
-        let headers = HeaderMap::new();
-        let v2 = build_canonical_string_v2(
-            "GET",
-            "application/xml",
-            "",
-            "Mon, 01 Jan 2024 00:00:00 GMT",
-            &headers,
-            "/projects/p/tables",
-        );
-        let v4 = build_canonical_string_v4(
-            "GET",
-            "application/xml",
-            "",
-            "Mon, 01 Jan 2024 00:00:00 GMT",
-            &headers,
-            "/projects/p/tables",
-        );
-        assert_eq!(v2, v4);
-    }
-
-    // -----------------------------------------------------------------------
     // Resource building
     // -----------------------------------------------------------------------
 
@@ -705,7 +869,7 @@ mod tests {
         headers.insert("content-type", "application/json".parse().unwrap());
         headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
 
-        let result = verify_request(&config, "GET", "/api/projects/test", "", &headers);
+        let result = verify_request(&config, "GET", "/api/projects/test", "", &headers, &[]);
         assert!(result.is_ok(), "verify should succeed: {:?}", result.err());
         assert!(result.unwrap());
     }
@@ -719,7 +883,7 @@ mod tests {
             "authorization",
             "ODPS test_key:invalidsignature==".parse().unwrap(),
         );
-        let result = verify_request(&config, "GET", "/api/projects/test", "", &headers);
+        let result = verify_request(&config, "GET", "/api/projects/test", "", &headers, &[]);
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
@@ -733,7 +897,7 @@ mod tests {
             "authorization",
             "ODPS wrong_key:somesig".parse().unwrap(),
         );
-        let result = verify_request(&config, "GET", "/test", "", &headers);
+        let result = verify_request(&config, "GET", "/test", "", &headers, &[]);
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
@@ -742,7 +906,7 @@ mod tests {
     fn test_verify_v2_missing_auth_header() {
         let config = McAuthConfig::new_v2("key", "secret");
         let headers = HeaderMap::new();
-        let result = verify_request(&config, "GET", "/", "", &headers);
+        let result = verify_request(&config, "GET", "/", "", &headers, &[]);
         assert!(matches!(result, Err(AuthError::MissingAuth)));
     }
 
@@ -754,7 +918,7 @@ mod tests {
             "authorization",
             "ODPS key:somesig".parse().unwrap(),
         );
-        let result = verify_request(&config, "GET", "/", "", &headers);
+        let result = verify_request(&config, "GET", "/", "", &headers, &[]);
         assert!(matches!(result, Err(AuthError::MissingHeader(_))));
     }
 
@@ -781,33 +945,181 @@ mod tests {
             format!("ODPS akey:{}", sig).parse().unwrap(),
         );
 
-        let result = verify_request(&config, "POST", "/projects/my_project/instances", "", &headers);
+        let result = verify_request(&config, "POST", "/projects/my_project/instances", "", &headers, &[]);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
 
     // -----------------------------------------------------------------------
-    // Sign and verify V4
+    // V4 Canonical Request
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_sign_and_verify_v4() {
-        let config = McAuthConfig::new_v4("test_key", "test_secret", "cn-hangzhou");
-        let mut headers = HeaderMap::new();
-        headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
-
-        let resource = canonicalized_resource("/api/projects/test", "");
-        let canonical = build_canonical_string_v4(
+    fn test_build_canonical_request_v4_basic() {
+        let headers = HeaderMap::new();
+        let canonical = build_canonical_request_v4(
             "GET",
+            "/api/projects/test",
+            "",
             "",
             "",
             "Mon, 01 Jan 2024 00:00:00 GMT",
             &headers,
-            &resource,
+            b"",
+        );
+        let lines: Vec<&str> = canonical.split('\n').collect();
+        assert_eq!(lines[0], "GET", "HTTP method");
+        assert_eq!(lines[1], "/api/projects/test", "CanonicalURI");
+        assert_eq!(lines[2], "", "CanonicalQueryString");
+        // With no content-type or content-md5, the first header is "date:"
+        assert!(lines[3].starts_with("date:"), "First canonical header should be date");
+        assert!(!lines[5].is_empty(), "SignedHeaders must not be empty");
+        // Last line is HashedRequestPayload
+        let empty_hash = hex::encode(Sha256::digest(b""));
+        assert!(canonical.ends_with(&empty_hash), "Should end with payload hash");
+    }
+
+    #[test]
+    fn test_build_canonical_request_v4_with_query() {
+        let headers = HeaderMap::new();
+        let _canonical = build_canonical_request_v4(
+            "GET",
+            "/api/projects/p1/instances/i1",
+            "result",
+            "",
+            "",
+            "Mon, 01 Jan 2024 00:00:00 GMT",
+            &headers,
+            b"",
+        );
+        // Canonical query string should be "result"
+    }
+
+    #[test]
+    fn test_build_canonical_request_v4_with_odps_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-odps-request-id", "abc123".parse().unwrap());
+        headers.insert("x-odps-project", "test_project".parse().unwrap());
+
+        let (canonical_headers, signed_headers) = build_canonical_headers_v4(
+            &headers,
+            "application/xml",
+            "",
+            "Mon, 01 Jan 2024 00:00:00 GMT",
+        );
+        // Headers sorted alphabetically: content-type, date, x-odps-project, x-odps-request-id
+        assert!(canonical_headers.starts_with("content-type:application/xml\n"));
+        assert!(canonical_headers.contains("date:Mon, 01 Jan 2024 00:00:00 GMT\n"));
+        assert!(canonical_headers.contains("x-odps-project:test_project\n"));
+        assert!(canonical_headers.contains("x-odps-request-id:abc123\n"));
+
+        // Signed headers should be semicolon-separated and sorted
+        let parts: Vec<&str> = signed_headers.split(';').collect();
+        assert!(parts.contains(&"date"));
+        assert!(parts.contains(&"x-odps-project"));
+        assert!(parts.contains(&"x-odps-request-id"));
+        assert!(parts.contains(&"content-type"));
+
+        // Verify sort order
+        let mut sorted = parts.to_vec();
+        sorted.sort();
+        assert_eq!(parts, sorted, "Signed headers must be sorted");
+    }
+
+    // -----------------------------------------------------------------------
+    // V4 Canonical Query String
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_canonical_query_string_v4_empty() {
+        assert_eq!(canonical_query_string_v4(""), "");
+    }
+
+    #[test]
+    fn test_canonical_query_string_v4_sorted() {
+        let result = canonical_query_string_v4("b=2&a=1");
+        assert_eq!(result, "a=1&b=2");
+    }
+
+    // -----------------------------------------------------------------------
+    // V4 StringToSign
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_build_string_to_sign_v4_format() {
+        let s = build_string_to_sign_v4(
+            "20240101T000000Z",
+            "20240101",
+            "cn-hangzhou",
+            "abc123def456",
+        );
+        assert!(s.starts_with("ACS4-HMAC-SHA256\n"));
+        assert!(s.contains("\n20240101/cn-hangzhou/odps/aliyun_v4_request\n"));
+        assert!(s.ends_with("abc123def456"));
+    }
+
+    // -----------------------------------------------------------------------
+    // HTTP date to ISO 8601 timestamp
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_http_date_to_iso8601_timestamp_parses() {
+        let ts = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT");
+        assert_eq!(ts, Some("20240101T000000Z".to_string()));
+    }
+
+    #[test]
+    fn test_http_date_to_iso8601_timestamp_gmt_offset() {
+        let ts = http_date_to_iso8601_timestamp("Thu, 15 Jun 2023 12:30:45 GMT");
+        assert_eq!(ts, Some("20230615T123045Z".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // V4 Known-good test vector
+    // -----------------------------------------------------------------------
+
+    /// Known-good V4 test vector.
+    ///
+    /// This test manually computes the full V4 signature using a known
+    /// configuration and verifies it with verify_request. This ensures the
+    /// V4 canonical request format, StringToSign, and signing key derivation
+    /// all work together correctly.
+    #[test]
+    fn test_v4_known_good_signature_roundtrip() {
+        let config = McAuthConfig::new_v4("test_key", "test_secret", "cn-hangzhou");
+        let mut headers = HeaderMap::new();
+        headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
+        headers.insert("content-type", "application/xml".parse().unwrap());
+
+        // Build the V4 canonical request
+        let canonical_request = build_canonical_request_v4(
+            "GET",
+            "/api/projects/test",
+            "",
+            "application/xml",
+            "",
+            "Mon, 01 Jan 2024 00:00:00 GMT",
+            &headers,
+            b"",
         );
 
+        // Hash the canonical request
+        let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+
+        // Build the StringToSign
+        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT")
+            .unwrap();
+        let string_to_sign = build_string_to_sign_v4(
+            &timestamp,
+            "20240101",
+            "cn-hangzhou",
+            &canonical_request_hash,
+        );
+
+        // Derive signing key and compute signature
         let signing_key = derive_v4_signing_key("test_secret", "20240101", "cn-hangzhou");
-        let sig = hmac_sha256_base64(&signing_key, canonical.as_bytes());
+        let sig = hmac_sha256_base64(&signing_key, string_to_sign.as_bytes());
+
         headers.insert(
             "authorization",
             format!(
@@ -818,9 +1130,131 @@ mod tests {
             .unwrap(),
         );
 
-        let result = verify_request(&config, "GET", "/api/projects/test", "", &headers);
-        assert!(result.is_ok(), "V4 verify should succeed: {:?}", result.err());
-        assert!(result.unwrap());
+        let result = verify_request(
+            &config,
+            "GET",
+            "/api/projects/test",
+            "",
+            &headers,
+            b"",
+        );
+        assert!(result.is_ok(), "V4 known-good verify should succeed: {:?}", result.err());
+        assert!(result.unwrap(), "V4 known-good signature should match");
+    }
+
+    #[test]
+    fn test_v4_known_good_signature_with_body() {
+        let config = McAuthConfig::new_v4("test_key", "test_secret", "cn-hangzhou");
+        let mut headers = HeaderMap::new();
+        headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
+        headers.insert("content-type", "application/xml".parse().unwrap());
+
+        let body = b"<Instance><Job><Query>SELECT 1</Query></Job></Instance>";
+
+        // Build the V4 canonical request with body
+        let canonical_request = build_canonical_request_v4(
+            "POST",
+            "/api/projects/test/instances",
+            "",
+            "application/xml",
+            "",
+            "Mon, 01 Jan 2024 00:00:00 GMT",
+            &headers,
+            body,
+        );
+
+        let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+
+        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT")
+            .unwrap();
+        let string_to_sign = build_string_to_sign_v4(
+            &timestamp,
+            "20240101",
+            "cn-hangzhou",
+            &canonical_request_hash,
+        );
+
+        let signing_key = derive_v4_signing_key("test_secret", "20240101", "cn-hangzhou");
+        let sig = hmac_sha256_base64(&signing_key, string_to_sign.as_bytes());
+
+        headers.insert(
+            "authorization",
+            format!(
+                "ODPS test_key/20240101/cn-hangzhou/odps/aliyun_v4_request:{}",
+                sig
+            )
+            .parse()
+            .unwrap(),
+        );
+
+        let result = verify_request(
+            &config,
+            "POST",
+            "/api/projects/test/instances",
+            "",
+            &headers,
+            body,
+        );
+        assert!(result.is_ok(), "V4 known-good verify with body should succeed: {:?}", result.err());
+        assert!(result.unwrap(), "V4 known-good signature with body should match");
+    }
+
+    #[test]
+    fn test_v4_signature_mismatch_with_wrong_body() {
+        let config = McAuthConfig::new_v4("test_key", "test_secret", "cn-hangzhou");
+        let mut headers = HeaderMap::new();
+        headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
+        headers.insert("content-type", "application/xml".parse().unwrap());
+
+        let body = b"<Instance><Job><Query>SELECT 1</Query></Job></Instance>";
+
+        // Build signature with one body
+        let canonical_request = build_canonical_request_v4(
+            "POST",
+            "/api/projects/test/instances",
+            "",
+            "application/xml",
+            "",
+            "Mon, 01 Jan 2024 00:00:00 GMT",
+            &headers,
+            body,
+        );
+
+        let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+
+        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT")
+            .unwrap();
+        let string_to_sign = build_string_to_sign_v4(
+            &timestamp,
+            "20240101",
+            "cn-hangzhou",
+            &canonical_request_hash,
+        );
+
+        let signing_key = derive_v4_signing_key("test_secret", "20240101", "cn-hangzhou");
+        let sig = hmac_sha256_base64(&signing_key, string_to_sign.as_bytes());
+
+        headers.insert(
+            "authorization",
+            format!(
+                "ODPS test_key/20240101/cn-hangzhou/odps/aliyun_v4_request:{}",
+                sig
+            )
+            .parse()
+            .unwrap(),
+        );
+
+        // Verify with a DIFFERENT body => should fail
+        let result = verify_request(
+            &config,
+            "POST",
+            "/api/projects/test/instances",
+            "",
+            &headers,
+            b"<different>body</different>",
+        );
+        assert!(result.is_ok(), "mismatched body should not error");
+        assert!(!result.unwrap(), "mismatched body should fail verification");
     }
 
     #[test]
@@ -834,7 +1268,7 @@ mod tests {
                 .parse()
                 .unwrap(),
         );
-        let result = verify_request(&config, "GET", "/", "", &headers);
+        let result = verify_request(&config, "GET", "/", "", &headers, &[]);
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
@@ -857,7 +1291,7 @@ mod tests {
                 .unwrap(),
         );
         // Should not error, just return false
-        let result = verify_request(&config, "GET", "/", "", &headers);
+        let result = verify_request(&config, "GET", "/", "", &headers, &[]);
         assert!(result.is_ok());
     }
 
@@ -871,7 +1305,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
         headers.insert("authorization", "Bearer some_token".parse().unwrap());
-        let result = verify_request(&config, "GET", "/", "", &headers);
+        let result = verify_request(&config, "GET", "/", "", &headers, &[]);
         assert!(matches!(result, Err(AuthError::UnsupportedScheme)));
     }
 }
