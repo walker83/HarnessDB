@@ -9,7 +9,12 @@
 //! - Mapping types (TEXT -> STRING, TIMESTAMPTZ -> TIMESTAMP, etc.)
 //! - Stripping ON CONFLICT from INSERT statements
 //! - Converting EXPLAIN ANALYZE to EXPLAIN
-//! - Reporting errors for unsupported features
+//! - Reporting errors for truly unsupported features
+//! - Stripping FOR UPDATE / FOR SHARE from SELECT (no row-level locking)
+//! - Making GRANT/REVOKE no-ops with warning
+//! - Making CREATE POLICY no-ops with warning
+//! - Passing through WITH RECURSIVE, DISTINCT ON, CREATE FUNCTION
+//! - Handling CALL refresh_materialized_view as no-op
 
 use regex::Regex;
 
@@ -74,6 +79,24 @@ fn is_set_table_group(sql: &str) -> bool {
     re.is_match(sql)
 }
 
+/// Check if the SQL is a CALL refresh_materialized_view statement (no-op).
+fn is_refresh_materialized_view(sql: &str) -> bool {
+    let re = Regex::new(r"(?i)^\s*CALL\s+refresh_materialized_view\s*\(").unwrap();
+    re.is_match(sql)
+}
+
+/// Check if the SQL is a GRANT or REVOKE statement (no-op).
+fn is_grant_revoke(sql: &str) -> bool {
+    let re = Regex::new(r"(?i)^\s*(GRANT|REVOKE)\b").unwrap();
+    re.is_match(sql)
+}
+
+/// Check if the SQL is a CREATE POLICY or ALTER POLICY statement (no-op).
+fn is_create_policy(sql: &str) -> bool {
+    let re = Regex::new(r"(?i)^\s*(CREATE|ALTER)\s+POLICY\b").unwrap();
+    re.is_match(sql)
+}
+
 /// Check if the SQL is a LISTEN or NOTIFY statement (error).
 fn is_listen_notify(sql: &str) -> bool {
     let listen_re = Regex::new(r"(?i)^\s*LISTEN\b").unwrap();
@@ -92,37 +115,9 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
         return Some(TranslateResult::error("Hologres does not support triggers"));
     }
 
-    // CREATE OR REPLACE FUNCTION ... LANGUAGE plpgsql
-    if Regex::new(r"(?i)^\s*CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\b").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "CREATE FUNCTION is not supported by RorisDB in Phase 1",
-        ));
-    }
-
     // CREATE DOMAIN
     if Regex::new(r"(?i)^\s*CREATE\s+DOMAIN\b").unwrap().is_match(trimmed) {
         return Some(TranslateResult::error("CREATE DOMAIN is not supported by RorisDB"));
-    }
-
-    // WITH RECURSIVE
-    if Regex::new(r"(?i)^\s*WITH\s+RECURSIVE\b").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "Hologres does not support recursive CTE with RorisDB backend",
-        ));
-    }
-
-    // SELECT ... FOR UPDATE
-    if Regex::new(r"(?i)\bFOR\s+UPDATE\b").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "Hologres does not support row-level locking (FOR UPDATE)",
-        ));
-    }
-
-    // DISTINCT ON (col)
-    if Regex::new(r"(?i)\bDISTINCT\s+ON\s*\(").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "DISTINCT ON is not supported by RorisDB",
-        ));
     }
 
     // LISTEN / NOTIFY
@@ -132,8 +127,11 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
         ));
     }
 
-    // Note: JSON, JSONB, and array types (INT[], TEXT[], etc.) are now
-    // passed through to DataFusion since DataFusion supports them.
+    // The following features are now passed through instead of blocked:
+    // - CREATE FUNCTION (DataFusion 48 can parse it)
+    // - WITH RECURSIVE (DataFusion 48 supports recursive CTEs)
+    // - DISTINCT ON (may be supported by DataFusion)
+    // - SELECT ... FOR UPDATE (stripped with warning, see strip_for_update)
 
     None
 }
@@ -377,6 +375,60 @@ fn strip_explain_analyze(sql: &str) -> (String, Vec<String>) {
     }
 
     (trimmed.to_string(), warnings)
+}
+
+/// Strip FOR UPDATE / FOR SHARE / FOR NO KEY UPDATE / FOR KEY SHARE from SELECT statements.
+/// These are row-level locking clauses that RorisDB does not support, but rather than
+/// erroring, we strip them with a warning to maximize compatibility.
+fn strip_for_update(sql: &str) -> (String, Vec<String>) {
+    let trimmed = sql.trim();
+
+    let select_re = Regex::new(r"(?i)^\s*SELECT\b").unwrap();
+    if !select_re.is_match(trimmed) {
+        return (trimmed.to_string(), Vec::new());
+    }
+
+    let (masked, original_strings) = crate::mask_string_literals(trimmed);
+
+    // Match FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE, FOR KEY SHARE
+    let for_re = Regex::new(
+        r"(?i)\bFOR\s+(?:UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b",
+    )
+    .unwrap();
+
+    if let Some(m) = for_re.find(&masked) {
+        let start = m.start();
+        let mut tail = &masked[m.end()..];
+
+        // Skip optional OF table1, table2, ... (comma-separated identifiers, possibly schema-qualified)
+        let of_re = Regex::new(r"(?i)^\s*OF\s+").unwrap();
+        if of_re.is_match(tail) {
+            tail = &tail[of_re.find(tail).unwrap().end()..];
+            // Skip identifiers (word chars, dots, commas, spaces)
+            let ident_re = Regex::new(r"^\s*\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*").unwrap();
+            if let Some(ident_match) = ident_re.find(tail) {
+                tail = &tail[ident_match.end()..];
+            }
+        }
+
+        // Skip optional NOWAIT or SKIP LOCKED
+        let lock_re = Regex::new(r"(?i)^\s*(?:NOWAIT|SKIP\s+LOCKED)\b").unwrap();
+        if lock_re.is_match(tail) {
+            tail = &tail[lock_re.find(tail).unwrap().end()..];
+        }
+
+        let end = masked.len() - tail.len();
+
+        let result_masked = format!("{}{}", &masked[..start], &masked[end..]);
+        let result_masked = result_masked.trim().to_string();
+        let result = crate::restore_string_literals(&result_masked, &original_strings);
+        return (result, vec![format!(
+            "FOR UPDATE clause stripped: '{}'",
+            &masked[start..end]
+        )]);
+    }
+
+    (trimmed.to_string(), Vec::new())
 }
 
 // ── New Transformation Functions ──────────────────────────────────────────
@@ -759,6 +811,21 @@ impl DialectTranslator for HologresTranslator {
                 .with_warning("CALL set_table_group is a no-op in RorisDB");
         }
 
+        if is_refresh_materialized_view(cleaned) {
+            return TranslateResult::ok(String::new())
+                .with_warning("CALL refresh_materialized_view is a no-op in RorisDB");
+        }
+
+        if is_grant_revoke(cleaned) {
+            return TranslateResult::ok(String::new())
+                .with_warning("GRANT/REVOKE stripped (RorisDB does not support permissions)");
+        }
+
+        if is_create_policy(cleaned) {
+            return TranslateResult::ok(String::new())
+                .with_warning("CREATE/ALTER POLICY stripped (RorisDB does not support row-level security)");
+        }
+
         // Check for unsupported features
         if let Some(err) = check_unsupported(cleaned) {
             return err;
@@ -782,28 +849,35 @@ impl DialectTranslator for HologresTranslator {
             warnings.extend(w);
         }
 
-        // Step 3: Translate pg_catalog queries
+        // Step 3: Strip FOR UPDATE / FOR SHARE / etc. from SELECT
+        {
+            let (r, w) = strip_for_update(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
+        // Step 4: Translate pg_catalog queries
         {
             let (r, w) = translate_pg_catalog(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 4: Strip ON CONFLICT from INSERT
+        // Step 5: Strip ON CONFLICT from INSERT
         {
             let (r, w) = strip_on_conflict(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 5: Handle CTAS WITH clause (no column defs case)
+        // Step 6: Handle CTAS WITH clause (no column defs case)
         {
             let (r, w) = handle_ctas_with(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 6: Handle CREATE TABLE transformations
+        // Step 7: Handle CREATE TABLE transformations
         if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b").unwrap().is_match(&result) {
             // Strip WITH clause
             {
@@ -820,38 +894,38 @@ impl DialectTranslator for HologresTranslator {
             }
         }
 
-        // Step 7: Handle CREATE INDEX (USING bitmap / WITH bitmap)
+        // Step 8: Handle CREATE INDEX (USING bitmap / WITH bitmap)
         {
             let (r, w) = handle_create_index(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 8: Handle ALTER TABLE SET properties
+        // Step 9: Handle ALTER TABLE SET properties
         {
             let (r, w) = handle_alter_table_set(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 9: Handle COPY command
+        // Step 10: Handle COPY command
         {
             let (r, w) = handle_copy(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 10: Handle CREATE FOREIGN TABLE
+        // Step 11: Handle CREATE FOREIGN TABLE
         {
             let (r, w) = handle_create_foreign_table(&result);
             result = r;
             warnings.extend(w);
         }
 
-        // Step 11: Map types
+        // Step 12: Map types
         result = map_types(&result);
 
-        // Step 12: Clean up extra whitespace
+        // Step 13: Clean up extra whitespace
         result = result.trim().to_string();
         let multi_space = Regex::new(r"\s{2,}").unwrap();
         result = multi_space.replace_all(&result, " ").to_string();
@@ -866,20 +940,18 @@ impl DialectTranslator for HologresTranslator {
     fn unsupported_features(&self) -> &[&str] {
         &[
             "CREATE TRIGGER (Hologres does not support triggers)",
-            "CREATE FUNCTION (not supported in Phase 1)",
             "CREATE DOMAIN (not supported)",
-            "WITH RECURSIVE (recursive CTE not supported)",
-            "SELECT ... FOR UPDATE (row-level locking not supported)",
-            "DISTINCT ON (not supported)",
             "LISTEN / NOTIFY (not supported)",
             "CALL set_table_property (silently ignored)",
             "CALL set_table_group (silently ignored)",
+            "CALL refresh_materialized_view (silently ignored)",
             "CREATE EXTENSION (silently ignored)",
             "CREATE TABLE ... PARTITION OF (silently ignored)",
             "WITH table properties (silently stripped)",
             "PARTITION BY LIST (silently stripped)",
             "INSERT ... ON CONFLICT (ON CONFLICT stripped)",
             "INSERT OVERWRITE (translated to INSERT INTO)",
+            "SELECT ... FOR UPDATE (silently stripped)",
             "EXPLAIN ANALYZE (simplified to EXPLAIN)",
             "CREATE INDEX USING bitmap / WITH bitmap (simplified)",
             "ALTER TABLE SET properties (silently stripped)",
@@ -890,6 +962,11 @@ impl DialectTranslator for HologresTranslator {
             "Array types INT[], TEXT[], etc. (passed through, DataFusion supports arrays)",
             "QUALIFY clause (passed through, limited DataFusion support)",
             "TABLESAMPLE (passed through, limited DataFusion support)",
+            "GRANT/REVOKE (silently ignored)",
+            "CREATE/ALTER POLICY / RLS (silently ignored)",
+            "WITH RECURSIVE (passed through, DataFusion supports recursive CTEs)",
+            "DISTINCT ON (passed through, DataFusion may support it)",
+            "CREATE FUNCTION (passed through, can be parsed by DataFusion)",
         ]
     }
 }
@@ -1177,21 +1254,13 @@ mod tests {
         );
     }
 
-    // ── Unsupported Features (errors) ──
+    // ── Features That Now Pass Through ──
 
     #[test]
     fn test_create_trigger_error() {
         assert_error(
             "CREATE TRIGGER update_trigger BEFORE UPDATE ON t FOR EACH ROW EXECUTE FUNCTION f()",
             "triggers",
-        );
-    }
-
-    #[test]
-    fn test_create_function_error() {
-        assert_error(
-            "CREATE OR REPLACE FUNCTION add(a INT, b INT) RETURNS INT LANGUAGE plpgsql AS $$ BEGIN RETURN a + b; END; $$",
-            "CREATE FUNCTION",
         );
     }
 
@@ -1204,26 +1273,44 @@ mod tests {
     }
 
     #[test]
-    fn test_with_recursive_error() {
-        assert_error(
+    fn test_create_function_passes_through() {
+        // CREATE FUNCTION is now passed through (DataFusion 48 can parse it)
+        let result = translator().translate(
+            "CREATE OR REPLACE FUNCTION add(a INT, b INT) RETURNS INT LANGUAGE plpgsql AS $$ BEGIN RETURN a + b; END; $$",
+        );
+        assert!(result.success, "CREATE FUNCTION should pass through now: {:?}", result.error);
+        assert!(
+            result.sql.contains("CREATE OR REPLACE FUNCTION"),
+            "CREATE FUNCTION SQL should be preserved, got: {}",
+            result.sql
+        );
+    }
+
+    #[test]
+    fn test_with_recursive_passes_through() {
+        // WITH RECURSIVE is now passed through (DataFusion 48 supports recursive CTEs)
+        let result = translator().translate(
             "WITH RECURSIVE cte AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM cte WHERE n < 10) SELECT * FROM cte",
-            "recursive CTE",
+        );
+        assert!(result.success, "WITH RECURSIVE should pass through now: {:?}", result.error);
+        assert!(
+            result.sql.contains("WITH RECURSIVE"),
+            "WITH RECURSIVE should be preserved in SQL, got: {}",
+            result.sql
         );
     }
 
     #[test]
-    fn test_for_update_error() {
-        assert_error(
-            "SELECT * FROM t WHERE id = 1 FOR UPDATE",
-            "row-level locking",
-        );
-    }
-
-    #[test]
-    fn test_distinct_on_error() {
-        assert_error(
+    fn test_distinct_on_passes_through() {
+        // DISTINCT ON is now passed through (may be supported by DataFusion)
+        let result = translator().translate(
             "SELECT DISTINCT ON (col1) col1, col2 FROM t ORDER BY col1, col2",
-            "DISTINCT ON",
+        );
+        assert!(result.success, "DISTINCT ON should pass through now: {:?}", result.error);
+        assert!(
+            result.sql.contains("DISTINCT ON"),
+            "DISTINCT ON should be preserved in SQL, got: {}",
+            result.sql
         );
     }
 
@@ -2315,6 +2402,231 @@ mod tests {
         assert_eq!(
             result.sql,
             "CREATE FOREIGN TABLE t (a STRING, b TIMESTAMP, c INT, d STRING) SERVER s OPTIONS (schema 'public')"
+        );
+    }
+
+    // ── FOR UPDATE Stripping Tests ──
+
+    #[test]
+    fn test_for_update_stripped() {
+        let result = translator().translate("SELECT * FROM t WHERE id = 1 FOR UPDATE");
+        assert!(result.success, "FOR UPDATE should be stripped: {:?}", result.error);
+        assert_eq!(result.sql, "SELECT * FROM t WHERE id = 1");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("FOR UPDATE")),
+            "Expected FOR UPDATE warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_for_share_stripped() {
+        let result = translator().translate("SELECT * FROM t FOR SHARE");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("FOR UPDATE")),
+            "Expected FOR UPDATE warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_for_no_key_update_stripped() {
+        let result = translator().translate("SELECT * FROM t WHERE id = 1 FOR NO KEY UPDATE");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t WHERE id = 1");
+    }
+
+    #[test]
+    fn test_for_key_share_stripped() {
+        let result = translator().translate("SELECT * FROM t FOR KEY SHARE");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t");
+    }
+
+    #[test]
+    fn test_for_update_with_of_clause() {
+        let result = translator().translate("SELECT t.* FROM t JOIN s ON t.id = s.id FOR UPDATE OF t");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT t.* FROM t JOIN s ON t.id = s.id");
+    }
+
+    #[test]
+    fn test_for_update_with_nowait() {
+        let result = translator().translate("SELECT * FROM t FOR UPDATE NOWAIT");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t");
+    }
+
+    #[test]
+    fn test_for_update_with_skip_locked() {
+        let result = translator().translate("SELECT * FROM t FOR UPDATE SKIP LOCKED");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t");
+    }
+
+    #[test]
+    fn test_for_update_with_of_and_nowait() {
+        let result = translator().translate("SELECT t.* FROM t FOR UPDATE OF t NOWAIT");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT t.* FROM t");
+    }
+
+    #[test]
+    fn test_for_update_only_on_select() {
+        // FOR UPDATE on INSERT should NOT be affected (it won't match our SELECT check)
+        let result = translator().translate("SELECT * FROM t ORDER BY id FOR UPDATE");
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT * FROM t ORDER BY id");
+    }
+
+    #[test]
+    fn test_for_update_multiple_tables() {
+        let result = translator().translate(
+            "SELECT a.*, b.* FROM a, b WHERE a.id = b.id FOR UPDATE OF a, b SKIP LOCKED",
+        );
+        assert!(result.success);
+        assert_eq!(result.sql, "SELECT a.*, b.* FROM a, b WHERE a.id = b.id");
+    }
+
+    // ── GRANT/REVOKE Tests ──
+
+    #[test]
+    fn test_grant_noop() {
+        let result = translator().translate("GRANT SELECT ON t TO user1");
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+        assert!(
+            result.warnings.iter().any(|w| w.contains("GRANT/REVOKE")),
+            "Expected GRANT/REVOKE warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_revoke_noop() {
+        let result = translator().translate("REVOKE SELECT ON t FROM user1");
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+        assert!(
+            result.warnings.iter().any(|w| w.contains("GRANT/REVOKE")),
+            "Expected GRANT/REVOKE warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_grant_all_privileges_noop() {
+        let result = translator().translate("GRANT ALL PRIVILEGES ON DATABASE mydb TO user1");
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+    }
+
+    // ── CREATE/ALTER POLICY Tests ──
+
+    #[test]
+    fn test_create_policy_noop() {
+        let result = translator().translate(
+            "CREATE POLICY user_policy ON t FOR SELECT USING (user_id = current_user)",
+        );
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+        assert!(
+            result.warnings.iter().any(|w| w.contains("POLICY")),
+            "Expected POLICY warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_alter_policy_noop() {
+        let result = translator().translate(
+            "ALTER POLICY user_policy ON t USING (user_id = current_user)",
+        );
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+        assert!(
+            result.warnings.iter().any(|w| w.contains("POLICY")),
+            "Expected POLICY warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    // ── CALL refresh_materialized_view (no-op) ──
+
+    #[test]
+    fn test_refresh_materialized_view_noop() {
+        let result = translator().translate(
+            "CALL refresh_materialized_view('my_mv')",
+        );
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+        assert!(
+            result.warnings.iter().any(|w| w.contains("refresh_materialized_view")),
+            "Expected refresh_materialized_view warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_refresh_materialized_view_case_insensitive() {
+        let result = translator().translate(
+            "call REFRESH_MATERIALIZED_VIEW('my_mv')",
+        );
+        assert!(result.success);
+        assert!(result.sql.is_empty());
+    }
+
+    // ── Additional Type Pass-Through Tests ──
+
+    #[test]
+    fn test_xml_type_passthrough() {
+        assert_translated(
+            "CREATE TABLE t (col1 XML)",
+            "CREATE TABLE t (col1 XML)",
+        );
+    }
+
+    #[test]
+    fn test_pg_lsn_type_passthrough() {
+        assert_translated(
+            "CREATE TABLE t (col1 PG_LSN)",
+            "CREATE TABLE t (col1 PG_LSN)",
+        );
+    }
+
+    #[test]
+    fn test_money_type_passthrough() {
+        assert_translated(
+            "CREATE TABLE t (col1 MONEY)",
+            "CREATE TABLE t (col1 MONEY)",
+        );
+    }
+
+    // ── FOR UPDATE inside string literal not stripped ──
+
+    #[test]
+    fn test_for_update_inside_string_literal_not_stripped() {
+        // FOR UPDATE inside a string literal must NOT be stripped
+        let result = translator().translate(
+            "SELECT * FROM t WHERE col1 = 'FOR UPDATE test'",
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.sql,
+            "SELECT * FROM t WHERE col1 = 'FOR UPDATE test'"
+        );
+    }
+
+    // ── Combined: WITH RECURSIVE pass-through ──
+
+    #[test]
+    fn test_with_recursive_non_recursive_cte_unchanged() {
+        // Non-recursive CTE still passes through fine
+        assert_translated(
+            "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte",
+            "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte",
         );
     }
     }

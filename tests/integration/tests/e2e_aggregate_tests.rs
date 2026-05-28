@@ -122,6 +122,8 @@ impl TestContext {
     fn create_and_use_db(&self) -> String {
         let db = Self::new_db_name();
         let mut conn = self.conn.borrow_mut();
+        // Drop first in case of leftover data from a previous run with same counter
+        let _ = conn.query_drop(&format!("DROP DATABASE IF EXISTS {}", db));
         conn.query_drop(&format!("CREATE DATABASE {}", db)).unwrap();
         conn.query_drop(&format!("USE {}", db)).unwrap();
         db

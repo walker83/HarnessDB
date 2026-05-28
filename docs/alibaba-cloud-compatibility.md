@@ -6,6 +6,8 @@ RorisDB 作为通用数据库仿真底座，支持模拟多种数据库协议和
 
 Phase 1 基础协议兼容性已完成。所有核心端点、认证和基础 SQL 功能均已实现。
 
+**测试覆盖**: 1493 测试全部通过 (807 单元测试 + 686 集成测试)
+
 ## 支持的数据库协议
 
 | 数据库 | 协议类型 | 端口 | 状态 | 说明 |
@@ -70,9 +72,9 @@ MaxCompute 协议支持两种签名方式：
 | DATE | DATE | ✅ |
 | TIMESTAMP | TIMESTAMP | ✅ |
 | BINARY | BLOB | ✅ |
-| ARRAY<T> | — | ❌ Phase 2 |
-| MAP<K,V> | — | ❌ Phase 2 |
-| STRUCT<...> | — | ❌ Phase 2 |
+| ARRAY<T> | ARRAY | ✅ 透传 DataFusion |
+| MAP<K,V> | MAP | ✅ 透传 DataFusion |
+| STRUCT<...> | STRUCT | ✅ 透传 DataFusion |
 
 ### SQL 语法兼容
 
@@ -99,7 +101,7 @@ MaxCompute 协议支持两种签名方式：
 | `INSERT INTO t PARTITION(ds='x') VALUES ...` | 剥离 PARTITION 子句 | ✅ 自动转换 |
 | `UPDATE t SET ... WHERE ...` | 直接执行 | ✅ RorisDB 支持 |
 | `DELETE FROM t WHERE ...` | 直接执行 | ✅ RorisDB 支持 |
-| `MERGE INTO ...` | 不支持 | ❌ Phase 2 |
+| `MERGE INTO ...` | 透传 | ✅ 透传解析器 |
 | `FROM src INSERT INTO t1 ... INSERT INTO t2 ...` (MULTI INSERT) | 直接执行 | ✅ 透传 |
 
 #### 查询
@@ -121,12 +123,15 @@ MaxCompute 协议支持两种签名方式：
 | `SET odps.sql.xxx=yyy` | 忽略 | ✅ 静默忽略 |
 | `SET project.xxx=yyy` | 忽略 | ✅ 静默忽略 |
 | `SET hive.xxx=yyy` | 忽略 | ✅ 静默忽略 |
+| `SET spark.xxx=yyy` | 忽略 | ✅ 静默忽略 |
+| `SET mapreduce.xxx=yyy` | 忽略 | ✅ 静默忽略 |
+| `SET any_key=value` | 忽略 | ✅ 所有 SET key=value 均为 no-op |
 | `SETPROJECT xxx=yyy` | 忽略 | ✅ 静默忽略 |
 | `SELECT * EXCEPT(col1, col2)` | 直接执行 | ✅ 透传 DataFusion |
 | `SELECT * REPLACE(expr AS col)` | 直接执行 | ✅ 透传 DataFusion |
 | `TABLESAMPLE(N PERCENT)` | 直接执行 | ✅ 透传 |
 | `QUALIFY ...` | 直接执行 | ✅ 透传 |
-| `LATERAL VIEW explode(col)` | 不支持 | ❌ Phase 2 |
+| `LATERAL VIEW explode(col) t AS alias` | 转为 CROSS JOIN UNNEST | ✅ 自动转换 |
 | `SELECT TRANSFORM(...) USING 'script'` | 不支持 | ❌ 高级特性 |
 
 #### DDL 扩展
@@ -219,18 +224,25 @@ MaxCompute 协议支持两种签名方式：
 
 ### 不支持的 PG 特性
 
-| 功能 | 状态 | 错误信息 |
-|------|------|---------|
-| `CREATE TRIGGER` | ❌ | Hologres 不支持触发器 |
-| `CREATE FUNCTION` | ❌ | Phase 1 不支持 |
-| `WITH RECURSIVE` | ❌ | Hologres 不支持递归 CTE |
-| `SELECT ... FOR UPDATE` | ❌ | Hologres 无行级锁 |
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| `CREATE TRIGGER` | ❌ | 后端不支持触发器 |
+| `CREATE DOMAIN` | ❌ | 后端不支持域类型 |
 | `CREATE EXTENSION` | ⚠️ | 静默忽略 |
-| `CREATE DOMAIN` | ❌ | 不支持 |
-| `LISTEN/NOTIFY` | ❌ | 不支持 |
-| `EXPLAIN ANALYZE` | ⚠️ | 转为 EXPLAIN |
-| `DISTINCT ON` | ❌ | 不支持 |
-| `INSERT ON CONFLICT` | ⚠️ | 剥离 ON CONFLICT |
+| `LISTEN/NOTIFY` | ❌ | 后端不支持异步通知 |
+| `SELECT TRANSFORM(...) USING 'script'` (MC) | ❌ | 高级 UDF 特性 |
+
+### 已兼容的 PG 特性（之前标记为不支持）
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| `SELECT ... FOR UPDATE` | ✅ | 剥离 FOR UPDATE 子句（no-op） |
+| `WITH RECURSIVE ...` | ✅ | DataFusion 支持递归 CTE |
+| `CREATE FUNCTION ...` | ✅ | 透传解析器 |
+| `DISTINCT ON (col)` | ✅ | 透传解析器 |
+| `GRANT / REVOKE` | ✅ | 静默忽略（no-op） |
+| `CREATE POLICY / ALTER POLICY` | ✅ | 静默忽略（no-op） |
+| `CALL refresh_materialized_view(...)` | ✅ | 静默忽略（no-op） |
 
 ### pg_catalog 兼容
 

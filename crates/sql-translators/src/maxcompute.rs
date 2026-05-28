@@ -556,9 +556,65 @@ fn translate_distribute_sort(sql: &str) -> (String, Vec<String>) {
 /// Handle SET/SETPROJECT statements (no-op).
 fn is_noop_set_statement(sql: &str) -> bool {
     let trimmed = sql.trim();
-    let set_re = Regex::new(r"(?i)^\s*SET\s+(?:odps|project|hive)\.\S+\s*=\s*\S*\s*;?\s*$").unwrap();
+    let set_re = Regex::new(r"(?i)^\s*SET\s+\S+\s*=\s*\S*\s*;?\s*$").unwrap();
     let setproject_re = Regex::new(r"(?i)^\s*SETPROJECT\s+\S+\s*=\s*\S*\s*;?\s*$").unwrap();
     set_re.is_match(trimmed) || setproject_re.is_match(trimmed)
+}
+
+/// Translate LATERAL VIEW explode(col) table_alias AS col_alias
+/// to CROSS JOIN UNNEST(col) AS table_alias(col_alias) for DataFusion compatibility.
+///
+/// Uses string literal masking and extract_paren_content to handle
+/// balanced parentheses inside the explode expression.
+fn translate_lateral_view(sql: &str) -> (String, Vec<String>) {
+    let mut warnings = Vec::new();
+    let (masked, original_strings) = crate::mask_string_literals(sql);
+
+    let lateral_view_re = Regex::new(r"(?i)\bLATERAL\s+VIEW\s+EXPLODE\(").unwrap();
+    let mut result = masked.to_string();
+
+    loop {
+        if let Some(cap) = lateral_view_re.find(&result) {
+            let paren_start = cap.end() - 1; // position of '(' after EXPLODE
+            if let Some((content, paren_end)) = extract_paren_content(&result, paren_start) {
+                let after_paren = &result[paren_end + 1..];
+                // After the closing paren: table_alias AS col_alias
+                let alias_re = Regex::new(r"(?i)^\s*(\w+)\s+AS\s+(\w+)").unwrap();
+                if let Some(alias_caps) = alias_re.captures(after_paren) {
+                    let table_alias = alias_caps.get(1).unwrap().as_str();
+                    let col_alias = alias_caps.get(2).unwrap().as_str();
+                    let alias_end = paren_end + 1 + alias_caps.get(0).unwrap().len();
+
+                    warnings.push(
+                        "LATERAL VIEW EXPLODE converted to CROSS JOIN UNNEST".to_string(),
+                    );
+
+                    let replacement = format!(
+                        " CROSS JOIN UNNEST({}) AS {}({})",
+                        content, table_alias, col_alias
+                    );
+
+                    result = format!(
+                        "{}{}{}",
+                        &result[..cap.start()],
+                        replacement,
+                        &result[alias_end..]
+                    );
+                } else {
+                    // Can't parse alias pattern, skip this match
+                    break;
+                }
+            } else {
+                // Unbalanced parens, skip
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    let result = crate::restore_string_literals(&result, &original_strings);
+    (result, warnings)
 }
 
 /// Check for unsupported features and return an error if found.
@@ -573,33 +629,9 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
         ));
     }
 
-    // LATERAL VIEW explode(col)
-    let lateral_view_re = Regex::new(r"(?i)\bLATERAL\s+VIEW\s+EXPLODE\b").unwrap();
-    if lateral_view_re.is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "LATERAL VIEW EXPLODE is not supported by RorisDB",
-        ));
-    }
-
-    // MERGE INTO
-    let merge_re = Regex::new(r"(?i)^\s*MERGE\s+INTO\b").unwrap();
-    if merge_re.is_match(trimmed) {
-        return Some(TranslateResult::error(
-            "MERGE INTO is not supported by RorisDB",
-        ));
-    }
-
-    // Complex types in CREATE TABLE: ARRAY<T>, MAP<K,V>, STRUCT<...>
-    // Check in DDL context
-    if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b").unwrap().is_match(trimmed) {
-        let complex_type_re = Regex::new(r"(?i)\b(ARRAY|MAP|STRUCT)\s*[<(\[]").unwrap();
-        if complex_type_re.is_match(trimmed) {
-            return Some(TranslateResult::error(
-                "Complex types (ARRAY, MAP, STRUCT) are not supported by RorisDB in Phase 1",
-            ));
-        }
-    }
-
+    // Complex types (ARRAY, MAP, STRUCT) are now passed through to DataFusion
+    // MERGE INTO is now passed through to DataFusion
+    // LATERAL VIEW EXPLODE is now translated to CROSS JOIN UNNEST
     None
 }
 
@@ -826,6 +858,13 @@ impl DialectTranslator for MaxComputeTranslator {
             warnings.extend(w);
         }
 
+        // Step 4d: Handle LATERAL VIEW EXPLODE -> CROSS JOIN UNNEST
+        {
+            let (r, w) = translate_lateral_view(&result);
+            result = r;
+            warnings.extend(w);
+        }
+
         // Step 5: Map types
         result = map_types_in_ddl(&result);
 
@@ -843,10 +882,10 @@ impl DialectTranslator for MaxComputeTranslator {
 
     fn unsupported_features(&self) -> &[&str] {
         &[
-            "MERGE INTO",
             "SELECT TRANSFORM ... USING 'script'",
-            "LATERAL VIEW EXPLODE",
-            "Complex types (ARRAY, MAP, STRUCT)",
+            "LATERAL VIEW EXPLODE (translated to CROSS JOIN UNNEST)",
+            "Complex types (ARRAY, MAP, STRUCT) - passed through to DataFusion",
+            "MERGE INTO - passed through to DataFusion",
             "MAPJOIN / SKEWJOIN hints (silently stripped)",
             "PARTITIONED BY (converted to regular columns)",
             "LIFECYCLE (silently stripped)",
@@ -858,7 +897,7 @@ impl DialectTranslator for MaxComputeTranslator {
             "DISTRIBUTE BY (converted to ORDER BY via SORT BY)",
             "CLUSTER BY (converted to ORDER BY)",
             "ZORDER BY (silently stripped)",
-            "SET odps.* / project.* / hive.* (no-op)",
+            "SET odps.* / project.* / hive.* / spark.* / mapreduce.* (no-op)",
             "SETPROJECT (no-op)",
         ]
     }
@@ -1155,14 +1194,17 @@ mod tests {
         );
     }
 
-    // ── MERGE INTO (error) ──
+    // ── MERGE INTO (passthrough) ──
 
     #[test]
-    fn test_merge_into_error() {
-        assert_error(
+    fn test_merge_into_passthrough() {
+        let result = translator().translate(
             "MERGE INTO target USING source ON target.id = source.id WHEN MATCHED THEN UPDATE SET target.val = source.val",
-            "MERGE INTO",
         );
+        assert!(result.success, "MERGE INTO should pass through, got error: {:?}", result.error);
+        // The MERGE INTO should be preserved for DataFusion to try
+        assert!(result.sql.contains("MERGE INTO"));
+        assert!(result.sql.contains("WHEN MATCHED"));
     }
 
     // ── SELECT with hints ──
@@ -1327,6 +1369,41 @@ mod tests {
     #[test]
     fn test_set_project_without_semicolon() {
         assert_noop("SET project.name=my_project");
+    }
+
+    #[test]
+    fn test_set_spark_prefix() {
+        assert_noop("SET spark.sql.adaptive.enabled=true;");
+    }
+
+    #[test]
+    fn test_set_spark_without_semicolon() {
+        assert_noop("SET spark.sql.adaptive.enabled=true");
+    }
+
+    #[test]
+    fn test_set_mapreduce_prefix() {
+        assert_noop("SET mapreduce.map.memory.mb=4096;");
+    }
+
+    #[test]
+    fn test_set_mapreduce_without_semicolon() {
+        assert_noop("SET mapreduce.reduce.memory.mb=8192");
+    }
+
+    #[test]
+    fn test_set_generic_equal_value() {
+        assert_noop("SET any.arbitrary.key=any_value;");
+    }
+
+    #[test]
+    fn test_set_generic_no_semicolon() {
+        assert_noop("SET some.setting=12345");
+    }
+
+    #[test]
+    fn test_set_with_empty_value() {
+        assert_noop("SET odps.sql.allow.fullscan=");
     }
 
     // ── CREATE TABLE LIKE ──
@@ -1524,10 +1601,110 @@ mod tests {
     }
 
     #[test]
-    fn test_create_table_complex_types() {
-        assert_error(
+    fn test_create_table_complex_types_passthrough() {
+        let result = translator().translate(
             "CREATE TABLE t (col1 ARRAY<STRING>)",
-            "Complex types",
+        );
+        assert!(result.success, "Complex types should pass through, got error: {:?}", result.error);
+        assert!(result.sql.contains("ARRAY<STRING>"));
+    }
+
+    #[test]
+    fn test_create_table_map_type_passthrough() {
+        let result = translator().translate(
+            "CREATE TABLE t (col1 MAP<STRING, BIGINT>)",
+        );
+        assert!(result.success, "MAP type should pass through, got error: {:?}", result.error);
+        assert!(result.sql.contains("MAP<STRING, BIGINT>"));
+    }
+
+    #[test]
+    fn test_create_table_struct_type_passthrough() {
+        let result = translator().translate(
+            "CREATE TABLE t (col1 STRUCT<a:STRING, b:BIGINT>)",
+        );
+        assert!(result.success, "STRUCT type should pass through, got error: {:?}", result.error);
+        assert!(result.sql.contains("STRUCT<a:STRING, b:BIGINT>"));
+    }
+
+    // ── LATERAL VIEW EXPLODE -> CROSS JOIN UNNEST ──
+
+    #[test]
+    fn test_lateral_view_explode_single() {
+        let result = translator().translate(
+            "SELECT a, b FROM t LATERAL VIEW explode(col) tmp AS alias",
+        );
+        assert!(result.success, "LATERAL VIEW should translate, got error: {:?}", result.error);
+        assert_eq!(
+            result.sql,
+            "SELECT a, b FROM t CROSS JOIN UNNEST(col) AS tmp(alias)"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("LATERAL VIEW")),
+            "Expected warning about LATERAL VIEW, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_lateral_view_explode_multiple() {
+        let result = translator().translate(
+            "SELECT * FROM t LATERAL VIEW explode(col1) t1 AS c1 LATERAL VIEW explode(col2) t2 AS c2",
+        );
+        assert!(result.success, "Multiple LATERAL VIEW should translate, got error: {:?}", result.error);
+        assert_eq!(
+            result.sql,
+            "SELECT * FROM t CROSS JOIN UNNEST(col1) AS t1(c1) CROSS JOIN UNNEST(col2) AS t2(c2)"
+        );
+        assert!(
+            result.warnings.len() >= 2,
+            "Expected at least 2 warnings about LATERAL VIEW, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_lateral_view_explode_complex_expr() {
+        let result = translator().translate(
+            "SELECT * FROM t LATERAL VIEW EXPLODE(SPLIT(col, ',')) tmp AS part",
+        );
+        assert!(result.success, "LATERAL VIEW with complex expr should translate, got error: {:?}", result.error);
+        assert_eq!(
+            result.sql,
+            "SELECT * FROM t CROSS JOIN UNNEST(SPLIT(col, ',')) AS tmp(part)"
+        );
+    }
+
+    #[test]
+    fn test_lateral_view_explode_with_where() {
+        let result = translator().translate(
+            "SELECT * FROM t LATERAL VIEW EXPLODE(col) tmp AS alias WHERE alias > 0",
+        );
+        assert!(result.success, "LATERAL VIEW with WHERE should translate, got error: {:?}", result.error);
+        assert_eq!(
+            result.sql,
+            "SELECT * FROM t CROSS JOIN UNNEST(col) AS tmp(alias) WHERE alias > 0"
+        );
+    }
+
+    #[test]
+    fn test_lateral_view_explode_case_insensitive() {
+        let result = translator().translate(
+            "select * from t lateral view explode(col) tmp as alias",
+        );
+        assert!(result.success, "Case-insensitive LATERAL VIEW should translate, got error: {:?}", result.error);
+        assert_eq!(
+            result.sql,
+            "select * from t CROSS JOIN UNNEST(col) AS tmp(alias)"
+        );
+    }
+
+    #[test]
+    fn test_select_without_lateral_view_unchanged() {
+        // Regular SELECT without LATERAL VIEW should be unchanged
+        assert_translated(
+            "SELECT * FROM t WHERE col1 > 0",
+            "SELECT * FROM t WHERE col1 > 0",
         );
     }
 
