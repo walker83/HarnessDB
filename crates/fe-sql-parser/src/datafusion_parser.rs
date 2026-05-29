@@ -13,7 +13,7 @@ use thiserror::Error;
 pub fn is_dml_sql(sql: &str) -> bool {
     let upper = sql.trim().to_uppercase();
     let first_word = upper.split_whitespace().next().unwrap_or("");
-    matches!(first_word, "SELECT" | "WITH" | "INSERT" | "UPDATE" | "DELETE" | "VALUES" | "EXPLAIN")
+    matches!(first_word, "SELECT" | "WITH" | "INSERT" | "UPDATE" | "DELETE" | "VALUES")
 }
 
 #[derive(Debug, Error)]
@@ -156,6 +156,7 @@ mod tests {
         assert!(is_dml_sql("UPDATE t SET a = 1"));
         assert!(is_dml_sql("DELETE FROM t WHERE id = 1"));
         assert!(!is_dml_sql("CREATE TABLE t (id INT)"));
+        assert!(!is_dml_sql("EXPLAIN SELECT 1"));
         assert!(!is_dml_sql("SHOW TABLES"));
         assert!(!is_dml_sql("ALTER TABLE t ADD COLUMN a INT"));
     }

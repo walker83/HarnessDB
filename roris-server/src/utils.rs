@@ -493,6 +493,7 @@ pub(crate) fn merge_columns(
         .map_err(|e| format!("Failed to merge columns: {}", e))
 }
 
+#[allow(dead_code)]
 pub(crate) fn build_arrow_array(col_type: &DataType, values: &[Option<String>]) -> datafusion::arrow::array::ArrayRef {
     match col_type {
         DataType::Int8 => {
@@ -744,6 +745,7 @@ pub(crate) fn parse_datetime_to_seconds(s: &str) -> Option<i64> {
 /// Evaluate a WHERE filter against a RecordBatch.
 /// Returns a mask where `true` means the row **matches** the condition.
 /// Recursively handles AND/OR compound conditions.
+#[allow(dead_code)]
 pub(crate) fn evaluate_where_filter(
     batch: &datafusion::arrow::record_batch::RecordBatch,
     where_expr: &fe_sql_parser::ast::Expr,

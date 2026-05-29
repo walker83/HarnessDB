@@ -14,7 +14,20 @@ pub fn to_arrow_data_type(dt: &RorisDataType) -> arrow_schema::DataType {
         RorisDataType::Float32 => arrow_schema::DataType::Float32,
         RorisDataType::Float64 => arrow_schema::DataType::Float64,
         RorisDataType::Decimal(d) => {
-            arrow_schema::DataType::Decimal128(d.precision, d.scale as i8)
+            // Safe conversion: u8 to i8 with bounds check.
+            // Arrow's Decimal128 scale is i8, but Roris stores it as u8.
+            // Clamp to i8::MAX if the scale exceeds the i8 range.
+            let scale = if d.scale > i8::MAX as u8 {
+                tracing::warn!(
+                    "Decimal scale {} exceeds i8 range, clamping to {}",
+                    d.scale,
+                    i8::MAX
+                );
+                i8::MAX
+            } else {
+                d.scale as i8
+            };
+            arrow_schema::DataType::Decimal128(d.precision, scale)
         }
         RorisDataType::Date => arrow_schema::DataType::Date32,
         RorisDataType::DateTime => arrow_schema::DataType::Timestamp(
@@ -88,9 +101,21 @@ pub fn from_arrow_data_type(dt: &arrow_schema::DataType) -> RorisDataType {
         arrow_schema::DataType::Utf8 => RorisDataType::String,
         arrow_schema::DataType::Binary => RorisDataType::Binary,
         arrow_schema::DataType::Decimal128(p, s) => {
+            // Safe conversion: i8 to u8 with bounds check.
+            // Arrow stores scale as i8, but negative scale is unusual for Roris.
+            // Clamp to 0 if the scale is negative, warn if out of range.
+            let scale = if *s < 0 {
+                tracing::warn!(
+                    "Arrow Decimal128 scale {} is negative, clamping to 0",
+                    s
+                );
+                0
+            } else {
+                *s as u8
+            };
             RorisDataType::Decimal(types::data_type::DecimalType {
                 precision: *p,
-                scale: *s as u8,
+                scale,
             })
         }
         arrow_schema::DataType::List(field) => {
@@ -113,9 +138,9 @@ pub fn from_arrow_data_type(dt: &arrow_schema::DataType) -> RorisDataType {
             }
         }
         arrow_schema::DataType::Struct(arrow_fields) => {
-            let fields: Vec<types::data_type::Field> = arrow_fields
+            let fields: Vec<types::Field> = arrow_fields
                 .iter()
-                .map(|f| types::data_type::Field {
+                .map(|f| types::Field {
                     name: f.name().to_string(),
                     data_type: from_arrow_data_type(f.data_type()),
                     nullable: f.is_nullable(),

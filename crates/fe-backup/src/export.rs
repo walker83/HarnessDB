@@ -32,9 +32,17 @@ pub fn export_table(
             let metadata = std::fs::metadata(export_path)
                 .map_err(|e| format!("Failed to get file metadata: {}", e))?;
 
+            // Read Parquet metadata to get the actual row count
+            let file = std::fs::File::open(export_path)
+                .map_err(|e| format!("Failed to open exported parquet: {}", e))?;
+            let parquet_reader = parquet::file::reader::SerializedFileReader::new(file)
+                .map_err(|e| format!("Failed to read parquet metadata: {}", e))?;
+            let parquet_meta = parquet_reader.metadata();
+            let num_rows: i64 = parquet_meta.file_metadata().num_rows();
+
             Ok(format!(
-                "EXPORT TABLE `{}.{}` TO '{}' completed (parquet, {} bytes)",
-                database, table, path, metadata.len()
+                "EXPORT TABLE `{}.{}` TO '{}' completed (parquet, {} rows, {} bytes)",
+                database, table, path, num_rows, metadata.len()
             ))
         }
         "csv" => {
@@ -51,6 +59,10 @@ pub fn export_table(
 
             writer.write(&batch)
                 .map_err(|e| format!("Failed to write CSV: {}", e))?;
+
+            // Flush the writer to ensure all data is on disk before checking file size
+            writer.finish()
+                .map_err(|e| format!("Failed to flush CSV writer: {}", e))?;
 
             let metadata = std::fs::metadata(export_path)
                 .map_err(|e| format!("Failed to get file metadata: {}", e))?;

@@ -151,13 +151,29 @@ impl AuditLogger {
 
             let log_path = self.config.log_dir.join(format!("audit_{:04}.log", *index));
 
+            // If the log file already exists (cycled back), rename it with a timestamp
+            // so the old data is preserved as an archive rather than being lost.
+            if log_path.exists() {
+                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+                let archive_name = format!("audit_{:04}_{}.log", *index, timestamp);
+                let archive_path = self.config.log_dir.join(&archive_name);
+                if let Err(e) = tokio::fs::rename(&log_path, &archive_path).await {
+                    tracing::warn!(
+                        "Failed to archive old audit log {:?} to {:?}: {}",
+                        log_path,
+                        archive_path,
+                        e
+                    );
+                }
+            }
+
             if let Some(parent) = log_path.parent() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
 
             match OpenOptions::new()
                 .create(true)
-                .append(true)
+                .write(true)
                 .open(&log_path)
                 .await
             {

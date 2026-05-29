@@ -39,7 +39,13 @@ impl RepositoryManager {
         let path = Self::store_path(meta_dir);
         if path.exists() {
             match std::fs::read_to_string(&path) {
-                Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(store) => store,
+                    Err(e) => {
+                        tracing::warn!("Corrupted repositories.json: {}. Starting with empty repository list.", e);
+                        RepositoryStore::default()
+                    }
+                },
                 Err(_) => RepositoryStore::default(),
             }
         } else {
