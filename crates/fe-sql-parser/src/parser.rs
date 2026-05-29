@@ -2305,6 +2305,14 @@ fn convert_statement(stmt: sqlparser::ast::Statement) -> Result<Statement, Parse
 }
 
 fn convert_query(query: sqlparser::ast::Query) -> Result<QueryStmt, ParseError> {
+    if let Some(ref w) = query.with {
+        if w.cte_tables.len() > 1 {
+            tracing::warn!(
+                "Multiple CTEs ({} defined) not fully supported; only first CTE used.",
+                w.cte_tables.len()
+            );
+        }
+    }
     let cte = query.with.as_ref().and_then(|w| {
         w.cte_tables.first().map(|c| Cte {
             name: c.alias.name.value.clone(),
@@ -2464,7 +2472,15 @@ fn convert_select(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let from = select.from.into_iter().next().map(convert_table_ref);
+    let from = {
+        if select.from.len() > 1 {
+            tracing::warn!(
+                "Multiple FROM tables ({} tables) not fully supported; only first table used. Use explicit JOIN.",
+                select.from.len()
+            );
+        }
+        select.from.into_iter().next().map(convert_table_ref)
+    };
 
     let group_by = match select.group_by {
         sqlparser::ast::GroupByExpr::Expressions(exprs, _) => {

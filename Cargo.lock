@@ -1780,6 +1780,7 @@ dependencies = [
  "datafusion",
  "sqlparser 0.53.0",
  "thiserror 2.0.18",
+ "tracing",
  "types",
 ]
 
