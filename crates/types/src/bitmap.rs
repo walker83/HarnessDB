@@ -64,10 +64,18 @@ impl Bitmap {
     pub fn set(&mut self, idx: usize, val: bool) {
         let word_idx = idx / 64;
         let bit_idx = idx % 64;
+        // Auto-resize if idx is beyond current capacity
+        if word_idx >= self.data.len() {
+            self.data.resize(word_idx + 1, 0);
+        }
         if val {
             self.data[word_idx] |= 1u64 << bit_idx;
         } else {
             self.data[word_idx] &= !(1u64 << bit_idx);
+        }
+        // Extend logical length if needed
+        if idx >= self.len {
+            self.len = idx + 1;
         }
     }
 
@@ -84,11 +92,20 @@ impl Bitmap {
     }
 
     pub fn set_count(&self) -> usize {
+        if self.data.is_empty() || self.len == 0 {
+            return 0;
+        }
         let mut count = 0usize;
-        for chunk in self.data.chunks(8) {
-            for word in chunk {
-                count += word.count_ones() as usize;
-            }
+        let full_words = self.len / 64;
+        // Count all bits in full words
+        for i in 0..full_words {
+            count += self.data[i].count_ones() as usize;
+        }
+        // Mask the last partial word to only count bits within len
+        let remaining_bits = self.len % 64;
+        if remaining_bits > 0 && full_words < self.data.len() {
+            let mask = (1u64 << remaining_bits) - 1;
+            count += (self.data[full_words] & mask).count_ones() as usize;
         }
         count
     }
@@ -137,12 +154,18 @@ impl Bitmap {
     pub fn and_inplace(&mut self, other: &Bitmap) {
         let len = self.len.min(other.len);
         self.len = len;
-        for i in 0..self.data.len().min(other.data.len()) {
+        let min_words = self.data.len().min(other.data.len());
+        for i in 0..min_words {
             self.data[i] &= other.data[i];
         }
-        for i in self.data.len()..other.data.len() {
-            if i < self.data.len() {
-                self.data[i] = 0;
+        // Zero out words in self that are beyond other's data
+        for i in min_words..self.data.len() {
+            self.data[i] = 0;
+        }
+        // Mask the last word to only include bits within the new len
+        if !len.is_multiple_of(64) {
+            if let Some(last) = self.data.last_mut() {
+                *last &= (1u64 << (len % 64)) - 1;
             }
         }
     }
