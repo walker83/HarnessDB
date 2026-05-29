@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use async_trait::async_trait;
-use sha1::{Sha1, Digest};
 use dashmap::DashMap;
+use sha1::{Digest, Sha1};
+use std::sync::Arc;
 
 use super::{AuthError, AuthPlugin, AuthPluginType, AuthUser};
 
@@ -115,7 +115,10 @@ impl AuthPlugin for NativePasswordAuth {
         let hash_salt_stage = hasher.finalize();
 
         let mut recovered_sha1 = [0u8; 20];
-        for (r, (s, h)) in recovered_sha1.iter_mut().zip(auth_response.iter().zip(hash_salt_stage.iter())) {
+        for (r, (s, h)) in recovered_sha1
+            .iter_mut()
+            .zip(auth_response.iter().zip(hash_salt_stage.iter()))
+        {
             *r = s ^ h;
         }
 
@@ -191,7 +194,10 @@ mod tests {
         let hash_salt_stage = hasher.finalize();
 
         let mut recovered = [0u8; 20];
-        for (r, (s, h)) in recovered.iter_mut().zip(scrambled.iter().zip(hash_salt_stage.iter())) {
+        for (r, (s, h)) in recovered
+            .iter_mut()
+            .zip(scrambled.iter().zip(hash_salt_stage.iter()))
+        {
             *r = s ^ h;
         }
 

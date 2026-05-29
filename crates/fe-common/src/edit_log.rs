@@ -72,7 +72,10 @@ impl EditLog {
         if self.entries.is_empty() {
             return Ok(());
         }
-        let path = format!("{}/edit_log_{}.json", self.log_path, self.last_applied_index);
+        let path = format!(
+            "{}/edit_log_{}.json",
+            self.log_path, self.last_applied_index
+        );
         let mut file = tokio::fs::File::create(&path).await?;
         for entry in &self.entries {
             let line = serde_json::to_string(entry)
@@ -81,9 +84,14 @@ impl EditLog {
             file.write_all(b"\n").await?;
         }
         // Ensure edit log is flushed to disk (critical for durability)
-        file.sync_all().await
-            .map_err(|e| common::DrorisError::Internal(format!("Failed to sync edit log: {}", e)))?;
-        self.last_applied_index = self.entries.last().map(|e| e.index).unwrap_or(self.last_applied_index);
+        file.sync_all().await.map_err(|e| {
+            common::DrorisError::Internal(format!("Failed to sync edit log: {}", e))
+        })?;
+        self.last_applied_index = self
+            .entries
+            .last()
+            .map(|e| e.index)
+            .unwrap_or(self.last_applied_index);
         self.entries.clear();
         Ok(())
     }

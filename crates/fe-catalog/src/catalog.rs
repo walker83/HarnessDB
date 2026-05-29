@@ -1,14 +1,14 @@
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::database::Database;
 use crate::materialized_view::MaterializedView;
 use crate::table::Table;
-use common::{DrorisError, Result, CatalogError};
+use common::{CatalogError, DrorisError, Result};
 
 /// Configuration for CatalogManager backend selection.
 #[derive(Debug, Clone)]
@@ -68,7 +68,8 @@ pub trait MetaBackend: Send + Sync {
     fn get_next_id(&self) -> Result<u64>;
 
     /// Store a materialized view
-    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()>;
+    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView)
+    -> Result<()>;
 
     /// Get a materialized view
     fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>>;
@@ -137,7 +138,9 @@ impl MetaBackend for JsonMetaBackend {
     }
 
     fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
-        Ok(self.databases.get(db_name)
+        Ok(self
+            .databases
+            .get(db_name)
             .and_then(|db| db.get_table(table_name).cloned()))
     }
 
@@ -149,8 +152,15 @@ impl MetaBackend for JsonMetaBackend {
     }
 
     fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
-        Ok(self.databases.get(db_name)
-            .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
+        Ok(self
+            .databases
+            .get(db_name)
+            .map(|db| {
+                db.table_names()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
@@ -167,7 +177,12 @@ impl MetaBackend for JsonMetaBackend {
         Ok(self.next_id.load(Ordering::SeqCst))
     }
 
-    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+    fn put_materialized_view(
+        &self,
+        db_name: &str,
+        name: &str,
+        mv: &MaterializedView,
+    ) -> Result<()> {
         let key = format!("{}.{}", db_name, name);
         self.materialized_views.insert(key, mv.clone());
         Ok(())
@@ -186,7 +201,9 @@ impl MetaBackend for JsonMetaBackend {
 
     fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
         let prefix = format!("{}.", db_name);
-        Ok(self.materialized_views.iter()
+        Ok(self
+            .materialized_views
+            .iter()
             .filter(|r| r.key().starts_with(&prefix))
             .map(|r| r.value().clone())
             .collect())
@@ -204,8 +221,8 @@ impl MetaBackend for JsonMetaBackend {
             return Ok(());
         }
         let contents = fs::read_to_string(&path)?;
-        let state: CatalogState = serde_json::from_str(&contents)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let state: CatalogState =
+            serde_json::from_str(&contents).map_err(|e| DrorisError::Internal(e.to_string()))?;
         for (key, value) in state.databases {
             self.databases.insert(key, value);
         }
@@ -223,8 +240,16 @@ impl JsonMetaBackend {
         use std::fs;
 
         let catalog_state = CatalogState {
-            databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
-            materialized_views: self.materialized_views.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+            databases: self
+                .databases
+                .iter()
+                .map(|r| (r.key().clone(), r.value().clone()))
+                .collect(),
+            materialized_views: self
+                .materialized_views
+                .iter()
+                .map(|r| (r.key().clone(), r.value().clone()))
+                .collect(),
             next_id: self.next_id.load(Ordering::Relaxed),
         };
         let json = serde_json::to_string(&catalog_state)
@@ -244,8 +269,8 @@ impl JsonMetaBackend {
             return Ok(());
         }
         let contents = fs::read_to_string(&path)?;
-        let state: CatalogState = serde_json::from_str(&contents)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let state: CatalogState =
+            serde_json::from_str(&contents).map_err(|e| DrorisError::Internal(e.to_string()))?;
         for (key, value) in state.databases {
             self.databases.insert(key, value);
         }
@@ -277,13 +302,16 @@ impl MetaBackend for RocksMetaBackend {
         // Serialize fe_catalog::Database to JSON bytes and store raw
         let data = serde_json::to_vec(db)
             .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
-        self.catalog_store.put_database_raw(name, &data)
+        self.catalog_store
+            .put_database_raw(name, &data)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_database(&self, name: &str) -> Result<Option<Database>> {
         // Get raw bytes and deserialize into fe_catalog::Database
-        let data = self.catalog_store.get_database_raw(name)
+        let data = self
+            .catalog_store
+            .get_database_raw(name)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
@@ -291,12 +319,14 @@ impl MetaBackend for RocksMetaBackend {
     }
 
     fn delete_database(&self, name: &str) -> Result<()> {
-        self.catalog_store.delete_database(name)
+        self.catalog_store
+            .delete_database(name)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn list_databases(&self) -> Result<Vec<String>> {
-        self.catalog_store.list_databases()
+        self.catalog_store
+            .list_databases()
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
@@ -304,13 +334,16 @@ impl MetaBackend for RocksMetaBackend {
         // Serialize fe_catalog::Table to JSON bytes and store raw
         let data = serde_json::to_vec(table)
             .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
-        self.catalog_store.put_table_raw(db_name, table_name, &data)
+        self.catalog_store
+            .put_table_raw(db_name, table_name, &data)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
         // Get raw bytes and deserialize into fe_catalog::Table
-        let data = self.catalog_store.get_table_raw(db_name, table_name)
+        let data = self
+            .catalog_store
+            .get_table_raw(db_name, table_name)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
@@ -318,42 +351,55 @@ impl MetaBackend for RocksMetaBackend {
     }
 
     fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
-        self.catalog_store.delete_table(db_name, table_name)
+        self.catalog_store
+            .delete_table(db_name, table_name)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
-        self.catalog_store.list_tables(db_name)
+        self.catalog_store
+            .list_tables(db_name)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn next_id(&self) -> Result<u64> {
-        self.catalog_store.next_id()
+        self.catalog_store
+            .next_id()
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn set_next_id(&self, value: u64) -> Result<()> {
-        self.catalog_store.set_next_id(value)
+        self.catalog_store
+            .set_next_id(value)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_next_id(&self) -> Result<u64> {
-        self.catalog_store.get_next_id()
+        self.catalog_store
+            .get_next_id()
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
-    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+    fn put_materialized_view(
+        &self,
+        db_name: &str,
+        name: &str,
+        mv: &MaterializedView,
+    ) -> Result<()> {
         // Store materialized views with a special prefix
         let key = format!("mv:{}.{}", db_name, name);
         let value = serde_json::to_vec(mv)
             .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
-        self.catalog_store.put_raw(&key, &value)
+        self.catalog_store
+            .put_raw(&key, &value)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
         let key = format!("mv:{}.{}", db_name, name);
-        let data = self.catalog_store.get_raw(&key)
+        let data = self
+            .catalog_store
+            .get_raw(&key)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
@@ -362,18 +408,24 @@ impl MetaBackend for RocksMetaBackend {
 
     fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
         let key = format!("mv:{}.{}", db_name, name);
-        self.catalog_store.delete_raw(&key)
+        self.catalog_store
+            .delete_raw(&key)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
         let prefix = format!("mv:{}.", db_name);
-        let keys = self.catalog_store.list_keys_with_prefix_str(&prefix)
+        let keys = self
+            .catalog_store
+            .list_keys_with_prefix_str(&prefix)
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
         let mut mvs = Vec::new();
         for key in keys {
-            if let Some(data) = self.catalog_store.get_raw(&key)
-                .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))? {
+            if let Some(data) = self
+                .catalog_store
+                .get_raw(&key)
+                .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?
+            {
                 if let Ok(mv) = serde_json::from_slice::<MaterializedView>(&data) {
                     mvs.push(mv);
                 }
@@ -383,7 +435,8 @@ impl MetaBackend for RocksMetaBackend {
     }
 
     fn flush(&self) -> Result<()> {
-        self.catalog_store.flush()
+        self.catalog_store
+            .flush()
             .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
     }
 
@@ -446,7 +499,9 @@ impl MetaBackend for DualWriteBackend {
     fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
         self.primary.delete_table(db_name, table_name)?;
         if let Err(e) = self.secondary.delete_table(db_name, table_name) {
-            tracing::warn!("dual-write: secondary delete_table({db_name}.{table_name}) failed: {e}");
+            tracing::warn!(
+                "dual-write: secondary delete_table({db_name}.{table_name}) failed: {e}"
+            );
         }
         Ok(())
     }
@@ -475,10 +530,17 @@ impl MetaBackend for DualWriteBackend {
         self.primary.get_next_id()
     }
 
-    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+    fn put_materialized_view(
+        &self,
+        db_name: &str,
+        name: &str,
+        mv: &MaterializedView,
+    ) -> Result<()> {
         self.primary.put_materialized_view(db_name, name, mv)?;
         if let Err(e) = self.secondary.put_materialized_view(db_name, name, mv) {
-            tracing::warn!("dual-write: secondary put_materialized_view({db_name}.{name}) failed: {e}");
+            tracing::warn!(
+                "dual-write: secondary put_materialized_view({db_name}.{name}) failed: {e}"
+            );
         }
         Ok(())
     }
@@ -490,7 +552,9 @@ impl MetaBackend for DualWriteBackend {
     fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
         self.primary.delete_materialized_view(db_name, name)?;
         if let Err(e) = self.secondary.delete_materialized_view(db_name, name) {
-            tracing::warn!("dual-write: secondary delete_materialized_view({db_name}.{name}) failed: {e}");
+            tracing::warn!(
+                "dual-write: secondary delete_materialized_view({db_name}.{name}) failed: {e}"
+            );
         }
         Ok(())
     }
@@ -562,16 +626,25 @@ impl CatalogManager {
 
     /// Create a CatalogManager with the specified configuration.
     pub fn with_config(config: CatalogConfig) -> Self {
-        let (backend, backend_type_name): (Arc<dyn MetaBackend>, &'static str) = if config.use_rocks_meta {
-            let rocks_path = format!("{}/rocksdb", config.catalog_path);
-            (Arc::new(RocksMetaBackend::new(&rocks_path)
-                .expect("Failed to initialize RocksDB backend")), "rocksdb")
-        } else {
-            (Arc::new(JsonMetaBackend::new(&config.catalog_path)), "json")
-        };
+        let (backend, backend_type_name): (Arc<dyn MetaBackend>, &'static str) =
+            if config.use_rocks_meta {
+                let rocks_path = format!("{}/rocksdb", config.catalog_path);
+                (
+                    Arc::new(
+                        RocksMetaBackend::new(&rocks_path)
+                            .expect("Failed to initialize RocksDB backend"),
+                    ),
+                    "rocksdb",
+                )
+            } else {
+                (Arc::new(JsonMetaBackend::new(&config.catalog_path)), "json")
+            };
 
         let dbs = DashMap::new();
-        dbs.insert("information_schema".into(), Database::new(0, "information_schema"));
+        dbs.insert(
+            "information_schema".into(),
+            Database::new(0, "information_schema"),
+        );
 
         Self {
             databases: dbs,
@@ -590,13 +663,20 @@ impl CatalogManager {
         let path = path.into();
         let json_backend = Arc::new(JsonMetaBackend::new(&path));
         let rocks_path = format!("{}/rocksdb", path);
-        let rocks_backend = Arc::new(RocksMetaBackend::new(&rocks_path)
-            .expect("Failed to initialize RocksDB backend"));
+        let rocks_backend = Arc::new(
+            RocksMetaBackend::new(&rocks_path).expect("Failed to initialize RocksDB backend"),
+        );
 
-        let dual_backend = Arc::new(DualWriteBackend::new(json_backend.clone(), rocks_backend.clone()));
+        let dual_backend = Arc::new(DualWriteBackend::new(
+            json_backend.clone(),
+            rocks_backend.clone(),
+        ));
 
         let dbs = DashMap::new();
-        dbs.insert("information_schema".into(), Database::new(0, "information_schema"));
+        dbs.insert(
+            "information_schema".into(),
+            Database::new(0, "information_schema"),
+        );
 
         Self {
             databases: dbs,
@@ -616,12 +696,16 @@ impl CatalogManager {
 
     pub fn create_database(&self, name: &str) -> Result<()> {
         if self.databases.contains_key(name) {
-            return Err(DrorisError::catalog(CatalogError::DatabaseAlreadyExists, format!("database '{}' already exists", name)));
+            return Err(DrorisError::catalog(
+                CatalogError::DatabaseAlreadyExists,
+                format!("database '{}' already exists", name),
+            ));
         }
         // Use create_dir_all (idempotent) to avoid TOCTOU race between checking
         // and creating the metadata directory.
-        std::fs::create_dir_all(&self.catalog_path)
-            .map_err(|e| DrorisError::Internal(format!("Failed to create catalog directory: {}", e)))?;
+        std::fs::create_dir_all(&self.catalog_path).map_err(|e| {
+            DrorisError::Internal(format!("Failed to create catalog directory: {}", e))
+        })?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let db = Database::new(id, name);
         self.backend.put_database(name, &db)?;
@@ -630,8 +714,12 @@ impl CatalogManager {
     }
 
     pub fn drop_database(&self, name: &str) -> Result<()> {
-        self.databases.remove(name)
-            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", name)))?;
+        self.databases.remove(name).ok_or_else(|| {
+            DrorisError::catalog(
+                CatalogError::DatabaseNotFound,
+                format!("database '{}' not found", name),
+            )
+        })?;
         self.backend.delete_database(name)?;
         Ok(())
     }
@@ -649,8 +737,12 @@ impl CatalogManager {
     }
 
     pub fn create_table(&self, db_name: &str, table: Table) -> Result<()> {
-        let mut db_ref = self.databases.get_mut(db_name)
-            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
+        let mut db_ref = self.databases.get_mut(db_name).ok_or_else(|| {
+            DrorisError::catalog(
+                CatalogError::DatabaseNotFound,
+                format!("database '{}' not found", db_name),
+            )
+        })?;
         // Check for duplicate to prevent silent overwrite
         if db_ref.get_table(&table.name).is_some() {
             return Err(DrorisError::catalog(
@@ -664,35 +756,53 @@ impl CatalogManager {
     }
 
     pub fn drop_table(&self, db_name: &str, table_name: &str) -> Result<()> {
-        let mut db_ref = self.databases.get_mut(db_name)
-            .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
-        db_ref.drop_table(table_name)
-            .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound, format!("table '{}' not found", table_name)))?;
+        let mut db_ref = self.databases.get_mut(db_name).ok_or_else(|| {
+            DrorisError::catalog(
+                CatalogError::DatabaseNotFound,
+                format!("database '{}' not found", db_name),
+            )
+        })?;
+        db_ref.drop_table(table_name).ok_or_else(|| {
+            DrorisError::catalog(
+                CatalogError::TableNotFound,
+                format!("table '{}' not found", table_name),
+            )
+        })?;
         self.backend.delete_table(db_name, table_name)?;
         Ok(())
     }
 
     pub fn get_table(&self, db_name: &str, table_name: &str) -> Option<Table> {
-        self.databases.get(db_name)
+        self.databases
+            .get(db_name)
             .and_then(|db| db.get_table(table_name).cloned())
     }
 
     pub fn list_tables(&self, db_name: &str) -> Option<Vec<String>> {
-        self.databases.get(db_name)
-            .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
+        self.databases.get(db_name).map(|db| {
+            db.table_names()
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect()
+        })
     }
 
     pub fn create_materialized_view(&self, mv: MaterializedView) -> common::Result<()> {
         let key = format!("{}.{}", mv.database, mv.name);
-        self.backend.put_materialized_view(&mv.database, &mv.name, &mv)?;
+        self.backend
+            .put_materialized_view(&mv.database, &mv.name, &mv)?;
         self.materialized_views.insert(key, mv);
         Ok(())
     }
 
     pub fn drop_materialized_view(&self, db_name: &str, name: &str) -> common::Result<()> {
         let key = format!("{}.{}", db_name, name);
-        self.materialized_views.remove(&key)
-            .ok_or_else(|| DrorisError::catalog(CatalogError::TableNotFound, format!("materialized view '{}' not found", name)))?;
+        self.materialized_views.remove(&key).ok_or_else(|| {
+            DrorisError::catalog(
+                CatalogError::TableNotFound,
+                format!("materialized view '{}' not found", name),
+            )
+        })?;
         self.backend.delete_materialized_view(db_name, name)?;
         Ok(())
     }
@@ -704,14 +814,18 @@ impl CatalogManager {
 
     pub fn list_materialized_views(&self, db_name: &str) -> Vec<MaterializedView> {
         let prefix = format!("{}.", db_name);
-        self.materialized_views.iter()
+        self.materialized_views
+            .iter()
             .filter(|r| r.key().starts_with(&prefix))
             .map(|r| r.value().clone())
             .collect()
     }
 
     pub fn all_materialized_views(&self) -> Vec<MaterializedView> {
-        self.materialized_views.iter().map(|r| r.value().clone()).collect()
+        self.materialized_views
+            .iter()
+            .map(|r| r.value().clone())
+            .collect()
     }
 
     /// Serialize catalog state to JSON file (for backward compatibility)
@@ -719,8 +833,16 @@ impl CatalogManager {
         use std::fs;
 
         let catalog_state = CatalogState {
-            databases: self.databases.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
-            materialized_views: self.materialized_views.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
+            databases: self
+                .databases
+                .iter()
+                .map(|r| (r.key().clone(), r.value().clone()))
+                .collect(),
+            materialized_views: self
+                .materialized_views
+                .iter()
+                .map(|r| (r.key().clone(), r.value().clone()))
+                .collect(),
             next_id: self.next_id.load(Ordering::Relaxed),
         };
         let json = serde_json::to_string(&catalog_state)
@@ -748,7 +870,9 @@ impl CatalogManager {
         }
 
         // Load tables for each database - collect updates first to avoid DashMap deadlock
-        let updates: Vec<(String, Database)> = self.databases.iter()
+        let updates: Vec<(String, Database)> = self
+            .databases
+            .iter()
             .filter_map(|entry| {
                 let db_name = entry.key();
                 let db = entry.value();
@@ -787,27 +911,31 @@ impl CatalogManager {
             match entry.op_type {
                 OpType::CreateDatabase => {
                     if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
-                        && let CatalogOp::CreateDatabase(name) = op {
-                            self.create_database(&name)?;
-                        }
+                        && let CatalogOp::CreateDatabase(name) = op
+                    {
+                        self.create_database(&name)?;
+                    }
                 }
                 OpType::DropDatabase => {
                     if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
-                        && let CatalogOp::DropDatabase(name) = op {
-                            self.drop_database(&name)?;
-                        }
+                        && let CatalogOp::DropDatabase(name) = op
+                    {
+                        self.drop_database(&name)?;
+                    }
                 }
                 OpType::CreateTable => {
                     if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
-                        && let CatalogOp::CreateTable { db, table } = op {
-                            self.create_table(&db, table)?;
-                        }
+                        && let CatalogOp::CreateTable { db, table } = op
+                    {
+                        self.create_table(&db, table)?;
+                    }
                 }
                 OpType::DropTable => {
                     if let Ok(op) = serde_json::from_slice::<CatalogOp>(&entry.data)
-                        && let CatalogOp::DropTable { db, table } = op {
-                            self.drop_table(&db, &table)?;
-                        }
+                        && let CatalogOp::DropTable { db, table } = op
+                    {
+                        self.drop_table(&db, &table)?;
+                    }
                 }
                 _ => { /* ignore other op types for now */ }
             }
@@ -830,42 +958,63 @@ impl Default for CatalogManager {
 }
 
 impl CatalogWriter {
-    pub fn new(catalog: Arc<AsyncRwLock<CatalogManager>>, edit_log: Arc<AsyncRwLock<fe_common::edit_log::EditLog>>) -> Self {
+    pub fn new(
+        catalog: Arc<AsyncRwLock<CatalogManager>>,
+        edit_log: Arc<AsyncRwLock<fe_common::edit_log::EditLog>>,
+    ) -> Self {
         Self { catalog, edit_log }
     }
 
     pub async fn create_database(&self, name: &str) -> common::Result<()> {
         let op = CatalogOp::CreateDatabase(name.to_string());
-        let data = serde_json::to_vec(&op)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
-        let _index = self.edit_log.write().await.append(fe_common::edit_log::OpType::CreateDatabase, data);
+        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let _index = self
+            .edit_log
+            .write()
+            .await
+            .append(fe_common::edit_log::OpType::CreateDatabase, data);
         self.catalog.write().await.create_database(name)?;
         Ok(())
     }
 
     pub async fn drop_database(&self, name: &str) -> common::Result<()> {
         let op = CatalogOp::DropDatabase(name.to_string());
-        let data = serde_json::to_vec(&op)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
-        let _index = self.edit_log.write().await.append(fe_common::edit_log::OpType::DropDatabase, data);
+        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let _index = self
+            .edit_log
+            .write()
+            .await
+            .append(fe_common::edit_log::OpType::DropDatabase, data);
         self.catalog.write().await.drop_database(name)?;
         Ok(())
     }
 
     pub async fn create_table(&self, db_name: &str, table: Table) -> common::Result<()> {
-        let op = CatalogOp::CreateTable { db: db_name.to_string(), table: table.clone() };
-        let data = serde_json::to_vec(&op)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
-        let _index = self.edit_log.write().await.append(fe_common::edit_log::OpType::CreateTable, data);
+        let op = CatalogOp::CreateTable {
+            db: db_name.to_string(),
+            table: table.clone(),
+        };
+        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let _index = self
+            .edit_log
+            .write()
+            .await
+            .append(fe_common::edit_log::OpType::CreateTable, data);
         self.catalog.write().await.create_table(db_name, table)?;
         Ok(())
     }
 
     pub async fn drop_table(&self, db_name: &str, table_name: &str) -> common::Result<()> {
-        let op = CatalogOp::DropTable { db: db_name.to_string(), table: db_name.to_string() };
-        let data = serde_json::to_vec(&op)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
-        let _index = self.edit_log.write().await.append(fe_common::edit_log::OpType::DropTable, data);
+        let op = CatalogOp::DropTable {
+            db: db_name.to_string(),
+            table: db_name.to_string(),
+        };
+        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let _index = self
+            .edit_log
+            .write()
+            .await
+            .append(fe_common::edit_log::OpType::DropTable, data);
         self.catalog.write().await.drop_table(db_name, table_name)?;
         Ok(())
     }
@@ -916,7 +1065,12 @@ impl MetaBackend for Arc<dyn MetaBackend> {
     fn get_next_id(&self) -> Result<u64> {
         (**self).get_next_id()
     }
-    fn put_materialized_view(&self, db_name: &str, name: &str, mv: &MaterializedView) -> Result<()> {
+    fn put_materialized_view(
+        &self,
+        db_name: &str,
+        name: &str,
+        mv: &MaterializedView,
+    ) -> Result<()> {
         (**self).put_materialized_view(db_name, name, mv)
     }
     fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
@@ -939,7 +1093,7 @@ impl MetaBackend for Arc<dyn MetaBackend> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table::{Table, TableColumn, KeysType};
+    use crate::table::{KeysType, Table, TableColumn};
     use types::DataType;
 
     fn make_table(id: u64, name: &str) -> Table {
@@ -948,16 +1102,14 @@ mod tests {
             tablet_id: 0, // TODO: 创建table时分配真实的tablet_id
             name: name.to_string(),
             database: "testdb".to_string(),
-            columns: vec![
-                TableColumn {
-                    name: "id".into(),
-                    data_type: DataType::Int64,
-                    nullable: false,
-                    default_value: None,
-                    agg_type: None,
-                    comment: String::new(),
-                },
-            ],
+            columns: vec![TableColumn {
+                name: "id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            }],
             keys_type: KeysType::Duplicate,
             unique_keys: vec![],
             partition_info: None,
@@ -1043,7 +1195,10 @@ mod tests {
     #[test]
     fn test_information_schema_exists() {
         let mgr = CatalogManager::new();
-        assert!(mgr.list_databases().contains(&"information_schema".to_string()));
+        assert!(
+            mgr.list_databases()
+                .contains(&"information_schema".to_string())
+        );
     }
 
     #[test]
@@ -1051,7 +1206,8 @@ mod tests {
         let dir = format!("/tmp/rovisdb_test_catalog_{}", std::process::id());
         let mgr = CatalogManager::with_path(&dir);
         mgr.create_database("saved_db").unwrap();
-        mgr.create_table("saved_db", make_table(1, "saved_table")).unwrap();
+        mgr.create_table("saved_db", make_table(1, "saved_table"))
+            .unwrap();
         mgr.save().unwrap();
 
         let mgr2 = CatalogManager::with_path(&dir);
@@ -1075,7 +1231,8 @@ mod tests {
         assert_eq!(mgr.backend_type(), "rocksdb");
 
         mgr.create_database("rocks_db").unwrap();
-        mgr.create_table("rocks_db", make_table(1, "rocks_table")).unwrap();
+        mgr.create_table("rocks_db", make_table(1, "rocks_table"))
+            .unwrap();
 
         mgr.save().unwrap();
 
@@ -1103,7 +1260,8 @@ mod tests {
         assert_eq!(mgr.backend_type(), "dual-write");
 
         mgr.create_database("dual_db").unwrap();
-        mgr.create_table("dual_db", make_table(1, "dual_table")).unwrap();
+        mgr.create_table("dual_db", make_table(1, "dual_table"))
+            .unwrap();
         mgr.save().unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);

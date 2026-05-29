@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use types::{
     Bitmap, Block, DataType, Field, Schema, Vector,
     vector::{Float64Vector, Int64Vector, StringVector},
@@ -170,11 +170,17 @@ fn bench_block_creation(c: &mut Criterion) {
             let mut columns = Vec::with_capacity(num_cols);
             for i in 0..num_cols {
                 if i < 5 {
-                    columns.push(Vector::Int64(Int64Vector::from_vec(black_box(int_data.clone()))));
+                    columns.push(Vector::Int64(Int64Vector::from_vec(black_box(
+                        int_data.clone(),
+                    ))));
                 } else if i < 8 {
-                    columns.push(Vector::Float64(Float64Vector::from_vec(black_box(float_data.clone()))));
+                    columns.push(Vector::Float64(Float64Vector::from_vec(black_box(
+                        float_data.clone(),
+                    ))));
                 } else {
-                    columns.push(Vector::String(StringVector::from_vec(black_box(string_data.clone()))));
+                    columns.push(Vector::String(StringVector::from_vec(black_box(
+                        string_data.clone(),
+                    ))));
                 }
             }
             let block = Block::new(black_box(schema.clone()), columns);
@@ -198,7 +204,9 @@ fn bench_block_filter(c: &mut Criterion) {
 
     let columns = vec![
         Vector::Int64(Int64Vector::from_vec((0..num_rows as i64).collect())),
-        Vector::Float64(Float64Vector::from_vec((0..num_rows).map(|i| i as f64).collect())),
+        Vector::Float64(Float64Vector::from_vec(
+            (0..num_rows).map(|i| i as f64).collect(),
+        )),
         Vector::String(StringVector::from_vec(
             (0..num_rows).map(|_| "value").collect(),
         )),
@@ -275,9 +283,10 @@ fn bench_scalar_vs_vectorized_filter(c: &mut Criterion) {
             let mut results = Vec::new();
             for i in 0..black_box(&vector).len() {
                 if let Some(v) = black_box(&vector).get(i)
-                    && v > threshold {
-                        results.push(v);
-                    }
+                    && v > threshold
+                {
+                    results.push(v);
+                }
             }
             black_box(&results);
         });
@@ -304,9 +313,15 @@ fn bench_scalar_vs_vectorized_filter(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn bench_string_vector_creation(c: &mut Criterion) {
-    let data: Vec<&str> = (0..100_000).map(|i| {
-        if i % 100 == 0 { "short" } else { "a_medium_length_string_value" }
-    }).collect();
+    let data: Vec<&str> = (0..100_000)
+        .map(|i| {
+            if i % 100 == 0 {
+                "short"
+            } else {
+                "a_medium_length_string_value"
+            }
+        })
+        .collect();
 
     c.bench_function("string_vector_creation_100k", |b| {
         b.iter(|| {

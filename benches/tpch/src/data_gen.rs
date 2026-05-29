@@ -1,6 +1,6 @@
 use types::{
-    vector::{DateVector, Float64Vector, Int32Vector, Int64Vector, StringVector},
     Block, DataType, Field, Schema, Vector,
+    vector::{DateVector, Float64Vector, Int32Vector, Int64Vector, StringVector},
 };
 
 /// TPC-H scale factor 0.01 data generator.
@@ -20,7 +20,12 @@ pub fn nation_schema() -> Schema {
 
 pub fn generate_nation() -> Block {
     let nations: Vec<(i64, &str, i64, &str)> = vec![
-        (0, "ALGERIA", 0, "hareful final packages detect slyly. carefully"),
+        (
+            0,
+            "ALGERIA",
+            0,
+            "hareful final packages detect slyly. carefully",
+        ),
         (1, "ARGENTINA", 1, "al foxes promise slyly"),
         (2, "BRAZIL", 1, "y alongside of the pending deposits"),
         (3, "CANADA", 1, "eas hang ironic, silent packages"),
@@ -55,11 +60,17 @@ pub fn generate_nation() -> Block {
         vec![
             Vector::Int64(Int64Vector::from_nullable_vec(keys)),
             Vector::String(StringVector::from_option_vec(
-                names.into_iter().map(|o| o.map(|s| s.to_string())).collect(),
+                names
+                    .into_iter()
+                    .map(|o| o.map(|s| s.to_string()))
+                    .collect(),
             )),
             Vector::Int64(Int64Vector::from_nullable_vec(region_keys)),
             Vector::String(StringVector::from_option_vec(
-                comments.into_iter().map(|o| o.map(|s| s.to_string())).collect(),
+                comments
+                    .into_iter()
+                    .map(|o| o.map(|s| s.to_string()))
+                    .collect(),
             )),
         ],
     )
@@ -102,10 +113,16 @@ pub fn generate_region() -> Block {
         vec![
             Vector::Int64(Int64Vector::from_nullable_vec(keys)),
             Vector::String(StringVector::from_option_vec(
-                names.into_iter().map(|o| o.map(|s| s.to_string())).collect(),
+                names
+                    .into_iter()
+                    .map(|o| o.map(|s| s.to_string()))
+                    .collect(),
             )),
             Vector::String(StringVector::from_option_vec(
-                comments.into_iter().map(|o| o.map(|s| s.to_string())).collect(),
+                comments
+                    .into_iter()
+                    .map(|o| o.map(|s| s.to_string()))
+                    .collect(),
             )),
         ],
     )
@@ -142,7 +159,12 @@ pub fn generate_supplier(count: usize) -> Block {
         names.push(Some(format!("Supplier#{:09}", i)));
         addresses.push(Some(format!("{} Street", i)));
         nation_keys.push(Some((i % 15) as i64));
-        phones.push(Some(format!("{:03}-{:03}-{:04}", 10 + i % 20, 100 + i % 900, i % 10000)));
+        phones.push(Some(format!(
+            "{:03}-{:03}-{:04}",
+            10 + i % 20,
+            100 + i % 900,
+            i % 10000
+        )));
         acct_bals.push(Some(-1000.0 + (i as f64 * 99.7) % 10000.0));
         comments.push(Some(format!("Comment for supplier {}", i)));
     }
@@ -181,16 +203,26 @@ pub fn part_schema() -> Schema {
 
 pub fn generate_part(count: usize) -> Block {
     let schema = part_schema();
-    let manufacturers = ["Manufacturer#1", "Manufacturer#2", "Manufacturer#3", "Manufacturer#4", "Manufacturer#5"];
-    let brands = ["Brand#11", "Brand#12", "Brand#13", "Brand#14", "Brand#15",
-                  "Brand#21", "Brand#22", "Brand#23", "Brand#24", "Brand#25",
-                  "Brand#31", "Brand#32", "Brand#33", "Brand#34", "Brand#35",
-                  "Brand#41", "Brand#42", "Brand#43", "Brand#44", "Brand#45"];
+    let manufacturers = [
+        "Manufacturer#1",
+        "Manufacturer#2",
+        "Manufacturer#3",
+        "Manufacturer#4",
+        "Manufacturer#5",
+    ];
+    let brands = [
+        "Brand#11", "Brand#12", "Brand#13", "Brand#14", "Brand#15", "Brand#21", "Brand#22",
+        "Brand#23", "Brand#24", "Brand#25", "Brand#31", "Brand#32", "Brand#33", "Brand#34",
+        "Brand#35", "Brand#41", "Brand#42", "Brand#43", "Brand#44", "Brand#45",
+    ];
     let types = ["Standard", "Small", "Medium", "Large", "Economy"];
-    let materials = ["Tin", "Nickel", "Brass", "Steel", "Copper", "Aluminum", "Wood", "Pine"];
-    let containers = ["SM CASE", "SM BOX", "SM PACK", "SM PKG",
-                      "MED BAG", "MED BOX", "MED PKG", "MED PACK",
-                      "LG CASE", "LG BOX", "LG PACK", "LG PKG"];
+    let materials = [
+        "Tin", "Nickel", "Brass", "Steel", "Copper", "Aluminum", "Wood", "Pine",
+    ];
+    let containers = [
+        "SM CASE", "SM BOX", "SM PACK", "SM PKG", "MED BAG", "MED BOX", "MED PKG", "MED PACK",
+        "LG CASE", "LG BOX", "LG PACK", "LG PKG",
+    ];
 
     let mut keys = Vec::new();
     let mut names = Vec::new();
@@ -263,7 +295,10 @@ pub fn generate_partsupp(part_count: usize, supplier_count: usize) -> Block {
             supp_keys.push(Some(supp_key));
             avail_qtys.push(Some((100 + (p * rows_per_part + s) % 9000) as i32));
             supply_costs.push(Some(1.0 + ((p * 4 + s) as f64 * 5.17) % 1000.0));
-            comments.push(Some(format!("Partsupp comment for part {} supplier {}", p, supp_key)));
+            comments.push(Some(format!(
+                "Partsupp comment for part {} supplier {}",
+                p, supp_key
+            )));
         }
     }
 
@@ -298,7 +333,13 @@ pub fn customer_schema() -> Schema {
 
 pub fn generate_customer(count: usize) -> Block {
     let schema = customer_schema();
-    let segments = ["AUTOMOBILE", "BUILDING", "FURNITURE", "MACHINERY", "HOUSEHOLD"];
+    let segments = [
+        "AUTOMOBILE",
+        "BUILDING",
+        "FURNITURE",
+        "MACHINERY",
+        "HOUSEHOLD",
+    ];
 
     let mut keys = Vec::new();
     let mut names = Vec::new();
@@ -314,7 +355,12 @@ pub fn generate_customer(count: usize) -> Block {
         names.push(Some(format!("Customer#{:09}", i)));
         addresses.push(Some(format!("{} Main St", i)));
         nation_keys.push(Some((i % 15) as i64));
-        phones.push(Some(format!("{:02}-{:03}-{:04}", 10 + i % 30, 100 + i % 900, i % 10000)));
+        phones.push(Some(format!(
+            "{:02}-{:03}-{:04}",
+            10 + i % 30,
+            100 + i % 900,
+            i % 10000
+        )));
         acct_bals.push(Some(-500.0 + (i as f64 * 73.3) % 12000.0));
         segments_list.push(Some(segments[i % segments.len()].to_string()));
         comments.push(Some(format!("Customer comment {}", i)));
@@ -430,7 +476,12 @@ pub fn generate_lineitem(order_count: usize, part_count: usize, supplier_count: 
     let schema = lineitem_schema();
     let return_flags = ["R", "A", "N"];
     let line_statuses = ["O", "F"];
-    let ship_instructions = ["DELIVER IN PERSON", "COLLECT COD", "NONE", "TAKE BACK RETURN"];
+    let ship_instructions = [
+        "DELIVER IN PERSON",
+        "COLLECT COD",
+        "NONE",
+        "TAKE BACK RETURN",
+    ];
     let ship_modes = ["REG AIR", "AIR", "RAIL", "TRUCK", "MAIL", "FOB", "SHIP"];
 
     let lines_per_order = 4; // TPC-H spec: 1-7 lines per order, we use 4
@@ -476,7 +527,9 @@ pub fn generate_lineitem(order_count: usize, part_count: usize, supplier_count: 
             commit_dates.push(Some(order_date + (l as i32 % 20)));
             receipt_dates.push(Some(order_date + (l as i32 % 35)));
 
-            ship_instructions_list.push(Some(ship_instructions[idx % ship_instructions.len()].to_string()));
+            ship_instructions_list.push(Some(
+                ship_instructions[idx % ship_instructions.len()].to_string(),
+            ));
             ship_mode_list.push(Some(ship_modes[idx % ship_modes.len()].to_string()));
             comments.push(Some(format!("Lineitem comment {}", idx)));
         }

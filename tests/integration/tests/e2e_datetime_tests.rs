@@ -4,16 +4,16 @@
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 30010;
@@ -38,14 +38,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -78,7 +85,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -111,7 +120,11 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn), current_db: RefCell::new(None) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+            current_db: RefCell::new(None),
+        }
     }
 
     /// Create a unique database name and return it
@@ -140,7 +153,8 @@ impl TestContext {
         if let Some(ref db) = *self.current_db.borrow() {
             let _ = conn.query_drop(format!("USE {}", db));
         }
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -157,7 +171,8 @@ impl TestContext {
         if let Some(ref db) = *self.current_db.borrow() {
             let _ = conn.query_drop(format!("USE {}", db));
         }
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -172,7 +187,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -188,7 +210,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -200,8 +223,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -274,7 +304,7 @@ fn create_events_table(ctx: &TestContext) -> String {
             event_date VARCHAR(10),
             event_time VARCHAR(19),
             duration INT
-        )"
+        )",
     );
     ctx.exec(
         "INSERT INTO events VALUES
@@ -282,7 +312,7 @@ fn create_events_table(ctx: &TestContext) -> String {
             (2, 'meeting', '2024-03-20', '2024-03-20 14:00:00', 120),
             (3, 'review', '2024-06-10', '2024-06-10 10:15:00', 45),
             (4, 'deploy', '2024-09-01', '2024-09-01 16:45:00', 30),
-            (5, 'planning', '2024-12-25', '2024-12-25 08:00:00', 90)"
+            (5, 'planning', '2024-12-25', '2024-12-25 08:00:00', 90)",
     );
     db
 }
@@ -309,7 +339,11 @@ fn test_date_storage_basic() {
     let rows = ctx.query("SELECT DATE '2024-07-04'");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-07-04") || val.contains("2024-07-04"), "DATE literal returned: {}", val);
+    assert!(
+        val.contains("2024-07-04") || val.contains("2024-07-04"),
+        "DATE literal returned: {}",
+        val
+    );
 
     // 3. INSERT and SELECT leap year date
     ctx.exec("INSERT INTO events VALUES (6, 'leap', '2024-02-29', '2024-02-29 12:00:00', 0)");
@@ -365,32 +399,56 @@ fn test_datetime_storage() {
     assert_eq!(rows.len(), 5);
     let t0 = get_string(&rows[0], 0);
     assert!(t0.contains("2024-01-15"), "DATETIME value: {}", t0);
-    assert!(t0.contains("09:30:00") || t0.contains("09:30"), "DATETIME time component: {}", t0);
+    assert!(
+        t0.contains("09:30:00") || t0.contains("09:30"),
+        "DATETIME time component: {}",
+        t0
+    );
 
     let t1 = get_string(&rows[1], 0);
-    assert!(t1.contains("14:00:00") || t1.contains("14:00"), "DATETIME time component: {}", t1);
+    assert!(
+        t1.contains("14:00:00") || t1.contains("14:00"),
+        "DATETIME time component: {}",
+        t1
+    );
 
     let t2 = get_string(&rows[2], 0);
-    assert!(t2.contains("10:15:00") || t2.contains("10:15"), "DATETIME time component: {}", t2);
+    assert!(
+        t2.contains("10:15:00") || t2.contains("10:15"),
+        "DATETIME time component: {}",
+        t2
+    );
 
     // 10. Select specific datetime components
     let rows = ctx.query("SELECT event_time FROM events WHERE id = 4");
     assert_eq!(rows.len(), 1);
     let t = get_string(&rows[0], 0);
-    assert!(t.contains("16:45:00") || t.contains("16:45"), "DATETIME afternoon component: {}", t);
+    assert!(
+        t.contains("16:45:00") || t.contains("16:45"),
+        "DATETIME afternoon component: {}",
+        t
+    );
 
     // 11. DATETIME with early morning time
     let rows = ctx.query("SELECT event_time FROM events WHERE id = 5");
     assert_eq!(rows.len(), 1);
     let t = get_string(&rows[0], 0);
-    assert!(t.contains("08:00:00") || t.contains("08:00"), "DATETIME morning component: {}", t);
+    assert!(
+        t.contains("08:00:00") || t.contains("08:00"),
+        "DATETIME morning component: {}",
+        t
+    );
 
     // 12. INSERT DATETIME and verify
     ctx.exec("INSERT INTO events VALUES (10, 'custom', '2024-05-05', '2024-05-05 23:59:01', 99)");
     let rows = ctx.query("SELECT event_time FROM events WHERE id = 10");
     assert_eq!(rows.len(), 1);
     let t = get_string(&rows[0], 0);
-    assert!(t.contains("23:59:01") || t.contains("23:59"), "DATETIME evening: {}", t);
+    assert!(
+        t.contains("23:59:01") || t.contains("23:59"),
+        "DATETIME evening: {}",
+        t
+    );
 
     // 13. CAST AS DATETIME is not supported by the server (Datetime SQL type)
     // so we skip this test
@@ -441,7 +499,7 @@ fn test_year_month_day_extraction() {
     assert_eq!(get_i64(&rows[0], 0), 15); // Jan 15
     assert_eq!(get_i64(&rows[1], 0), 20); // Mar 20
     assert_eq!(get_i64(&rows[2], 0), 10); // Jun 10
-    assert_eq!(get_i64(&rows[3], 0), 1);  // Sep 1
+    assert_eq!(get_i64(&rows[3], 0), 1); // Sep 1
     assert_eq!(get_i64(&rows[4], 0), 25); // Dec 25
 
     // 20. date_part year from DATETIME column
@@ -452,10 +510,10 @@ fn test_year_month_day_extraction() {
     // 21. date_part month from DATETIME column
     let rows = ctx.query("SELECT date_part('month', event_time) FROM events ORDER BY id");
     assert_eq!(rows.len(), 5);
-    assert_eq!(get_i64(&rows[0], 0), 1);  // January
-    assert_eq!(get_i64(&rows[1], 0), 3);  // March
-    assert_eq!(get_i64(&rows[2], 0), 6);  // June
-    assert_eq!(get_i64(&rows[3], 0), 9);  // September
+    assert_eq!(get_i64(&rows[0], 0), 1); // January
+    assert_eq!(get_i64(&rows[1], 0), 3); // March
+    assert_eq!(get_i64(&rows[2], 0), 6); // June
+    assert_eq!(get_i64(&rows[3], 0), 9); // September
     assert_eq!(get_i64(&rows[4], 0), 12); // December
 
     // 22. date_part day from DATETIME column
@@ -520,29 +578,29 @@ fn test_hour_minute_second() {
     // 30. date_part hour from DATETIME column
     let rows = ctx.query("SELECT date_part('hour', event_time) FROM events ORDER BY id");
     assert_eq!(rows.len(), 5);
-    assert_eq!(get_i64(&rows[0], 0), 9);  // 09:30
+    assert_eq!(get_i64(&rows[0], 0), 9); // 09:30
     assert_eq!(get_i64(&rows[1], 0), 14); // 14:00
     assert_eq!(get_i64(&rows[2], 0), 10); // 10:15
     assert_eq!(get_i64(&rows[3], 0), 16); // 16:45
-    assert_eq!(get_i64(&rows[4], 0), 8);  // 08:00
+    assert_eq!(get_i64(&rows[4], 0), 8); // 08:00
 
     // 31. date_part minute from DATETIME column
     let rows = ctx.query("SELECT date_part('minute', event_time) FROM events ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert_eq!(get_i64(&rows[0], 0), 30); // 09:30
-    assert_eq!(get_i64(&rows[1], 0), 0);  // 14:00
+    assert_eq!(get_i64(&rows[1], 0), 0); // 14:00
     assert_eq!(get_i64(&rows[2], 0), 15); // 10:15
     assert_eq!(get_i64(&rows[3], 0), 45); // 16:45
-    assert_eq!(get_i64(&rows[4], 0), 0);  // 08:00
+    assert_eq!(get_i64(&rows[4], 0), 0); // 08:00
 
     // 32. date_part second from DATETIME column
     let rows = ctx.query("SELECT date_part('second', event_time) FROM events ORDER BY id");
     assert_eq!(rows.len(), 5);
-    assert_eq!(get_i64(&rows[0], 0), 0);  // :00
-    assert_eq!(get_i64(&rows[1], 0), 0);  // :00
-    assert_eq!(get_i64(&rows[2], 0), 0);  // :00
-    assert_eq!(get_i64(&rows[3], 0), 0);  // :00
-    assert_eq!(get_i64(&rows[4], 0), 0);  // :00
+    assert_eq!(get_i64(&rows[0], 0), 0); // :00
+    assert_eq!(get_i64(&rows[1], 0), 0); // :00
+    assert_eq!(get_i64(&rows[2], 0), 0); // :00
+    assert_eq!(get_i64(&rows[3], 0), 0); // :00
+    assert_eq!(get_i64(&rows[4], 0), 0); // :00
 
     // 33. All three in one query (literal)
     let rows = ctx.query("SELECT date_part('hour', '2024-06-10 10:15:45'), date_part('minute', '2024-06-10 10:15:45'), date_part('second', '2024-06-10 10:15:45')");
@@ -571,9 +629,11 @@ fn test_hour_minute_second() {
     ctx.exec("INSERT INTO events VALUES (31, 'noon', '2024-07-15', '2024-07-15 12:00:00', 0)");
     ctx.exec("INSERT INTO events VALUES (32, 'evening', '2024-07-15', '2024-07-15 18:30:00', 0)");
 
-    let rows = ctx.query("SELECT date_part('hour', event_time) FROM events WHERE id IN (30, 31, 32) ORDER BY id");
+    let rows = ctx.query(
+        "SELECT date_part('hour', event_time) FROM events WHERE id IN (30, 31, 32) ORDER BY id",
+    );
     assert_eq!(rows.len(), 3);
-    assert_eq!(get_i64(&rows[0], 0), 0);  // 00:00
+    assert_eq!(get_i64(&rows[0], 0), 0); // 00:00
     assert_eq!(get_i64(&rows[1], 0), 12); // 12:00
     assert_eq!(get_i64(&rows[2], 0), 18); // 18:30
 
@@ -618,13 +678,21 @@ fn test_date_arithmetic() {
     let rows = ctx.query("SELECT days_add(event_date::DATE, 7) FROM events WHERE id = 1");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-01-22"), "days_add column +7 days: {}", val);
+    assert!(
+        val.contains("2024-01-22"),
+        "days_add column +7 days: {}",
+        val
+    );
 
     // 44. days_add with negative for DATE_SUB equivalent on column
     let rows = ctx.query("SELECT days_add(event_date::DATE, -5) FROM events WHERE id = 3");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-06-05"), "days_add column -5 days: {}", val);
+    assert!(
+        val.contains("2024-06-05"),
+        "days_add column -5 days: {}",
+        val
+    );
 
     // 45. Adding days across month boundary
     let rows = ctx.query("SELECT days_add('2024-01-28'::DATE, 5)");
@@ -648,14 +716,21 @@ fn test_date_arithmetic() {
     let rows = ctx.query("SELECT months_add('2024-01-15'::DATE, 12)");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2025-01-15"), "months_add +12 months (1 year): {}", val);
+    assert!(
+        val.contains("2025-01-15"),
+        "months_add +12 months (1 year): {}",
+        val
+    );
 
     // 49. days_add with negative for DATE_SUB on leap year boundary
     let rows = ctx.query("SELECT days_add('2024-03-01'::DATE, -1)");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-02-29") || val.contains("2024-02-28"),
-        "Leap year Feb + days_add -1: {}", val);
+    assert!(
+        val.contains("2024-02-29") || val.contains("2024-02-28"),
+        "Leap year Feb + days_add -1: {}",
+        val
+    );
 
     // 50. days_add with literal — use ::DATE cast (tested above)
     // 51. months_add with literal — use ::DATE cast (tested above)
@@ -664,7 +739,10 @@ fn test_date_arithmetic() {
     // 53. years_add is not supported
 
     // 54. Time arithmetic with DATETIME — can use days_add for day-level, minutes not directly supported
-    let val = get_string(&ctx.query("SELECT days_add('2024-01-15 09:30:00'::DATE, 0)")[0], 0);
+    let val = get_string(
+        &ctx.query("SELECT days_add('2024-01-15 09:30:00'::DATE, 0)")[0],
+        0,
+    );
     assert!(val.contains("2024-01-15"), "DATE round-trip: {}", val);
 
     ctx.drop_db(&db);
@@ -701,13 +779,21 @@ fn test_date_trunc() {
     let rows = ctx.query("SELECT date_trunc('month', event_date::DATE) FROM events WHERE id = 2");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-03-01"), "date_trunc column month: {}", val);
+    assert!(
+        val.contains("2024-03-01"),
+        "date_trunc column month: {}",
+        val
+    );
 
     // 59. date_trunc on VARCHAR column — year with ::DATE cast
     let rows = ctx.query("SELECT date_trunc('year', event_date::DATE) FROM events WHERE id = 4");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-01-01"), "date_trunc column year: {}", val);
+    assert!(
+        val.contains("2024-01-01"),
+        "date_trunc column year: {}",
+        val
+    );
 
     // 60. date_trunc quarter — not fully supported (returns input unchanged)
     // 61. date_trunc week — not fully supported (returns input unchanged)
@@ -732,14 +818,26 @@ fn test_now_curdate_curtime() {
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
     assert!(!val.is_empty(), "NOW() should not be empty");
-    assert!(val.len() >= 10, "NOW() should be at least 'YYYY-MM-DD', got: {}", val);
+    assert!(
+        val.len() >= 10,
+        "NOW() should be at least 'YYYY-MM-DD', got: {}",
+        val
+    );
 
     // 63. NOW() contains current date (approximate check)
     let rows = ctx.query("SELECT NOW()");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("-"), "NOW() should contain hyphens (date format), got: {}", val);
-    assert!(val.contains(":"), "NOW() should contain colons (time format), got: {}", val);
+    assert!(
+        val.contains("-"),
+        "NOW() should contain hyphens (date format), got: {}",
+        val
+    );
+    assert!(
+        val.contains(":"),
+        "NOW() should contain colons (time format), got: {}",
+        val
+    );
 
     // 64. CURDATE() is not supported by DataFusion
 
@@ -791,14 +889,17 @@ fn test_date_in_where() {
     let db = create_events_table(&ctx);
 
     // 74. WHERE date_col > literal
-    let rows = ctx.query("SELECT event_name, event_date FROM events WHERE event_date > '2024-06-01' ORDER BY id");
+    let rows = ctx.query(
+        "SELECT event_name, event_date FROM events WHERE event_date > '2024-06-01' ORDER BY id",
+    );
     assert_eq!(rows.len(), 3, "events after 2024-06-01");
     assert_eq!(get_string(&rows[0], 0), "review");
     assert_eq!(get_string(&rows[1], 0), "deploy");
     assert_eq!(get_string(&rows[2], 0), "planning");
 
     // 75. WHERE date_col < literal
-    let rows = ctx.query("SELECT event_name FROM events WHERE event_date < '2024-06-01' ORDER BY id");
+    let rows =
+        ctx.query("SELECT event_name FROM events WHERE event_date < '2024-06-01' ORDER BY id");
     assert_eq!(rows.len(), 2, "events before 2024-06-01");
     assert_eq!(get_string(&rows[0], 0), "launch");
     assert_eq!(get_string(&rows[1], 0), "meeting");
@@ -826,13 +927,15 @@ fn test_date_in_where() {
     assert_eq!(get_string(&rows[0], 0), "launch");
 
     // 80. WHERE date_col >= literal
-    let rows = ctx.query("SELECT event_name FROM events WHERE event_date >= '2024-09-01' ORDER BY id");
+    let rows =
+        ctx.query("SELECT event_name FROM events WHERE event_date >= '2024-09-01' ORDER BY id");
     assert_eq!(rows.len(), 2, "events >= Sep 1");
     assert_eq!(get_string(&rows[0], 0), "deploy");
     assert_eq!(get_string(&rows[1], 0), "planning");
 
     // 81. WHERE date_col <= literal
-    let rows = ctx.query("SELECT event_name FROM events WHERE event_date <= '2024-03-20' ORDER BY id");
+    let rows =
+        ctx.query("SELECT event_name FROM events WHERE event_date <= '2024-03-20' ORDER BY id");
     assert_eq!(rows.len(), 2, "events <= Mar 20");
     assert_eq!(get_string(&rows[0], 0), "launch");
     assert_eq!(get_string(&rows[1], 0), "meeting");
@@ -842,7 +945,8 @@ fn test_date_in_where() {
     assert_eq!(rows.len(), 4, "events where date+30d > Apr 1");
 
     // 83. WHERE with date_part day = 15 (only launch is on 15th; planning is 25th)
-    let rows = ctx.query("SELECT event_name FROM events WHERE date_part('day', event_date) = 15 ORDER BY id");
+    let rows = ctx
+        .query("SELECT event_name FROM events WHERE date_part('day', event_date) = 15 ORDER BY id");
     assert_eq!(rows.len(), 1, "events on 15th");
     assert_eq!(get_string(&rows[0], 0), "launch");
 
@@ -931,7 +1035,8 @@ fn test_date_formatting() {
     }
 
     // 93. DATE_FORMAT on column
-    let result = ctx.query_ignore_error("SELECT DATE_FORMAT(event_date, '%Y-%m-%d') FROM events WHERE id = 3");
+    let result = ctx
+        .query_ignore_error("SELECT DATE_FORMAT(event_date, '%Y-%m-%d') FROM events WHERE id = 3");
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 1);
         let val = get_string(&rows[0], 0);
@@ -956,7 +1061,11 @@ fn test_date_formatting() {
     let rows = ctx.query("SELECT CAST(event_time AS VARCHAR) FROM events WHERE id = 2");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-03-20"), "CAST datetime as string: {}", val);
+    assert!(
+        val.contains("2024-03-20"),
+        "CAST datetime as string: {}",
+        val
+    );
 
     // 97. DATE_FORMAT with full month name (Chrono %B = full month name, not MySQL %M)
     let result = ctx.query_ignore_error("SELECT DATE_FORMAT('2024-01-15', '%B %d, %Y')");
@@ -979,7 +1088,9 @@ fn test_date_edge_cases() {
     let db = ctx.create_and_use_db();
 
     // Table with nullable VARCHAR date column
-    ctx.exec("CREATE TABLE edge_cases (id INT, event_date VARCHAR(10), event_time VARCHAR(19), val INT)");
+    ctx.exec(
+        "CREATE TABLE edge_cases (id INT, event_date VARCHAR(10), event_time VARCHAR(19), val INT)",
+    );
 
     // 98. NULL date
     ctx.exec("INSERT INTO edge_cases VALUES (1, NULL, NULL, 100)");
@@ -999,7 +1110,11 @@ fn test_date_edge_cases() {
     // 101. NULL in WHERE: IS NOT NULL (after inserting non-null)
     ctx.exec("INSERT INTO edge_cases VALUES (2, '2024-06-15', '2024-06-15 12:00:00', 200)");
     let rows = ctx.query("SELECT COUNT(*) FROM edge_cases WHERE event_date IS NOT NULL");
-    assert_eq!(get_i64(&rows[0], 0), 1, "IS NOT NULL should find non-null date");
+    assert_eq!(
+        get_i64(&rows[0], 0),
+        1,
+        "IS NOT NULL should find non-null date"
+    );
 
     // 102. Leap year date: Feb 29 in a leap year
     ctx.exec("INSERT INTO edge_cases VALUES (3, '2024-02-29', '2024-02-29 12:00:00', 300)");
@@ -1034,7 +1149,11 @@ fn test_date_edge_cases() {
     assert_eq!(get_string(&rows[0], 0), "2024-12-31");
     let t = get_string(&rows[0], 1);
     assert!(t.contains("2024-12-31"), "DateTime round-trip date: {}", t);
-    assert!(t.contains("23:59:59") || t.contains("23:59"), "DateTime round-trip time: {}", t);
+    assert!(
+        t.contains("23:59:59") || t.contains("23:59"),
+        "DateTime round-trip time: {}",
+        t
+    );
 
     // 107. date_part day for 31st day
     let rows = ctx.query("SELECT date_part('day', '2024-01-31')");
@@ -1055,13 +1174,21 @@ fn test_date_edge_cases() {
     let rows = ctx.query("SELECT days_add('2025-01-01'::DATE, -1)");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-12-31"), "Year transition -1 day: {}", val);
+    assert!(
+        val.contains("2024-12-31"),
+        "Year transition -1 day: {}",
+        val
+    );
 
     // 111. Year transition: days_add from Dec 31
     let rows = ctx.query("SELECT days_add('2024-12-31'::DATE, 1)");
     assert_eq!(rows.len(), 1);
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2025-01-01"), "Year transition +1 day: {}", val);
+    assert!(
+        val.contains("2025-01-01"),
+        "Year transition +1 day: {}",
+        val
+    );
 
     // 112. Date in subquery
     let rows = ctx.query(
@@ -1083,10 +1210,12 @@ fn test_date_functions_with_datetime() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE dt_test (id INT, ts VARCHAR(19), val INT)");
-    ctx.exec("INSERT INTO dt_test VALUES
+    ctx.exec(
+        "INSERT INTO dt_test VALUES
         (1, '2024-01-15 09:30:45', 10),
         (2, '2024-06-20 14:15:30', 20),
-        (3, '2024-12-25 23:59:59', 30)");
+        (3, '2024-12-25 23:59:59', 30)",
+    );
 
     // 113. date_part year from DATETIME
     let rows = ctx.query("SELECT date_part('year', ts) FROM dt_test WHERE id = 1");
@@ -1121,12 +1250,20 @@ fn test_date_functions_with_datetime() {
     // 119. days_add on DATETIME column
     let rows = ctx.query("SELECT days_add(ts::DATE, 1) FROM dt_test WHERE id = 1");
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-01-16"), "days_add datetime +1 day: {}", val);
+    assert!(
+        val.contains("2024-01-16"),
+        "days_add datetime +1 day: {}",
+        val
+    );
 
     // 120. hours_add is not available, so use days_add for day-level only
     let rows = ctx.query("SELECT days_add(ts::DATE, -2) FROM dt_test WHERE id = 2");
     let val = get_string(&rows[0], 0);
-    assert!(val.contains("2024-06-18"), "days_add datetime -2 days: {}", val);
+    assert!(
+        val.contains("2024-06-18"),
+        "days_add datetime -2 days: {}",
+        val
+    );
 
     // 121. DATEDIFF is not supported by DataFusion
 
@@ -1170,7 +1307,8 @@ fn test_date_bulk_operations() {
     ctx.exec("CREATE TABLE sales (id INT, sale_date VARCHAR(10), amount DOUBLE)");
 
     // Insert many date values across quarters
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, '2024-01-05', 100.0),
         (2, '2024-02-15', 200.0),
         (3, '2024-03-25', 150.0),
@@ -1182,7 +1320,8 @@ fn test_date_bulk_operations() {
         (9, '2024-09-10', 220.0),
         (10, '2024-10-05', 280.0),
         (11, '2024-11-20', 310.0),
-        (12, '2024-12-31', 500.0)");
+        (12, '2024-12-31', 500.0)",
+    );
 
     // 126. All rows inserted correctly
     let rows = ctx.query("SELECT COUNT(*) FROM sales");
@@ -1190,24 +1329,48 @@ fn test_date_bulk_operations() {
 
     // 127. Q1 sales total (date_part month <= 3)
     let rows = ctx.query("SELECT SUM(amount) FROM sales WHERE date_part('month', sale_date) <= 3");
-    assert!((get_f64(&rows[0], 0) - 450.0).abs() < 0.01, "Q1 total = 450");
+    assert!(
+        (get_f64(&rows[0], 0) - 450.0).abs() < 0.01,
+        "Q1 total = 450"
+    );
 
     // 128. Q4 sales total (date_part month >= 10)
     let rows = ctx.query("SELECT SUM(amount) FROM sales WHERE date_part('month', sale_date) >= 10");
-    assert!((get_f64(&rows[0], 0) - 1090.0).abs() < 0.01, "Q4 total = 1090");
+    assert!(
+        (get_f64(&rows[0], 0) - 1090.0).abs() < 0.01,
+        "Q4 total = 1090"
+    );
 
     // 129. Last days of month (day >= 25)
-    let rows = ctx.query("SELECT sale_date, amount FROM sales WHERE date_part('day', sale_date) >= 25 ORDER BY id");
+    let rows = ctx.query(
+        "SELECT sale_date, amount FROM sales WHERE date_part('day', sale_date) >= 25 ORDER BY id",
+    );
     assert_eq!(rows.len(), 3, "3 sales on/after 25th"); // ids 3(25), 6(30), 12(31)
     assert_eq!(get_string(&rows[0], 0), "2024-03-25");
 
     // 130. Group by half year
     let rows = ctx.query("SELECT CASE WHEN date_part('month', sale_date) <= 6 THEN 'H1' ELSE 'H2' END AS half, SUM(amount) AS total FROM sales GROUP BY half ORDER BY half");
     assert_eq!(rows.len(), 2);
-    let h1_total = if get_string(&rows[0], 0) == "H1" { get_f64(&rows[0], 1) } else { get_f64(&rows[1], 1) };
-    let h2_total = if get_string(&rows[1], 0) == "H2" { get_f64(&rows[1], 1) } else { get_f64(&rows[0], 1) };
-    assert!((h1_total - 1180.0).abs() < 0.01, "H1 total = 1180, got {}", h1_total);
-    assert!((h2_total - 2060.0).abs() < 0.01, "H2 total = 2060, got {}", h2_total);
+    let h1_total = if get_string(&rows[0], 0) == "H1" {
+        get_f64(&rows[0], 1)
+    } else {
+        get_f64(&rows[1], 1)
+    };
+    let h2_total = if get_string(&rows[1], 0) == "H2" {
+        get_f64(&rows[1], 1)
+    } else {
+        get_f64(&rows[0], 1)
+    };
+    assert!(
+        (h1_total - 1180.0).abs() < 0.01,
+        "H1 total = 1180, got {}",
+        h1_total
+    );
+    assert!(
+        (h2_total - 2060.0).abs() < 0.01,
+        "H2 total = 2060, got {}",
+        h2_total
+    );
 
     // Verify date values are preserved after bulk insert
     let rows = ctx.query("SELECT sale_date FROM sales WHERE id = 12");

@@ -80,23 +80,18 @@ pub fn create_hex_udf() -> ScalarUDF {
                     .map(|v| v.map(|n| format!("{:X}", n)))
                     .collect();
                 Ok(ColumnarValue::Array(
-                    Arc::new(StringArray::from(result)) as Arc<dyn Array>,
+                    Arc::new(StringArray::from(result)) as Arc<dyn Array>
                 ))
             } else {
-                let str_arr = arr
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .ok_or_else(|| {
-                        DataFusionError::Internal("hex: expected StringArray".to_string())
-                    })?;
+                let str_arr = arr.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
+                    DataFusionError::Internal("hex: expected StringArray".to_string())
+                })?;
                 let result: Vec<Option<String>> = str_arr
                     .iter()
-                    .map(|s| {
-                        s.map(|v| v.bytes().map(|b| format!("{:02X}", b)).collect::<String>())
-                    })
+                    .map(|s| s.map(|v| v.bytes().map(|b| format!("{:02X}", b)).collect::<String>()))
                     .collect();
                 Ok(ColumnarValue::Array(
-                    Arc::new(StringArray::from(result)) as Arc<dyn Array>,
+                    Arc::new(StringArray::from(result)) as Arc<dyn Array>
                 ))
             }
         }
@@ -158,7 +153,7 @@ pub fn create_unhex_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result)) as Arc<dyn Array>,
+                Arc::new(StringArray::from(result)) as Arc<dyn Array>
             ))
         }
     }
@@ -287,7 +282,7 @@ pub fn create_truncate_udf() -> ScalarUDF {
             };
 
             Ok(ColumnarValue::Array(
-                Arc::new(Float64Array::from(result)) as Arc<dyn Array>,
+                Arc::new(Float64Array::from(result)) as Arc<dyn Array>
             ))
         }
     }
@@ -307,25 +302,18 @@ pub fn create_group_concat_udf() -> AggregateUDF {
 
     impl GroupConcatAccumulator {
         fn new() -> Self {
-            Self {
-                values: Vec::new(),
-            }
+            Self { values: Vec::new() }
         }
     }
 
     impl Accumulator for GroupConcatAccumulator {
-        fn update_batch(
-            &mut self,
-            values: &[Arc<dyn Array>],
-        ) -> datafusion::error::Result<()> {
+        fn update_batch(&mut self, values: &[Arc<dyn Array>]) -> datafusion::error::Result<()> {
             if values.is_empty() {
                 return Ok(());
             }
             let arr = &values[0];
             let str_arr = arr.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                DataFusionError::Internal(
-                    "group_concat: expected StringArray".to_string(),
-                )
+                DataFusionError::Internal("group_concat: expected StringArray".to_string())
             })?;
             for i in 0..str_arr.len() {
                 if !str_arr.is_null(i) {
@@ -335,10 +323,7 @@ pub fn create_group_concat_udf() -> AggregateUDF {
             Ok(())
         }
 
-        fn merge_batch(
-            &mut self,
-            states: &[Arc<dyn Array>],
-        ) -> datafusion::error::Result<()> {
+        fn merge_batch(&mut self, states: &[Arc<dyn Array>]) -> datafusion::error::Result<()> {
             if states.is_empty() {
                 return Ok(());
             }
@@ -356,13 +341,14 @@ pub fn create_group_concat_udf() -> AggregateUDF {
                     continue;
                 }
                 let inner = list_arr.value(i);
-                let str_inner = inner.as_any().downcast_ref::<StringArray>().ok_or_else(
-                    || {
+                let str_inner = inner
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| {
                         DataFusionError::Internal(
                             "group_concat merge: expected StringArray in list".to_string(),
                         )
-                    },
-                )?;
+                    })?;
                 for j in 0..str_inner.len() {
                     if !str_inner.is_null(j) {
                         self.values.push(str_inner.value(j).to_string());
@@ -530,30 +516,40 @@ pub fn create_if_udf() -> ScalarUDF {
 
             match args[1].data_type() {
                 DataType::Utf8 => {
-                    let a_arr = args[1]
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "if: arg1 must be StringArray".to_string(),
-                            )
-                        })?;
-                    let b_arr = args[2]
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "if: arg2 must be StringArray".to_string(),
-                            )
-                        })?;
+                    let a_arr =
+                        args[1]
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "if: arg1 must be StringArray".to_string(),
+                                )
+                            })?;
+                    let b_arr =
+                        args[2]
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "if: arg2 must be StringArray".to_string(),
+                                )
+                            })?;
                     let result: Vec<Option<&str>> = (0..cond_arr.len())
                         .map(|i| {
                             if cond_arr.is_null(i) {
                                 None
                             } else if cond_arr.value(i) {
-                                if a_arr.is_null(i) { None } else { Some(a_arr.value(i)) }
+                                if a_arr.is_null(i) {
+                                    None
+                                } else {
+                                    Some(a_arr.value(i))
+                                }
                             } else {
-                                if b_arr.is_null(i) { None } else { Some(b_arr.value(i)) }
+                                if b_arr.is_null(i) {
+                                    None
+                                } else {
+                                    Some(b_arr.value(i))
+                                }
                             }
                         })
                         .collect();
@@ -563,7 +559,7 @@ pub fn create_if_udf() -> ScalarUDF {
                         .map(|s| s.map(|s| s.to_string()))
                         .collect();
                     Ok(ColumnarValue::Array(
-                        Arc::new(StringArray::from(result)) as Arc<dyn Array>,
+                        Arc::new(StringArray::from(result)) as Arc<dyn Array>
                     ))
                 }
                 DataType::Int64 => {
@@ -571,63 +567,77 @@ pub fn create_if_udf() -> ScalarUDF {
                         .as_any()
                         .downcast_ref::<Int64Array>()
                         .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "if: arg1 must be Int64Array".to_string(),
-                            )
+                            DataFusionError::Internal("if: arg1 must be Int64Array".to_string())
                         })?;
                     let b_arr = args[2]
                         .as_any()
                         .downcast_ref::<Int64Array>()
                         .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "if: arg2 must be Int64Array".to_string(),
-                            )
+                            DataFusionError::Internal("if: arg2 must be Int64Array".to_string())
                         })?;
                     let result: Vec<Option<i64>> = (0..cond_arr.len())
                         .map(|i| {
                             if cond_arr.is_null(i) {
                                 None
                             } else if cond_arr.value(i) {
-                                if a_arr.is_null(i) { None } else { Some(a_arr.value(i)) }
+                                if a_arr.is_null(i) {
+                                    None
+                                } else {
+                                    Some(a_arr.value(i))
+                                }
                             } else {
-                                if b_arr.is_null(i) { None } else { Some(b_arr.value(i)) }
+                                if b_arr.is_null(i) {
+                                    None
+                                } else {
+                                    Some(b_arr.value(i))
+                                }
                             }
                         })
                         .collect();
                     Ok(ColumnarValue::Array(
-                        Arc::new(Int64Array::from(result)) as Arc<dyn Array>,
+                        Arc::new(Int64Array::from(result)) as Arc<dyn Array>
                     ))
                 }
                 DataType::Float64 => {
-                    let a_arr = args[1]
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "if: arg1 must be Float64Array".to_string(),
-                            )
-                        })?;
-                    let b_arr = args[2]
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "if: arg2 must be Float64Array".to_string(),
-                            )
-                        })?;
+                    let a_arr =
+                        args[1]
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "if: arg1 must be Float64Array".to_string(),
+                                )
+                            })?;
+                    let b_arr =
+                        args[2]
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "if: arg2 must be Float64Array".to_string(),
+                                )
+                            })?;
                     let result: Vec<Option<f64>> = (0..cond_arr.len())
                         .map(|i| {
                             if cond_arr.is_null(i) {
                                 None
                             } else if cond_arr.value(i) {
-                                if a_arr.is_null(i) { None } else { Some(a_arr.value(i)) }
+                                if a_arr.is_null(i) {
+                                    None
+                                } else {
+                                    Some(a_arr.value(i))
+                                }
                             } else {
-                                if b_arr.is_null(i) { None } else { Some(b_arr.value(i)) }
+                                if b_arr.is_null(i) {
+                                    None
+                                } else {
+                                    Some(b_arr.value(i))
+                                }
                             }
                         })
                         .collect();
                     Ok(ColumnarValue::Array(
-                        Arc::new(Float64Array::from(result)) as Arc<dyn Array>,
+                        Arc::new(Float64Array::from(result)) as Arc<dyn Array>
                     ))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -695,22 +705,24 @@ pub fn create_ifnull_udf() -> ScalarUDF {
 
             match args[0].data_type() {
                 DataType::Utf8 => {
-                    let a_arr = args[0]
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "ifnull: arg0 must be StringArray".to_string(),
-                            )
-                        })?;
-                    let b_arr = args[1]
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "ifnull: arg1 must be StringArray".to_string(),
-                            )
-                        })?;
+                    let a_arr =
+                        args[0]
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "ifnull: arg0 must be StringArray".to_string(),
+                                )
+                            })?;
+                    let b_arr =
+                        args[1]
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "ifnull: arg1 must be StringArray".to_string(),
+                                )
+                            })?;
                     let result: Vec<Option<String>> = (0..a_arr.len())
                         .map(|i| {
                             if !a_arr.is_null(i) {
@@ -723,7 +735,7 @@ pub fn create_ifnull_udf() -> ScalarUDF {
                         })
                         .collect();
                     Ok(ColumnarValue::Array(
-                        Arc::new(StringArray::from(result)) as Arc<dyn Array>,
+                        Arc::new(StringArray::from(result)) as Arc<dyn Array>
                     ))
                 }
                 DataType::Int64 => {
@@ -731,17 +743,13 @@ pub fn create_ifnull_udf() -> ScalarUDF {
                         .as_any()
                         .downcast_ref::<Int64Array>()
                         .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "ifnull: arg0 must be Int64Array".to_string(),
-                            )
+                            DataFusionError::Internal("ifnull: arg0 must be Int64Array".to_string())
                         })?;
                     let b_arr = args[1]
                         .as_any()
                         .downcast_ref::<Int64Array>()
                         .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "ifnull: arg1 must be Int64Array".to_string(),
-                            )
+                            DataFusionError::Internal("ifnull: arg1 must be Int64Array".to_string())
                         })?;
                     let result: Vec<Option<i64>> = (0..a_arr.len())
                         .map(|i| {
@@ -755,26 +763,28 @@ pub fn create_ifnull_udf() -> ScalarUDF {
                         })
                         .collect();
                     Ok(ColumnarValue::Array(
-                        Arc::new(Int64Array::from(result)) as Arc<dyn Array>,
+                        Arc::new(Int64Array::from(result)) as Arc<dyn Array>
                     ))
                 }
                 DataType::Float64 => {
-                    let a_arr = args[0]
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "ifnull: arg0 must be Float64Array".to_string(),
-                            )
-                        })?;
-                    let b_arr = args[1]
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "ifnull: arg1 must be Float64Array".to_string(),
-                            )
-                        })?;
+                    let a_arr =
+                        args[0]
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "ifnull: arg0 must be Float64Array".to_string(),
+                                )
+                            })?;
+                    let b_arr =
+                        args[1]
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
+                            .ok_or_else(|| {
+                                DataFusionError::Internal(
+                                    "ifnull: arg1 must be Float64Array".to_string(),
+                                )
+                            })?;
                     let result: Vec<Option<f64>> = (0..a_arr.len())
                         .map(|i| {
                             if !a_arr.is_null(i) {
@@ -787,7 +797,7 @@ pub fn create_ifnull_udf() -> ScalarUDF {
                         })
                         .collect();
                     Ok(ColumnarValue::Array(
-                        Arc::new(Float64Array::from(result)) as Arc<dyn Array>,
+                        Arc::new(Float64Array::from(result)) as Arc<dyn Array>
                     ))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -873,7 +883,7 @@ pub fn create_uuid_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result)) as Arc<dyn Array>,
+                Arc::new(StringArray::from(result)) as Arc<dyn Array>
             ))
         }
     }

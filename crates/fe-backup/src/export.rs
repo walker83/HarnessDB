@@ -1,7 +1,8 @@
 //! Table export and import functionality
 
-use std::path::Path;
 use fe_storage::ParquetStorage;
+use parquet::file::reader::FileReader;
+use std::path::Path;
 
 /// Export table data to a file
 pub fn export_table(
@@ -42,12 +43,17 @@ pub fn export_table(
 
             Ok(format!(
                 "EXPORT TABLE `{}.{}` TO '{}' completed (parquet, {} rows, {} bytes)",
-                database, table, path, num_rows, metadata.len()
+                database,
+                table,
+                path,
+                num_rows,
+                metadata.len()
             ))
         }
         "csv" => {
             // Read parquet and write as CSV
-            let batch = storage.read(database, table)
+            let batch = storage
+                .read(database, table)
                 .map_err(|e| format!("Failed to read table: {}", e))?;
 
             let file = std::fs::File::create(export_path)
@@ -57,22 +63,29 @@ pub fn export_table(
                 .with_header(true)
                 .build(file);
 
-            writer.write(&batch)
+            writer
+                .write(&batch)
                 .map_err(|e| format!("Failed to write CSV: {}", e))?;
 
-            // Flush the writer to ensure all data is on disk before checking file size
-            writer.finish()
-                .map_err(|e| format!("Failed to flush CSV writer: {}", e))?;
+            // Drop the writer to flush all data to disk before checking file size
+            drop(writer);
 
             let metadata = std::fs::metadata(export_path)
                 .map_err(|e| format!("Failed to get file metadata: {}", e))?;
 
             Ok(format!(
                 "EXPORT TABLE `{}.{}` TO '{}' completed (csv, {} rows, {} bytes)",
-                database, table, path, batch.num_rows(), metadata.len()
+                database,
+                table,
+                path,
+                batch.num_rows(),
+                metadata.len()
             ))
         }
-        _ => Err(format!("Unsupported export format: '{}'. Supported: parquet, csv", format)),
+        _ => Err(format!(
+            "Unsupported export format: '{}'. Supported: parquet, csv",
+            format
+        )),
     }
 }
 
@@ -96,17 +109,18 @@ pub fn import_table(
             let file = std::fs::File::open(import_path)
                 .map_err(|e| format!("Failed to open import file: {}", e))?;
 
-            let reader = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)
-                .map_err(|e| format!("Failed to read parquet file: {}", e))?
-                .build()
-                .map_err(|e| format!("Failed to build parquet reader: {}", e))?;
+            let reader =
+                parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)
+                    .map_err(|e| format!("Failed to read parquet file: {}", e))?
+                    .build()
+                    .map_err(|e| format!("Failed to build parquet reader: {}", e))?;
 
             let mut total_rows = 0;
             for batch_result in reader {
-                let batch = batch_result
-                    .map_err(|e| format!("Failed to read batch: {}", e))?;
+                let batch = batch_result.map_err(|e| format!("Failed to read batch: {}", e))?;
                 total_rows += batch.num_rows();
-                storage.insert(database, table, batch)
+                storage
+                    .insert(database, table, batch)
                     .map_err(|e| format!("Failed to insert data: {}", e))?;
             }
 
@@ -139,10 +153,10 @@ pub fn import_table(
 
             let mut total_rows = 0;
             for batch_result in reader {
-                let batch = batch_result
-                    .map_err(|e| format!("Failed to read CSV batch: {}", e))?;
+                let batch = batch_result.map_err(|e| format!("Failed to read CSV batch: {}", e))?;
                 total_rows += batch.num_rows();
-                storage.insert(database, table, batch)
+                storage
+                    .insert(database, table, batch)
                     .map_err(|e| format!("Failed to insert data: {}", e))?;
             }
 
@@ -151,6 +165,9 @@ pub fn import_table(
                 database, table, path, total_rows
             ))
         }
-        _ => Err(format!("Unsupported import format: '{}'. Supported: parquet, csv", format)),
+        _ => Err(format!(
+            "Unsupported import format: '{}'. Supported: parquet, csv",
+            format
+        )),
     }
 }

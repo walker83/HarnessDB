@@ -91,7 +91,10 @@ fn strip_lifecycle(sql: &str) -> (String, Vec<String>) {
     let re = Regex::new(r"(?i)\s+LIFECYCLE\s+\d+").unwrap();
     let result_masked = re.replace_all(&masked, |caps: &regex::Captures| {
         let cap = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-        warnings.push(format!("LIFECYCLE clause stripped: '{}', not enforced", cap.trim()));
+        warnings.push(format!(
+            "LIFECYCLE clause stripped: '{}', not enforced",
+            cap.trim()
+        ));
         ""
     });
     let result = crate::restore_string_literals(&result_masked, &original_strings);
@@ -172,10 +175,7 @@ fn extract_partition_columns(sql: &str, start: usize) -> Option<(String, usize)>
         return None;
     }
 
-    let partition_cols: Vec<String> = cols
-        .iter()
-        .map(|c| c.trim().to_string())
-        .collect();
+    let partition_cols: Vec<String> = cols.iter().map(|c| c.trim().to_string()).collect();
 
     Some((partition_cols.join(", "), paren_end))
 }
@@ -245,7 +245,7 @@ fn process_create_table(sql: &str) -> (String, Vec<String>) {
             result = r4;
             warnings.extend(w4);
             return (result.trim().to_string(), warnings);
-        },
+        }
     };
 
     // Extract column definitions
@@ -294,7 +294,8 @@ fn process_create_table(sql: &str) -> (String, Vec<String>) {
                 after_partition
             );
 
-            warnings.push("PARTITIONED BY columns merged into regular column definitions".to_string());
+            warnings
+                .push("PARTITIONED BY columns merged into regular column definitions".to_string());
 
             // Now strip rest of partition related clauses from the tail
             // The tail now doesn't have PARTITIONED BY anymore since we reconstructed
@@ -500,8 +501,16 @@ fn translate_distribute_sort(sql: &str) -> (String, Vec<String>) {
                         let remaining = &after_sort[i..];
                         let remaining_upper = remaining.to_uppercase();
                         let end_keywords = [
-                            " FROM ", " WHERE ", " GROUP ", " HAVING ", " ORDER ", " LIMIT ",
-                            " UNION ", " INTERSECT ", " EXCEPT ", ";",
+                            " FROM ",
+                            " WHERE ",
+                            " GROUP ",
+                            " HAVING ",
+                            " ORDER ",
+                            " LIMIT ",
+                            " UNION ",
+                            " INTERSECT ",
+                            " EXCEPT ",
+                            ";",
                         ];
                         for kw in &end_keywords {
                             if remaining_upper.starts_with(kw) {
@@ -525,9 +534,7 @@ fn translate_distribute_sort(sql: &str) -> (String, Vec<String>) {
                 let sort_cols = &masked[sort_pos.end()..sort_end].trim();
 
                 // Replace DISTRIBUTE BY ... SORT BY col with ORDER BY col
-                warnings.push(
-                    "DISTRIBUTE BY + SORT BY converted to ORDER BY".to_string(),
-                );
+                warnings.push("DISTRIBUTE BY + SORT BY converted to ORDER BY".to_string());
 
                 // The content between DISTRIBUTE BY's columns and SORT BY is the distribute columns.
                 let distribute_cols = &masked[dist_pos.end()..sort_pos.start()].trim();
@@ -542,7 +549,8 @@ fn translate_distribute_sort(sql: &str) -> (String, Vec<String>) {
                     sort_cols,
                     &masked[sort_end..]
                 );
-                let final_sql = crate::restore_string_literals(&final_sql_masked, &original_strings);
+                let final_sql =
+                    crate::restore_string_literals(&final_sql_masked, &original_strings);
                 return (final_sql.trim().to_string(), warnings);
             }
         }
@@ -585,9 +593,8 @@ fn translate_lateral_view(sql: &str) -> (String, Vec<String>) {
                     let col_alias = alias_caps.get(2).unwrap().as_str();
                     let alias_end = paren_end + 1 + alias_caps.get(0).unwrap().len();
 
-                    warnings.push(
-                        "LATERAL VIEW EXPLODE converted to CROSS JOIN UNNEST".to_string(),
-                    );
+                    warnings
+                        .push("LATERAL VIEW EXPLODE converted to CROSS JOIN UNNEST".to_string());
 
                     let replacement = format!(
                         " CROSS JOIN UNNEST({}) AS {}({})",
@@ -625,8 +632,9 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
     // SELECT TRANSFORM ... USING 'script' -> no-op with warning
     let transform_re = Regex::new(r"(?i)\bTRANSFORM\s*\(.+?\)\s+USING\b").unwrap();
     if transform_re.is_match(trimmed) {
-        return Some(TranslateResult::ok(String::new())
-            .with_warning("SELECT TRANSFORM USING is accepted but not executed (no-op in simulation mode)"));
+        return Some(TranslateResult::ok(String::new()).with_warning(
+            "SELECT TRANSFORM USING is accepted but not executed (no-op in simulation mode)",
+        ));
     }
 
     // Complex types (ARRAY, MAP, STRUCT) are now passed through to DataFusion
@@ -670,8 +678,16 @@ fn translate_cluster_by(sql: &str) -> (String, Vec<String>) {
                 let remaining = &after_cluster[i..];
                 let remaining_upper = remaining.to_uppercase();
                 let end_keywords = [
-                    " FROM ", " WHERE ", " GROUP ", " HAVING ", " ORDER ", " LIMIT ",
-                    " UNION ", " INTERSECT ", " EXCEPT ", ";",
+                    " FROM ",
+                    " WHERE ",
+                    " GROUP ",
+                    " HAVING ",
+                    " ORDER ",
+                    " LIMIT ",
+                    " UNION ",
+                    " INTERSECT ",
+                    " EXCEPT ",
+                    ";",
                 ];
                 for kw in &end_keywords {
                     if remaining_upper.starts_with(kw) {
@@ -748,8 +764,16 @@ fn strip_zorder_by(sql: &str) -> (String, Vec<String>) {
                 let remaining = &after[i..];
                 let remaining_upper = remaining.to_uppercase();
                 for kw in &[
-                    " FROM ", " WHERE ", " GROUP ", " HAVING ", " ORDER ", " LIMIT ",
-                    " UNION ", " INTERSECT ", " EXCEPT ", ";",
+                    " FROM ",
+                    " WHERE ",
+                    " GROUP ",
+                    " HAVING ",
+                    " ORDER ",
+                    " LIMIT ",
+                    " UNION ",
+                    " INTERSECT ",
+                    " EXCEPT ",
+                    ";",
                 ] {
                     if remaining_upper.starts_with(kw) {
                         end_pos = cap.end() + i;
@@ -831,7 +855,10 @@ impl DialectTranslator for MaxComputeTranslator {
         }
 
         // Step 3: Handle CREATE TABLE transformations
-        if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b").unwrap().is_match(&result) {
+        if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b")
+            .unwrap()
+            .is_match(&result)
+        {
             let (r, w) = process_create_table(&result);
             result = r;
             warnings.extend(w);
@@ -928,7 +955,11 @@ mod tests {
 
     fn assert_error(sql: &str, expected_msg: &str) {
         let result = translator().translate(sql);
-        assert!(!result.success, "Expected error but got success for: {}", sql);
+        assert!(
+            !result.success,
+            "Expected error but got success for: {}",
+            sql
+        );
         assert!(
             result.error.as_ref().unwrap().contains(expected_msg),
             "Error message mismatch.\nExpected contains: {}\nGot: {:?}",
@@ -995,9 +1026,8 @@ mod tests {
 
     #[test]
     fn test_create_table_partitioned_by() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING)",
-        );
+        let result =
+            translator().translate("CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING)");
         assert!(result.success, "Failed: {:?}", result.error);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING, dt STRING)");
         assert!(result.warnings.iter().any(|w| w.contains("PARTITIONED BY")));
@@ -1005,18 +1035,19 @@ mod tests {
 
     #[test]
     fn test_create_table_partitioned_by_multiple_cols() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING, hh STRING)",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING, hh STRING)");
         assert!(result.success);
-        assert_eq!(result.sql, "CREATE TABLE t (col1 STRING, dt STRING, hh STRING)");
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE t (col1 STRING, dt STRING, hh STRING)"
+        );
     }
 
     #[test]
     fn test_create_table_partitioned_by_only() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING)",
-        );
+        let result =
+            translator().translate("CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING)");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING, dt STRING)");
     }
@@ -1025,9 +1056,7 @@ mod tests {
 
     #[test]
     fn test_create_table_lifecycle() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) LIFECYCLE 365",
-        );
+        let result = translator().translate("CREATE TABLE t (col1 STRING) LIFECYCLE 365");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
         assert!(
@@ -1041,9 +1070,7 @@ mod tests {
 
     #[test]
     fn test_create_table_stored_as() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) STORED AS ORC",
-        );
+        let result = translator().translate("CREATE TABLE t (col1 STRING) STORED AS ORC");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
         assert!(
@@ -1055,9 +1082,7 @@ mod tests {
 
     #[test]
     fn test_create_table_stored_as_parquet() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) STORED AS PARQUET",
-        );
+        let result = translator().translate("CREATE TABLE t (col1 STRING) STORED AS PARQUET");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
     }
@@ -1066,9 +1091,8 @@ mod tests {
 
     #[test]
     fn test_create_table_clustered_by() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) CLUSTERED BY (col1) INTO 256 BUCKETS",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (col1 STRING) CLUSTERED BY (col1) INTO 256 BUCKETS");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
         assert!(
@@ -1082,9 +1106,8 @@ mod tests {
 
     #[test]
     fn test_create_table_tblproperties() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) TBLPROPERTIES ('key'='value')",
-        );
+        let result =
+            translator().translate("CREATE TABLE t (col1 STRING) TBLPROPERTIES ('key'='value')");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
         assert!(
@@ -1096,9 +1119,8 @@ mod tests {
 
     #[test]
     fn test_create_table_tblproperties_nested_parens() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) TBLPROPERTIES ('k'='(v)')",
-        );
+        let result =
+            translator().translate("CREATE TABLE t (col1 STRING) TBLPROPERTIES ('k'='(v)')");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
     }
@@ -1113,7 +1135,10 @@ mod tests {
              TBLPROPERTIES ('k'='v')",
         );
         assert!(result.success);
-        assert_eq!(result.sql, "CREATE TABLE t (col1 STRING, col2 BIGINT, dt STRING)");
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE t (col1 STRING, col2 BIGINT, dt STRING)"
+        );
         assert!(
             result.warnings.len() >= 4,
             "Expected at least 4 warnings, got {}: {:?}",
@@ -1145,13 +1170,14 @@ mod tests {
 
     #[test]
     fn test_insert_overwrite_table() {
-        let result = translator().translate(
-            "INSERT OVERWRITE TABLE t VALUES (1, 'a')",
-        );
+        let result = translator().translate("INSERT OVERWRITE TABLE t VALUES (1, 'a')");
         assert!(result.success);
         assert_eq!(result.sql, "INSERT INTO TABLE t VALUES (1, 'a')");
         assert!(
-            result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("INSERT OVERWRITE")),
             "Expected warning about INSERT OVERWRITE, got: {:?}",
             result.warnings
         );
@@ -1159,9 +1185,7 @@ mod tests {
 
     #[test]
     fn test_insert_overwrite_select() {
-        let result = translator().translate(
-            "INSERT OVERWRITE TABLE t SELECT * FROM src",
-        );
+        let result = translator().translate("INSERT OVERWRITE TABLE t SELECT * FROM src");
         assert!(result.success);
         assert_eq!(result.sql, "INSERT INTO TABLE t SELECT * FROM src");
     }
@@ -1170,9 +1194,7 @@ mod tests {
 
     #[test]
     fn test_insert_into_partition() {
-        let result = translator().translate(
-            "INSERT INTO TABLE t PARTITION (ds='2024') VALUES (1)",
-        );
+        let result = translator().translate("INSERT INTO TABLE t PARTITION (ds='2024') VALUES (1)");
         assert!(result.success);
         assert_eq!(result.sql, "INSERT INTO TABLE t VALUES (1)");
         assert!(
@@ -1184,14 +1206,10 @@ mod tests {
 
     #[test]
     fn test_insert_overwrite_partition_select() {
-        let result = translator().translate(
-            "INSERT OVERWRITE TABLE t PARTITION (ds='2024') SELECT * FROM src",
-        );
+        let result = translator()
+            .translate("INSERT OVERWRITE TABLE t PARTITION (ds='2024') SELECT * FROM src");
         assert!(result.success);
-        assert_eq!(
-            result.sql,
-            "INSERT INTO TABLE t SELECT * FROM src"
-        );
+        assert_eq!(result.sql, "INSERT INTO TABLE t SELECT * FROM src");
     }
 
     // ── MERGE INTO (passthrough) ──
@@ -1201,7 +1219,11 @@ mod tests {
         let result = translator().translate(
             "MERGE INTO target USING source ON target.id = source.id WHEN MATCHED THEN UPDATE SET target.val = source.val",
         );
-        assert!(result.success, "MERGE INTO should pass through, got error: {:?}", result.error);
+        assert!(
+            result.success,
+            "MERGE INTO should pass through, got error: {:?}",
+            result.error
+        );
         // The MERGE INTO should be preserved for DataFusion to try
         assert!(result.sql.contains("MERGE INTO"));
         assert!(result.sql.contains("WHEN MATCHED"));
@@ -1211,9 +1233,8 @@ mod tests {
 
     #[test]
     fn test_select_mapjoin_hint() {
-        let result = translator().translate(
-            "SELECT /*+ MAPJOIN(b) */ a.* FROM t a JOIN small b ON a.id = b.id",
-        );
+        let result = translator()
+            .translate("SELECT /*+ MAPJOIN(b) */ a.* FROM t a JOIN small b ON a.id = b.id");
         assert!(result.success);
         assert!(!result.sql.contains("MAPJOIN"));
         assert!(
@@ -1225,18 +1246,14 @@ mod tests {
 
     #[test]
     fn test_select_skewjoin_hint() {
-        let result = translator().translate(
-            "SELECT /*+ SKEWJOIN(a) */ * FROM t a",
-        );
+        let result = translator().translate("SELECT /*+ SKEWJOIN(a) */ * FROM t a");
         assert!(result.success);
         assert!(!result.sql.contains("SKEWJOIN"));
     }
 
     #[test]
     fn test_select_multiple_hints() {
-        let result = translator().translate(
-            "SELECT /*+ MAPJOIN(a) SKEWJOIN(b) */ * FROM t",
-        );
+        let result = translator().translate("SELECT /*+ MAPJOIN(a) SKEWJOIN(b) */ * FROM t");
         assert!(result.success);
         assert!(!result.sql.contains("MAPJOIN") && !result.sql.contains("SKEWJOIN"));
     }
@@ -1245,9 +1262,7 @@ mod tests {
 
     #[test]
     fn test_distribute_by_sort_by() {
-        let result = translator().translate(
-            "SELECT * FROM t DISTRIBUTE BY col1 SORT BY col2",
-        );
+        let result = translator().translate("SELECT * FROM t DISTRIBUTE BY col1 SORT BY col2");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t ORDER BY col2");
         assert!(
@@ -1259,9 +1274,8 @@ mod tests {
 
     #[test]
     fn test_sort_by_with_clause() {
-        let result = translator().translate(
-            "SELECT * FROM t DISTRIBUTE BY col1 SORT BY col2 DESC LIMIT 10",
-        );
+        let result =
+            translator().translate("SELECT * FROM t DISTRIBUTE BY col1 SORT BY col2 DESC LIMIT 10");
         assert!(result.success);
         assert!(result.sql.contains("ORDER BY col2 DESC LIMIT 10"));
     }
@@ -1270,9 +1284,7 @@ mod tests {
 
     #[test]
     fn test_cluster_by_to_order_by() {
-        let result = translator().translate(
-            "SELECT * FROM t CLUSTER BY col1",
-        );
+        let result = translator().translate("SELECT * FROM t CLUSTER BY col1");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t ORDER BY col1");
         assert!(
@@ -1284,18 +1296,14 @@ mod tests {
 
     #[test]
     fn test_cluster_by_multiple_cols() {
-        let result = translator().translate(
-            "SELECT * FROM t CLUSTER BY col1, col2",
-        );
+        let result = translator().translate("SELECT * FROM t CLUSTER BY col1, col2");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t ORDER BY col1, col2");
     }
 
     #[test]
     fn test_cluster_by_with_clause() {
-        let result = translator().translate(
-            "SELECT * FROM t CLUSTER BY col1 LIMIT 10",
-        );
+        let result = translator().translate("SELECT * FROM t CLUSTER BY col1 LIMIT 10");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t ORDER BY col1 LIMIT 10");
     }
@@ -1304,9 +1312,7 @@ mod tests {
 
     #[test]
     fn test_zorder_by_stripped() {
-        let result = translator().translate(
-            "SELECT * FROM t ZORDER BY (col1, col2)",
-        );
+        let result = translator().translate("SELECT * FROM t ZORDER BY (col1, col2)");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t");
         assert!(
@@ -1318,18 +1324,14 @@ mod tests {
 
     #[test]
     fn test_zorder_by_simple() {
-        let result = translator().translate(
-            "SELECT * FROM t ZORDER BY col1",
-        );
+        let result = translator().translate("SELECT * FROM t ZORDER BY col1");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t");
     }
 
     #[test]
     fn test_zorder_by_with_select() {
-        let result = translator().translate(
-            "SELECT * FROM t ZORDER BY (a, b) LIMIT 10",
-        );
+        let result = translator().translate("SELECT * FROM t ZORDER BY (a, b) LIMIT 10");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t LIMIT 10");
     }
@@ -1410,18 +1412,15 @@ mod tests {
 
     #[test]
     fn test_create_table_like() {
-        let result = translator().translate(
-            "CREATE TABLE new_table LIKE existing_table",
-        );
+        let result = translator().translate("CREATE TABLE new_table LIKE existing_table");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE new_table LIKE existing_table");
     }
 
     #[test]
     fn test_create_table_like_with_suffixes() {
-        let result = translator().translate(
-            "CREATE TABLE new_table LIKE existing_table LIFECYCLE 30 STORED AS PARQUET",
-        );
+        let result = translator()
+            .translate("CREATE TABLE new_table LIKE existing_table LIFECYCLE 30 STORED AS PARQUET");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE new_table LIKE existing_table");
         assert!(
@@ -1440,16 +1439,17 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS new_table LIKE existing_table TBLPROPERTIES ('k'='v')",
         );
         assert!(result.success);
-        assert_eq!(result.sql, "CREATE TABLE IF NOT EXISTS new_table LIKE existing_table");
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE IF NOT EXISTS new_table LIKE existing_table"
+        );
     }
 
     // ── CREATE TABLE AS SELECT (CTAS) ──
 
     #[test]
     fn test_create_table_as_select() {
-        let result = translator().translate(
-            "CREATE TABLE new_table AS SELECT * FROM src",
-        );
+        let result = translator().translate("CREATE TABLE new_table AS SELECT * FROM src");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE new_table AS SELECT * FROM src");
     }
@@ -1468,9 +1468,8 @@ mod tests {
 
     #[test]
     fn test_ctas_with_mc_clauses() {
-        let result = translator().translate(
-            "CREATE TABLE new_table AS SELECT * FROM src LIFECYCLE 90 STORED AS ORC",
-        );
+        let result = translator()
+            .translate("CREATE TABLE new_table AS SELECT * FROM src LIFECYCLE 90 STORED AS ORC");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE new_table AS SELECT * FROM src");
         assert!(
@@ -1486,9 +1485,8 @@ mod tests {
     #[test]
     fn test_ctas_with_subquery_parens() {
         // CTAS with parenthesized subquery should not confuse column def detection
-        let result = translator().translate(
-            "CREATE TABLE t AS SELECT * FROM (SELECT * FROM src WHERE active = 1) sub",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t AS SELECT * FROM (SELECT * FROM src WHERE active = 1) sub");
         assert!(result.success);
         assert_eq!(
             result.sql,
@@ -1554,10 +1552,7 @@ mod tests {
     #[test]
     fn test_delete_passthrough() {
         // DELETE now passes through (RorisDB supports it)
-        assert_translated(
-            "DELETE FROM t WHERE id = 1",
-            "DELETE FROM t WHERE id = 1",
-        );
+        assert_translated("DELETE FROM t WHERE id = 1", "DELETE FROM t WHERE id = 1");
     }
 
     #[test]
@@ -1602,28 +1597,34 @@ mod tests {
 
     #[test]
     fn test_create_table_complex_types_passthrough() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 ARRAY<STRING>)",
+        let result = translator().translate("CREATE TABLE t (col1 ARRAY<STRING>)");
+        assert!(
+            result.success,
+            "Complex types should pass through, got error: {:?}",
+            result.error
         );
-        assert!(result.success, "Complex types should pass through, got error: {:?}", result.error);
         assert!(result.sql.contains("ARRAY<STRING>"));
     }
 
     #[test]
     fn test_create_table_map_type_passthrough() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 MAP<STRING, BIGINT>)",
+        let result = translator().translate("CREATE TABLE t (col1 MAP<STRING, BIGINT>)");
+        assert!(
+            result.success,
+            "MAP type should pass through, got error: {:?}",
+            result.error
         );
-        assert!(result.success, "MAP type should pass through, got error: {:?}", result.error);
         assert!(result.sql.contains("MAP<STRING, BIGINT>"));
     }
 
     #[test]
     fn test_create_table_struct_type_passthrough() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRUCT<a:STRING, b:BIGINT>)",
+        let result = translator().translate("CREATE TABLE t (col1 STRUCT<a:STRING, b:BIGINT>)");
+        assert!(
+            result.success,
+            "STRUCT type should pass through, got error: {:?}",
+            result.error
         );
-        assert!(result.success, "STRUCT type should pass through, got error: {:?}", result.error);
         assert!(result.sql.contains("STRUCT<a:STRING, b:BIGINT>"));
     }
 
@@ -1631,10 +1632,13 @@ mod tests {
 
     #[test]
     fn test_lateral_view_explode_single() {
-        let result = translator().translate(
-            "SELECT a, b FROM t LATERAL VIEW explode(col) tmp AS alias",
+        let result =
+            translator().translate("SELECT a, b FROM t LATERAL VIEW explode(col) tmp AS alias");
+        assert!(
+            result.success,
+            "LATERAL VIEW should translate, got error: {:?}",
+            result.error
         );
-        assert!(result.success, "LATERAL VIEW should translate, got error: {:?}", result.error);
         assert_eq!(
             result.sql,
             "SELECT a, b FROM t CROSS JOIN UNNEST(col) AS tmp(alias)"
@@ -1651,7 +1655,11 @@ mod tests {
         let result = translator().translate(
             "SELECT * FROM t LATERAL VIEW explode(col1) t1 AS c1 LATERAL VIEW explode(col2) t2 AS c2",
         );
-        assert!(result.success, "Multiple LATERAL VIEW should translate, got error: {:?}", result.error);
+        assert!(
+            result.success,
+            "Multiple LATERAL VIEW should translate, got error: {:?}",
+            result.error
+        );
         assert_eq!(
             result.sql,
             "SELECT * FROM t CROSS JOIN UNNEST(col1) AS t1(c1) CROSS JOIN UNNEST(col2) AS t2(c2)"
@@ -1665,10 +1673,13 @@ mod tests {
 
     #[test]
     fn test_lateral_view_explode_complex_expr() {
-        let result = translator().translate(
-            "SELECT * FROM t LATERAL VIEW EXPLODE(SPLIT(col, ',')) tmp AS part",
+        let result = translator()
+            .translate("SELECT * FROM t LATERAL VIEW EXPLODE(SPLIT(col, ',')) tmp AS part");
+        assert!(
+            result.success,
+            "LATERAL VIEW with complex expr should translate, got error: {:?}",
+            result.error
         );
-        assert!(result.success, "LATERAL VIEW with complex expr should translate, got error: {:?}", result.error);
         assert_eq!(
             result.sql,
             "SELECT * FROM t CROSS JOIN UNNEST(SPLIT(col, ',')) AS tmp(part)"
@@ -1677,10 +1688,13 @@ mod tests {
 
     #[test]
     fn test_lateral_view_explode_with_where() {
-        let result = translator().translate(
-            "SELECT * FROM t LATERAL VIEW EXPLODE(col) tmp AS alias WHERE alias > 0",
+        let result = translator()
+            .translate("SELECT * FROM t LATERAL VIEW EXPLODE(col) tmp AS alias WHERE alias > 0");
+        assert!(
+            result.success,
+            "LATERAL VIEW with WHERE should translate, got error: {:?}",
+            result.error
         );
-        assert!(result.success, "LATERAL VIEW with WHERE should translate, got error: {:?}", result.error);
         assert_eq!(
             result.sql,
             "SELECT * FROM t CROSS JOIN UNNEST(col) AS tmp(alias) WHERE alias > 0"
@@ -1689,10 +1703,13 @@ mod tests {
 
     #[test]
     fn test_lateral_view_explode_case_insensitive() {
-        let result = translator().translate(
-            "select * from t lateral view explode(col) tmp as alias",
+        let result =
+            translator().translate("select * from t lateral view explode(col) tmp as alias");
+        assert!(
+            result.success,
+            "Case-insensitive LATERAL VIEW should translate, got error: {:?}",
+            result.error
         );
-        assert!(result.success, "Case-insensitive LATERAL VIEW should translate, got error: {:?}", result.error);
         assert_eq!(
             result.sql,
             "select * from t CROSS JOIN UNNEST(col) AS tmp(alias)"
@@ -1720,9 +1737,8 @@ mod tests {
 
     #[test]
     fn test_string_n_to_varchar_partitioned() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING(10)) PARTITIONED BY (dt STRING(8))",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (col1 STRING(10)) PARTITIONED BY (dt STRING(8))");
         assert!(result.success);
         assert_eq!(
             result.sql,
@@ -1732,7 +1748,10 @@ mod tests {
 
     #[test]
     fn test_bigint_no_change() {
-        assert_translated("CREATE TABLE t (col1 BIGINT)", "CREATE TABLE t (col1 BIGINT)");
+        assert_translated(
+            "CREATE TABLE t (col1 BIGINT)",
+            "CREATE TABLE t (col1 BIGINT)",
+        );
     }
 
     #[test]
@@ -1747,27 +1766,22 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_create() {
-        let result = translator().translate(
-            "create table t (col1 string) partitioned by (dt string) lifecycle 365",
-        );
+        let result = translator()
+            .translate("create table t (col1 string) partitioned by (dt string) lifecycle 365");
         assert!(result.success);
         assert_eq!(result.sql, "create table t (col1 string, dt string)");
     }
 
     #[test]
     fn test_case_insensitive_insert_overwrite() {
-        let result = translator().translate(
-            "insert OVERWRITE table t values (1)",
-        );
+        let result = translator().translate("insert OVERWRITE table t values (1)");
         assert!(result.success);
         assert_eq!(result.sql, "insert INTO table t values (1)");
     }
 
     #[test]
     fn test_case_insensitive_hints() {
-        let result = translator().translate(
-            "SELECT /*+ mapjoin(a) */ * FROM t",
-        );
+        let result = translator().translate("SELECT /*+ mapjoin(a) */ * FROM t");
         assert!(result.success);
         assert!(!result.sql.contains("mapjoin"));
     }
@@ -1843,9 +1857,8 @@ mod tests {
     #[test]
     fn test_create_table_with_nested_parens_in_tblproperties() {
         // TBLPROPERTIES with nested parentheses values
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) TBLPROPERTIES ('k'='(nested)') LIFECYCLE 30",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (col1 STRING) TBLPROPERTIES ('k'='(nested)') LIFECYCLE 30");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
     }
@@ -1878,9 +1891,7 @@ mod tests {
     #[test]
     fn test_partitioned_by_no_columns() {
         // Edge case: PARTITIONED BY with no columns shouldn't crash
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) PARTITIONED BY ()",
-        );
+        let result = translator().translate("CREATE TABLE t (col1 STRING) PARTITIONED BY ()");
         assert!(result.success);
         // Should just strip the PARTITIONED BY clause
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING)");
@@ -1889,9 +1900,8 @@ mod tests {
     #[test]
     fn test_create_table_partitioned_by_with_comment() {
         // PARTITIONED BY with COMMENT on partition columns
-        let result = translator().translate(
-            "CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING COMMENT 'date')",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (col1 STRING) PARTITIONED BY (dt STRING COMMENT 'date')");
         assert!(result.success);
         assert_eq!(
             result.sql,
@@ -1911,18 +1921,14 @@ mod tests {
     #[test]
     fn test_insert_overwrite_without_table_keyword() {
         // Some MaxCompute syntax: INSERT OVERWRITE t SELECT ...
-        let result = translator().translate(
-            "INSERT OVERWRITE t SELECT * FROM src",
-        );
+        let result = translator().translate("INSERT OVERWRITE t SELECT * FROM src");
         assert!(result.success);
         assert_eq!(result.sql, "INSERT INTO t SELECT * FROM src");
     }
 
     #[test]
     fn test_string_trailing_spaces_in_hints() {
-        let result = translator().translate(
-            "SELECT /*+ MAPJOIN(a)  */ * FROM t",
-        );
+        let result = translator().translate("SELECT /*+ MAPJOIN(a)  */ * FROM t");
         assert!(result.success);
         assert!(!result.sql.contains("MAPJOIN"));
     }
@@ -1953,9 +1959,8 @@ mod tests {
 
     #[test]
     fn test_create_table_lifecycle_and_tblproperties() {
-        let result = translator().translate(
-            "CREATE TABLE t (id BIGINT) LIFECYCLE 90 TBLPROPERTIES ('abc'='def')",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (id BIGINT) LIFECYCLE 90 TBLPROPERTIES ('abc'='def')");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (id BIGINT)");
     }
@@ -1972,13 +1977,21 @@ mod tests {
     #[test]
     fn test_select_transform_using_noop() {
         // SELECT TRANSFORM USING is now a no-op (accepted but not executed)
-        let result = translator().translate(
-            "SELECT TRANSFORM(col1, col2) USING 'python script.py' FROM t",
-        );
-        assert!(result.success, "SELECT TRANSFORM USING should succeed as no-op");
-        assert_eq!(result.sql, "", "SELECT TRANSFORM USING should return empty SQL");
+        let result =
+            translator().translate("SELECT TRANSFORM(col1, col2) USING 'python script.py' FROM t");
         assert!(
-            result.warnings.iter().any(|w| w.contains("SELECT TRANSFORM USING")),
+            result.success,
+            "SELECT TRANSFORM USING should succeed as no-op"
+        );
+        assert_eq!(
+            result.sql, "",
+            "SELECT TRANSFORM USING should return empty SQL"
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("SELECT TRANSFORM USING")),
             "Expected warning about SELECT TRANSFORM USING, got: {:?}",
             result.warnings
         );
@@ -2038,19 +2051,20 @@ mod tests {
 
     #[test]
     fn test_sql_comment_before_column_defs() {
-        let result = translator().translate(
-            "CREATE TABLE t /* block comment */ (col1 STRING) LIFECYCLE 30",
-        );
+        let result =
+            translator().translate("CREATE TABLE t /* block comment */ (col1 STRING) LIFECYCLE 30");
         assert!(result.success);
         // Comments are preserved in output
-        assert_eq!(result.sql, "CREATE TABLE t /* block comment */ (col1 STRING)");
+        assert_eq!(
+            result.sql,
+            "CREATE TABLE t /* block comment */ (col1 STRING)"
+        );
     }
 
     #[test]
     fn test_sql_line_comment_before_column_defs() {
-        let result = translator().translate(
-            "CREATE TABLE t -- line comment\n(col1 STRING) LIFECYCLE 30",
-        );
+        let result =
+            translator().translate("CREATE TABLE t -- line comment\n(col1 STRING) LIFECYCLE 30");
         assert!(result.success);
         // Line comments are preserved in output
         assert_eq!(result.sql, "CREATE TABLE t -- line comment\n(col1 STRING)");
@@ -2059,9 +2073,8 @@ mod tests {
     #[test]
     fn test_distribute_sort_with_subquery_in_columns() {
         // DISTRIBUTE BY + SORT BY with a subquery in the SORT columns
-        let result = translator().translate(
-            "SELECT * FROM t DISTRIBUTE BY col1 SORT BY (SELECT MAX(x) FROM y)",
-        );
+        let result = translator()
+            .translate("SELECT * FROM t DISTRIBUTE BY col1 SORT BY (SELECT MAX(x) FROM y)");
         assert!(result.success);
         assert!(result.sql.contains("ORDER BY"));
         assert!(result.sql.contains("(SELECT MAX(x) FROM y)"));
@@ -2070,9 +2083,7 @@ mod tests {
     #[test]
     fn test_string_literal_masking_type_mapping() {
         // STRING inside a string literal should not be translated to VARCHAR
-        let result = translator().translate(
-            "SELECT * FROM t WHERE col1 = 'STRING(10)'",
-        );
+        let result = translator().translate("SELECT * FROM t WHERE col1 = 'STRING(10)'");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t WHERE col1 = 'STRING(10)'");
     }
@@ -2080,9 +2091,8 @@ mod tests {
     #[test]
     fn test_stored_as_inside_string_literal_not_stripped() {
         // STORED AS inside a string literal must NOT be stripped
-        let result = translator().translate(
-            "INSERT INTO t VALUES (1, 'this should STORED AS is fine')",
-        );
+        let result =
+            translator().translate("INSERT INTO t VALUES (1, 'this should STORED AS is fine')");
         assert!(result.success);
         assert_eq!(
             result.sql,
@@ -2128,7 +2138,10 @@ mod tests {
             "INSERT INTO TABLE t SELECT a, b, c FROM (SELECT x.id, x.name, y.val FROM x JOIN y ON x.id = y.id WHERE x.active = 1) sub"
         );
         assert!(
-            result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("INSERT OVERWRITE")),
             "Expected warning about INSERT OVERWRITE, got: {:?}",
             result.warnings
         );
@@ -2149,8 +2162,7 @@ mod tests {
         let result2 = translator().translate("SET odps.sql.allow.fullscan");
         assert!(result2.success);
         assert_eq!(
-            result2.sql,
-            "SET odps.sql.allow.fullscan",
+            result2.sql, "SET odps.sql.allow.fullscan",
             "SET without value should pass through as SET statement"
         );
     }
@@ -2215,7 +2227,10 @@ mod tests {
                  WHERE ds = '2024-01-01'"
             );
             assert!(
-                result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("INSERT OVERWRITE")),
                 "Expected warning about INSERT OVERWRITE, got: {:?}",
                 result.warnings
             );
@@ -2240,9 +2255,15 @@ mod tests {
                  SORT BY a.event_time DESC",
             );
             assert!(result.success, "Failed: {:?}", result.error);
-            assert!(!result.sql.contains("MAPJOIN"), "MAPJOIN hint should be stripped");
+            assert!(
+                !result.sql.contains("MAPJOIN"),
+                "MAPJOIN hint should be stripped"
+            );
             assert!(result.sql.contains("ORDER BY"), "Should contain ORDER BY");
-            assert!(result.sql.contains("a.event_time DESC"), "Should preserve sort column and direction");
+            assert!(
+                result.sql.contains("a.event_time DESC"),
+                "Should preserve sort column and direction"
+            );
             assert!(
                 result.warnings.iter().any(|w| w.contains("MAPJOIN")),
                 "Expected warning about MAPJOIN hint, got: {:?}",
@@ -2273,10 +2294,7 @@ mod tests {
             {
                 let result = translator().translate("SET odps.sql.allow.fullscan=true;");
                 assert!(result.success, "SET should be no-op");
-                assert!(
-                    result.sql.is_empty(),
-                    "SET should produce empty SQL"
-                );
+                assert!(result.sql.is_empty(), "SET should produce empty SQL");
             }
 
             // Step 2: CREATE TABLE with PARTITIONED BY and LIFECYCLE
@@ -2321,7 +2339,10 @@ mod tests {
                      SELECT id, name, created_at FROM raw_source WHERE ds = '2024-06-01'"
                 );
                 assert!(
-                    result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
+                    result
+                        .warnings
+                        .iter()
+                        .any(|w| w.contains("INSERT OVERWRITE")),
                     "Expected INSERT OVERWRITE warning"
                 );
                 assert!(

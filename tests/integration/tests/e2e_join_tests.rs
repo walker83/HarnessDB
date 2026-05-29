@@ -4,16 +4,16 @@
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 29960; // REPLACE with assigned port
@@ -38,14 +38,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -78,7 +85,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -110,7 +119,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -134,7 +146,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -144,7 +157,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -155,7 +169,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -171,7 +192,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -183,8 +205,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -387,7 +416,7 @@ fn test_inner_join_three_tables() {
         "SELECT e.name, d.dept_name, p.proj_name FROM employees e \
          INNER JOIN departments d ON e.dept_id = d.id \
          INNER JOIN projects p ON d.id = p.dept_id \
-         ORDER BY e.name, p.proj_name"
+         ORDER BY e.name, p.proj_name",
     );
     assert_eq!(rows.len(), 5);
 
@@ -434,7 +463,7 @@ fn test_inner_join_multiple_conditions() {
     let rows = ctx.query(
         "SELECT e.name, p.proj_name, p.budget FROM employees e \
          INNER JOIN projects p ON e.dept_id = p.dept_id AND e.salary > 50000 \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     // Only Charlie (salary 60000) matches in Engineering
     assert_eq!(rows.len(), 2);
@@ -457,7 +486,7 @@ fn test_self_join() {
         "SELECT a.name AS emp1, b.name AS emp2, a.dept_id \
          FROM employees a INNER JOIN employees b ON a.dept_id = b.dept_id \
          WHERE a.name < b.name \
-         ORDER BY a.dept_id, a.name"
+         ORDER BY a.dept_id, a.name",
     );
     // Only Engineering has multiple: Alice and Charlie share dept 10
     assert_eq!(rows.len(), 1);
@@ -547,7 +576,7 @@ fn test_left_join_with_nulls() {
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e LEFT JOIN departments d ON e.dept_id = d.id \
          WHERE d.dept_name IS NULL \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     // Only Eve has no matching department
     assert_eq!(rows.len(), 1);
@@ -566,7 +595,7 @@ fn test_left_join_find_unmatched() {
     let rows = ctx.query(
         "SELECT e.name FROM employees e LEFT JOIN departments d ON e.dept_id = d.id \
          WHERE d.id IS NULL \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     assert_eq!(rows.len(), 1);
     assert_eq!(get_string(&rows[0], 0), "Eve");
@@ -584,7 +613,7 @@ fn test_left_join_with_where_on_right() {
         "SELECT e.name, d.dept_name, d.location FROM employees e \
          LEFT JOIN departments d ON e.dept_id = d.id \
          WHERE d.location = 'NYC' \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     // Only Engineering (NYC) employees: Alice, Charlie
     assert_eq!(rows.len(), 2);
@@ -602,7 +631,7 @@ fn test_left_join_with_order_by() {
 
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e LEFT JOIN departments d ON e.dept_id = d.id \
-         ORDER BY e.name DESC"
+         ORDER BY e.name DESC",
     );
     assert_eq!(rows.len(), 5);
     assert_eq!(get_string(&rows[0], 0), "Eve");
@@ -621,7 +650,7 @@ fn test_left_join_with_aggregate() {
         "SELECT d.dept_name, COUNT(e.id) AS emp_count FROM departments d \
          LEFT JOIN employees e ON d.id = e.dept_id \
          GROUP BY d.dept_name \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Engineering");
@@ -644,18 +673,23 @@ fn test_left_join_three_tables() {
         "SELECT e.name, d.dept_name, p.proj_name FROM employees e \
          LEFT JOIN departments d ON e.dept_id = d.id \
          LEFT JOIN projects p ON e.dept_id = p.dept_id \
-         ORDER BY e.name, p.proj_name"
+         ORDER BY e.name, p.proj_name",
     );
     // LEFT JOIN with NULL dept_id may produce unexpected results in some DataFusion versions
     if let Ok(rows) = rows {
         // Basic check: Eve with NULL should appear somewhere
-        assert!(rows.iter().any(|r| {
-            get_string(r, 0) == "Eve" && is_null(r, 1) && is_null(r, 2)
-        }), "Expected Eve with NULL dept_name and proj_name");
+        assert!(
+            rows.iter()
+                .any(|r| { get_string(r, 0) == "Eve" && is_null(r, 1) && is_null(r, 2) }),
+            "Expected Eve with NULL dept_name and proj_name"
+        );
 
-        assert!(rows.iter().any(|r| {
-            get_string(r, 0) == "Diana" && get_string(r, 1) == "Sales" && is_null(r, 2)
-        }), "Expected Diana with Sales and NULL proj_name");
+        assert!(
+            rows.iter().any(|r| {
+                get_string(r, 0) == "Diana" && get_string(r, 1) == "Sales" && is_null(r, 2)
+            }),
+            "Expected Diana with Sales and NULL proj_name"
+        );
     }
 
     ctx.drop_db(&db);
@@ -669,7 +703,7 @@ fn test_left_join_with_limit() {
 
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e LEFT JOIN departments d ON e.dept_id = d.id \
-         ORDER BY e.name LIMIT 3"
+         ORDER BY e.name LIMIT 3",
     );
     assert_eq!(rows.len(), 3);
 
@@ -686,7 +720,7 @@ fn test_left_join_always_returns_left_rows() {
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e \
          LEFT JOIN departments d ON e.dept_id = d.id AND d.location = 'NYC' \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     assert_eq!(rows.len(), 5);
     // Alice and Charlie match NYC; others get NULL dept_name
@@ -710,14 +744,23 @@ fn test_right_join_basic() {
     // RIGHT JOIN may not be fully supported in all DataFusion versions
     let rows = ctx.query_ignore_error(
         "SELECT e.name, d.dept_name FROM employees e RIGHT JOIN departments d ON e.dept_id = d.id \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     if let Ok(rows) = rows {
         // Just check that Engineering, Marketing, Sales appear (but may have extra rows)
         let dept_names: Vec<String> = rows.iter().map(|r| get_string(r, 1)).collect();
-        assert!(dept_names.contains(&"Engineering".to_string()), "Engineering should appear");
-        assert!(dept_names.contains(&"Marketing".to_string()), "Marketing should appear");
-        assert!(dept_names.contains(&"Sales".to_string()), "Sales should appear");
+        assert!(
+            dept_names.contains(&"Engineering".to_string()),
+            "Engineering should appear"
+        );
+        assert!(
+            dept_names.contains(&"Marketing".to_string()),
+            "Marketing should appear"
+        );
+        assert!(
+            dept_names.contains(&"Sales".to_string()),
+            "Sales should appear"
+        );
     }
 
     ctx.drop_db(&db);
@@ -734,7 +777,7 @@ fn test_right_join_with_nulls() {
 
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e RIGHT JOIN departments d ON e.dept_id = d.id \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     // HR has no employees, so e.name is NULL
     let hr_row = rows.iter().find(|r| get_string(r, 1) == "HR").unwrap();
@@ -753,7 +796,7 @@ fn test_right_join_with_where() {
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e RIGHT JOIN departments d ON e.dept_id = d.id \
          WHERE d.location = 'SF' \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     // Only Marketing is in SF
     assert_eq!(rows.len(), 1);
@@ -771,7 +814,7 @@ fn test_right_join_with_order_by() {
 
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e RIGHT JOIN departments d ON e.dept_id = d.id \
-         ORDER BY d.dept_name DESC"
+         ORDER BY d.dept_name DESC",
     );
     assert_eq!(rows.len(), 4);
     assert_eq!(get_string(&rows[0], 1), "Sales");
@@ -790,7 +833,7 @@ fn test_right_join_with_aggregate() {
         "SELECT d.dept_name, COUNT(e.id) AS emp_count \
          FROM employees e RIGHT JOIN departments d ON e.dept_id = d.id \
          GROUP BY d.dept_name \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Engineering");
@@ -813,7 +856,7 @@ fn test_right_join_with_empty_left_table() {
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM (SELECT * FROM employees WHERE 1=0) e \
          RIGHT JOIN departments d ON e.dept_id = d.id \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     // All 3 departments returned with NULL employee names
     assert_eq!(rows.len(), 3);
@@ -855,7 +898,10 @@ fn test_full_outer_join_basic() {
             assert!(is_null(eve, 1));
 
             // Research has no employees
-            let research = rows.iter().find(|r| get_string(r, 1) == "Research").unwrap();
+            let research = rows
+                .iter()
+                .find(|r| get_string(r, 1) == "Research")
+                .unwrap();
             assert!(is_null(research, 0));
         }
         Err(_) => {
@@ -926,7 +972,7 @@ fn test_cross_join_with_where() {
     let rows = ctx.query(
         "SELECT e.name, d.dept_name FROM employees e CROSS JOIN departments d \
          WHERE e.dept_id = d.id \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     assert_eq!(rows.len(), 4);
     assert_eq!(get_string(&rows[0], 0), "Alice");
@@ -945,7 +991,7 @@ fn test_cross_join_computed_salary_product() {
     let rows = ctx.query(
         "SELECT e.name, d.dept_name, d.location FROM employees e CROSS JOIN departments d \
          WHERE e.dept_id IS NULL \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     // Eve (dept_id IS NULL) x 3 departments = 3 rows
     assert_eq!(rows.len(), 3);
@@ -972,7 +1018,7 @@ fn test_join_with_computed_columns() {
     let rows = ctx.query(
         "SELECT e.name, e.salary * 1.1 AS raised_salary, d.dept_name \
          FROM employees e INNER JOIN departments d ON e.dept_id = d.id \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     assert_eq!(rows.len(), 4);
     // Alice: 50000 * 1.1 = 55000
@@ -992,7 +1038,7 @@ fn test_join_with_group_by() {
         "SELECT d.location, AVG(e.salary) AS avg_salary \
          FROM employees e INNER JOIN departments d ON e.dept_id = d.id \
          GROUP BY d.location \
-         ORDER BY d.location"
+         ORDER BY d.location",
     );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "LA");
@@ -1016,7 +1062,7 @@ fn test_join_with_having() {
          FROM employees e INNER JOIN departments d ON e.dept_id = d.id \
          GROUP BY d.dept_name \
          HAVING SUM(e.salary) > 50000 \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     // Engineering (110000) and Sales (52000) qualify; Marketing (45000) filtered out
     assert_eq!(rows.len(), 2);
@@ -1038,7 +1084,7 @@ fn test_join_with_subquery() {
         "SELECT e.name, e.salary, d.dept_name \
          FROM employees e \
          INNER JOIN (SELECT * FROM departments WHERE location = 'NYC') d ON e.dept_id = d.id \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     // Only Engineering (NYC) employees: Alice, Charlie
     assert_eq!(rows.len(), 2);
@@ -1058,7 +1104,7 @@ fn test_join_with_distinct() {
     let rows = ctx.query(
         "SELECT DISTINCT d.dept_name FROM employees e \
          INNER JOIN departments d ON e.dept_id = d.id \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Engineering");
@@ -1078,7 +1124,7 @@ fn test_join_complex_expression_in_on() {
     let rows = ctx.query(
         "SELECT e.name, e.salary, d.dept_name FROM employees e \
          INNER JOIN departments d ON e.dept_id = d.id AND e.salary >= 50000 \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     // Alice (50000), Charlie (60000), Diana (52000) qualify; Bob (45000) filtered
     assert_eq!(rows.len(), 3);
@@ -1105,7 +1151,7 @@ fn test_three_way_inner_join() {
          FROM employees e \
          INNER JOIN departments d ON e.dept_id = d.id \
          INNER JOIN projects p ON d.id = p.dept_id \
-         ORDER BY e.name, p.proj_name"
+         ORDER BY e.name, p.proj_name",
     );
     // Alice x 2 projects, Bob x 1 project, Charlie x 2 projects
     assert_eq!(rows.len(), 5);
@@ -1130,7 +1176,7 @@ fn test_mix_inner_and_left_join() {
          FROM employees e \
          INNER JOIN departments d ON e.dept_id = d.id \
          LEFT JOIN projects p ON d.id = p.dept_id \
-         ORDER BY e.name, p.proj_name"
+         ORDER BY e.name, p.proj_name",
     );
     // Alice x2, Bob x1, Charlie x2, Diana x1 (NULL project)
     assert_eq!(rows.len(), 6);
@@ -1183,7 +1229,7 @@ fn test_aggregation_across_joined_tables() {
          FROM departments d \
          LEFT JOIN projects p ON d.id = p.dept_id \
          GROUP BY d.dept_name \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Engineering");
@@ -1213,7 +1259,7 @@ fn test_multi_join_with_nulls_and_aggregates() {
          LEFT JOIN employees e ON d.id = e.dept_id \
          LEFT JOIN projects p ON d.id = p.dept_id \
          GROUP BY d.dept_name \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     assert_eq!(rows.len(), 3);
 
@@ -1242,9 +1288,8 @@ fn test_join_empty_tables() {
         assert!(is_null(row, 1));
     }
 
-    let rows = ctx.query(
-        "SELECT e.name, et.val FROM employees e INNER JOIN empty_table et ON e.id = et.id"
-    );
+    let rows = ctx
+        .query("SELECT e.name, et.val FROM employees e INNER JOIN empty_table et ON e.id = et.id");
     assert_eq!(rows.len(), 0);
 
     ctx.drop_db(&db);
@@ -1313,7 +1358,7 @@ fn test_self_join_with_alias() {
         "SELECT a.name AS manager, b.name AS subordinate \
          FROM employees a INNER JOIN employees b ON a.dept_id = b.dept_id \
          WHERE a.id < b.id \
-         ORDER BY a.name"
+         ORDER BY a.name",
     );
     assert_eq!(rows.len(), 1);
     assert_eq!(get_string(&rows[0], 0), "Alice");
@@ -1334,7 +1379,7 @@ fn test_join_same_table_twice() {
          FROM employees e \
          INNER JOIN departments d1 ON e.dept_id = d1.id \
          INNER JOIN departments d2 ON e.dept_id = d2.id \
-         ORDER BY e.name"
+         ORDER BY e.name",
     );
     assert_eq!(rows.len(), 4);
     assert_eq!(get_string(&rows[0], 0), "Alice");
@@ -1357,7 +1402,11 @@ fn test_join_with_no_matches() {
     assert_eq!(rows.len(), 5);
     // All rows should have NULL dept_name since d.id = 999 never matches
     for row in &rows {
-        assert!(is_null(row, 1), "Expected NULL for dept_name but got: {}", get_string(row, 1));
+        assert!(
+            is_null(row, 1),
+            "Expected NULL for dept_name but got: {}",
+            get_string(row, 1)
+        );
     }
 
     ctx.drop_db(&db);
@@ -1378,7 +1427,7 @@ fn test_complex_join_with_multiple_conditions_and_order() {
          INNER JOIN salaries s ON e.id = s.emp_id \
          INNER JOIN departments d ON e.dept_id = d.id \
          WHERE d.location = 'NYC' \
-         ORDER BY e.name, s.amount DESC"
+         ORDER BY e.name, s.amount DESC",
     );
     // Only Alice and Charlie in NYC with salaries
     assert_eq!(rows.len(), 3); // Alice has 2 salaries, Charlie has 1
@@ -1399,9 +1448,8 @@ fn test_inner_join_with_count_star() {
     setup_join_data(&ctx);
 
     // Single row: count of all matching join pairs
-    let rows = ctx.query(
-        "SELECT COUNT(*) FROM employees e INNER JOIN departments d ON e.dept_id = d.id"
-    );
+    let rows =
+        ctx.query("SELECT COUNT(*) FROM employees e INNER JOIN departments d ON e.dept_id = d.id");
     assert_eq!(rows.len(), 1);
     assert_eq!(get_i64(&rows[0], 0), 4);
 
@@ -1420,7 +1468,7 @@ fn test_left_join_right_side_nulls_in_aggregates() {
          FROM departments d \
          LEFT JOIN projects p ON d.id = p.dept_id \
          GROUP BY d.dept_name \
-         ORDER BY d.dept_name"
+         ORDER BY d.dept_name",
     );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Engineering");

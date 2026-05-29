@@ -5,7 +5,7 @@
 //! - `tablet`: Tablet schemas, rowset metadata, counters
 //! - `edit_log`: Write-ahead log entries
 
-use rocksdb::{DB, Options, ColumnFamilyDescriptor, WriteBatch};
+use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use std::path::Path;
 use thiserror::Error;
 
@@ -74,7 +74,9 @@ impl MetaStore {
 
     /// Put a key-value pair into a column family.
     pub fn put_cf(&self, cf_name: &str, key: &[u8], value: &[u8]) -> Result<()> {
-        let cf = self.db.cf_handle(cf_name)
+        let cf = self
+            .db
+            .cf_handle(cf_name)
             .ok_or_else(|| RocksStoreError::InvalidKey(format!("CF {} not found", cf_name)))?;
         self.db.put_cf(&cf, key, value)?;
         Ok(())
@@ -82,14 +84,18 @@ impl MetaStore {
 
     /// Get a value from a column family.
     pub fn get_cf(&self, cf_name: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let cf = self.db.cf_handle(cf_name)
+        let cf = self
+            .db
+            .cf_handle(cf_name)
             .ok_or_else(|| RocksStoreError::InvalidKey(format!("CF {} not found", cf_name)))?;
         self.db.get_cf(&cf, key).map_err(RocksStoreError::DbError)
     }
 
     /// Delete a key from a column family.
     pub fn delete_cf(&self, cf_name: &str, key: &[u8]) -> Result<()> {
-        let cf = self.db.cf_handle(cf_name)
+        let cf = self
+            .db
+            .cf_handle(cf_name)
             .ok_or_else(|| RocksStoreError::InvalidKey(format!("CF {} not found", cf_name)))?;
         self.db.delete_cf(&cf, key)?;
         Ok(())
@@ -97,7 +103,9 @@ impl MetaStore {
 
     /// Atomically increment a counter and return the new value.
     pub fn increment_counter(&self, cf_name: &str, key: &[u8]) -> Result<u64> {
-        let cf = self.db.cf_handle(cf_name)
+        let cf = self
+            .db
+            .cf_handle(cf_name)
             .ok_or_else(|| RocksStoreError::InvalidKey(format!("CF {} not found", cf_name)))?;
 
         // Read current value
@@ -185,7 +193,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = MetaStore::open(dir.path()).unwrap();
 
-        store.put_cf(CF_CATALOG, b"test_key", b"test_value").unwrap();
+        store
+            .put_cf(CF_CATALOG, b"test_key", b"test_value")
+            .unwrap();
         let value = store.get_cf(CF_CATALOG, b"test_key").unwrap();
         assert_eq!(value, Some(b"test_value".to_vec()));
     }
@@ -195,7 +205,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = MetaStore::open(dir.path()).unwrap();
 
-        store.put_cf(CF_CATALOG, b"test_key", b"test_value").unwrap();
+        store
+            .put_cf(CF_CATALOG, b"test_key", b"test_value")
+            .unwrap();
         store.delete_cf(CF_CATALOG, b"test_key").unwrap();
         let value = store.get_cf(CF_CATALOG, b"test_key").unwrap();
         assert!(value.is_none());
@@ -239,8 +251,14 @@ mod tests {
 
         store.db.write(batch).unwrap();
 
-        assert_eq!(store.get_cf(CF_CATALOG, b"key1").unwrap(), Some(b"value1".to_vec()));
-        assert_eq!(store.get_cf(CF_CATALOG, b"key2").unwrap(), Some(b"value2".to_vec()));
+        assert_eq!(
+            store.get_cf(CF_CATALOG, b"key1").unwrap(),
+            Some(b"value1".to_vec())
+        );
+        assert_eq!(
+            store.get_cf(CF_CATALOG, b"key2").unwrap(),
+            Some(b"value2".to_vec())
+        );
         assert!(store.get_cf(CF_CATALOG, b"key3").unwrap().is_none());
     }
 }

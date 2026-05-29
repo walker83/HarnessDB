@@ -6,17 +6,23 @@ use datafusion::arrow::datatypes::{DataType as ADT, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
 use datafusion::prelude::{SessionConfig, SessionContext};
+use fe_storage::ParquetCatalogProvider;
 use mysql_protocol::QueryResult;
 use mysql_protocol::server::{ColumnDef, ColumnType};
-use fe_storage::ParquetCatalogProvider;
 
 use fe_sql_parser::ast::{self, DeleteStmt};
 
 use crate::handler_struct::RorisQueryHandler;
-use crate::utils::{build_arrow_array_from_exprs, expr_to_string_value, update_column_in_batch, merge_columns};
+use crate::utils::{
+    build_arrow_array_from_exprs, expr_to_string_value, merge_columns, update_column_in_batch,
+};
 
 impl RorisQueryHandler {
-    pub(crate) fn insert(&self, conn_id: u32, stmt: &ast::InsertStmt) -> Result<QueryResult, String> {
+    pub(crate) fn insert(
+        &self,
+        conn_id: u32,
+        stmt: &ast::InsertStmt,
+    ) -> Result<QueryResult, String> {
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
             1 => {
@@ -31,22 +37,34 @@ impl RorisQueryHandler {
         };
 
         let catalog = &self.catalog;
-        let table_meta = catalog.get_table(&database, &table_name)
+        let table_meta = catalog
+            .get_table(&database, &table_name)
             .ok_or_else(|| format!("table '{}.{}' not found in catalog", database, table_name))?;
 
         // Build Arrow schema from table metadata
-        let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = table_meta.columns.iter().map(|c| {
-            datafusion::arrow::datatypes::Field::new(
-                &c.name,
-                fe_datafusion::types::to_arrow_data_type(&c.data_type),
-                c.nullable,
-            )
-        }).collect();
+        let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = table_meta
+            .columns
+            .iter()
+            .map(|c| {
+                datafusion::arrow::datatypes::Field::new(
+                    &c.name,
+                    fe_datafusion::types::to_arrow_data_type(&c.data_type),
+                    c.nullable,
+                )
+            })
+            .collect();
         let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
 
         // ---------- INSERT INTO ... SELECT path ----------
         if let Some(query) = &stmt.query {
-            return self.handle_insert_select(query, &stmt.columns, &database, &table_name, &table_meta, arrow_schema);
+            return self.handle_insert_select(
+                query,
+                &stmt.columns,
+                &database,
+                &table_name,
+                &table_meta,
+                arrow_schema,
+            );
         }
 
         // ---------- INSERT INTO ... VALUES path ----------
@@ -55,7 +73,8 @@ impl RorisQueryHandler {
         // Otherwise, build a name->index map from the explicit column list.
         let positional = stmt.columns.is_empty();
         let column_value_map: std::collections::HashMap<String, usize> = if !positional {
-            stmt.columns.iter()
+            stmt.columns
+                .iter()
                 .enumerate()
                 .map(|(i, name)| (name.clone(), i))
                 .collect()
@@ -78,27 +97,37 @@ impl RorisQueryHandler {
             }
 
             let exprs: Vec<&ast::Expr> = if positional {
-                stmt.values.iter().filter_map(|row| row.get(col_idx)).collect()
+                stmt.values
+                    .iter()
+                    .filter_map(|row| row.get(col_idx))
+                    .collect()
             } else {
                 let value_idx = column_value_map[&col_meta.name];
-                stmt.values.iter().filter_map(|row| row.get(value_idx)).collect()
+                stmt.values
+                    .iter()
+                    .filter_map(|row| row.get(value_idx))
+                    .collect()
             };
 
             let arr = build_arrow_array_from_exprs(&arrow_type, &exprs);
             arrays.push(arr);
         }
 
-        let batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-            arrow_schema.clone(), arrays,
-        ).map_err(|e| format!("Failed to create record batch: {}", e))?;
+        let batch =
+            datafusion::arrow::record_batch::RecordBatch::try_new(arrow_schema.clone(), arrays)
+                .map_err(|e| format!("Failed to create record batch: {}", e))?;
 
         // Write to Parquet storage
-        self.storage.insert(&database, &table_name, batch)
+        self.storage
+            .insert(&database, &table_name, batch)
             .map_err(|e| format!("Insert failed: {}", e))?;
 
         let affected_rows = stmt.values.len();
         Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![ColumnDef {
+                name: "affected_rows".to_string(),
+                col_type: ColumnType::Int,
+            }],
             vec![vec![Some(affected_rows.to_string())]],
         ))
     }
@@ -161,7 +190,9 @@ impl RorisQueryHandler {
         if !insert_columns.is_empty() {
             // Explicit column list: insert_columns[i] is the target column name for SELECT output i
             for (select_idx, col_name) in insert_columns.iter().enumerate() {
-                if let Some(target_idx) = table_meta.columns.iter().position(|c| c.name == *col_name) {
+                if let Some(target_idx) =
+                    table_meta.columns.iter().position(|c| c.name == *col_name)
+                {
                     target_to_select[target_idx] = Some(select_idx);
                 }
             }
@@ -184,8 +215,11 @@ impl RorisQueryHandler {
                         target_arrays.push(src_col.clone());
                     } else {
                         // Attempt a cast via Arrow compute
-                        let casted = datafusion::arrow::compute::kernels::cast::cast(src_col, arrow_type)
-                            .map_err(|e| format!("Type cast failed for column {}: {}", target_idx, e))?;
+                        let casted =
+                            datafusion::arrow::compute::kernels::cast::cast(src_col, arrow_type)
+                                .map_err(|e| {
+                                    format!("Type cast failed for column {}: {}", target_idx, e)
+                                })?;
                         target_arrays.push(casted);
                     }
                 }
@@ -199,12 +233,16 @@ impl RorisQueryHandler {
         let batch = RecordBatch::try_new(target_schema.clone(), target_arrays)
             .map_err(|e| format!("Failed to create target record batch: {}", e))?;
 
-        self.storage.insert(database, table_name, batch)
+        self.storage
+            .insert(database, table_name, batch)
             .map_err(|e| format!("Insert failed: {}", e))?;
 
         let affected_rows = select_batch.num_rows();
         Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![ColumnDef {
+                name: "affected_rows".to_string(),
+                col_type: ColumnType::Int,
+            }],
             vec![vec![Some(affected_rows.to_string())]],
         ))
     }
@@ -235,14 +273,18 @@ fn query_stmt_to_sql(query: &ast::QueryStmt) -> String {
 
     // SELECT items
     sql.push_str("SELECT ");
-    let items: Vec<String> = query.select_list.iter().map(|item| {
-        let mut s = expr_to_sql(&item.expr);
-        if let Some(ref alias) = item.alias {
-            s.push_str(" AS ");
-            s.push_str(alias);
-        }
-        s
-    }).collect();
+    let items: Vec<String> = query
+        .select_list
+        .iter()
+        .map(|item| {
+            let mut s = expr_to_sql(&item.expr);
+            if let Some(ref alias) = item.alias {
+                s.push_str(" AS ");
+                s.push_str(alias);
+            }
+            s
+        })
+        .collect();
     sql.push_str(&items.join(", "));
 
     // FROM
@@ -273,16 +315,20 @@ fn query_stmt_to_sql(query: &ast::QueryStmt) -> String {
     // ORDER BY
     if !query.order_by.is_empty() {
         sql.push_str(" ORDER BY ");
-        let order_items: Vec<String> = query.order_by.iter().map(|item| {
-            let mut s = expr_to_sql(&item.expr);
-            if !item.ascending {
-                s.push_str(" DESC");
-            }
-            if item.nulls_first {
-                s.push_str(" NULLS FIRST");
-            }
-            s
-        }).collect();
+        let order_items: Vec<String> = query
+            .order_by
+            .iter()
+            .map(|item| {
+                let mut s = expr_to_sql(&item.expr);
+                if !item.ascending {
+                    s.push_str(" DESC");
+                }
+                if item.nulls_first {
+                    s.push_str(" NULLS FIRST");
+                }
+                s
+            })
+            .collect();
         sql.push_str(&order_items.join(", "));
     }
 
@@ -304,7 +350,9 @@ fn query_stmt_to_sql(query: &ast::QueryStmt) -> String {
             ast::UnionOperator::Intersect => "INTERSECT",
         };
         sql.push_str(&format!(" {} ", op_str));
-        if set_op.all { sql.push_str("ALL "); }
+        if set_op.all {
+            sql.push_str("ALL ");
+        }
         sql.push_str(&query_stmt_to_sql(&set_op.right));
     }
 
@@ -325,16 +373,23 @@ fn expr_to_sql(expr: &ast::Expr) -> String {
             }
         }
         Expr::BinaryOp { left, op, right } => {
-            format!("({} {} {})", expr_to_sql(left), binary_op_to_sql(op), expr_to_sql(right))
+            format!(
+                "({} {} {})",
+                expr_to_sql(left),
+                binary_op_to_sql(op),
+                expr_to_sql(right)
+            )
         }
-        Expr::UnaryOp { op, expr: e } => {
-            match op {
-                UnaryOp::Not => format!("NOT {}", expr_to_sql(e)),
-                UnaryOp::Negate => format!("-{}", expr_to_sql(e)),
-            }
-        }
+        Expr::UnaryOp { op, expr: e } => match op {
+            UnaryOp::Not => format!("NOT {}", expr_to_sql(e)),
+            UnaryOp::Negate => format!("-{}", expr_to_sql(e)),
+        },
         Expr::Wildcard => "*".to_string(),
-        Expr::FunctionCall { name, args, distinct } => {
+        Expr::FunctionCall {
+            name,
+            args,
+            distinct,
+        } => {
             let args_sql: Vec<String> = args.iter().map(expr_to_sql).collect();
             if *distinct {
                 format!("{}(DISTINCT {})", name, args_sql.join(", "))
@@ -349,7 +404,11 @@ fn expr_to_sql(expr: &ast::Expr) -> String {
                 format!("{} IS NULL", expr_to_sql(e))
             }
         }
-        Expr::InList { expr: e, list, negated } => {
+        Expr::InList {
+            expr: e,
+            list,
+            negated,
+        } => {
             let list_sql: Vec<String> = list.iter().map(expr_to_sql).collect();
             if *negated {
                 format!("{} NOT IN ({})", expr_to_sql(e), list_sql.join(", "))
@@ -357,17 +416,36 @@ fn expr_to_sql(expr: &ast::Expr) -> String {
                 format!("{} IN ({})", expr_to_sql(e), list_sql.join(", "))
             }
         }
-        Expr::Between { expr: e, low, high, negated } => {
+        Expr::Between {
+            expr: e,
+            low,
+            high,
+            negated,
+        } => {
             if *negated {
-                format!("{} NOT BETWEEN {} AND {}", expr_to_sql(e), expr_to_sql(low), expr_to_sql(high))
+                format!(
+                    "{} NOT BETWEEN {} AND {}",
+                    expr_to_sql(e),
+                    expr_to_sql(low),
+                    expr_to_sql(high)
+                )
             } else {
-                format!("{} BETWEEN {} AND {}", expr_to_sql(e), expr_to_sql(low), expr_to_sql(high))
+                format!(
+                    "{} BETWEEN {} AND {}",
+                    expr_to_sql(e),
+                    expr_to_sql(low),
+                    expr_to_sql(high)
+                )
             }
         }
         Expr::CaseWhen { cases, else_expr } => {
             let mut s = "CASE".to_string();
             for wt in cases {
-                s.push_str(&format!(" WHEN {} THEN {}", expr_to_sql(&wt.when), expr_to_sql(&wt.then)));
+                s.push_str(&format!(
+                    " WHEN {} THEN {}",
+                    expr_to_sql(&wt.when),
+                    expr_to_sql(&wt.then)
+                ));
             }
             if let Some(else_e) = else_expr {
                 s.push_str(&format!(" ELSE {}", expr_to_sql(else_e)));
@@ -375,14 +453,21 @@ fn expr_to_sql(expr: &ast::Expr) -> String {
             s.push_str(" END");
             s
         }
-        Expr::Like { expr: e, pattern, negated } => {
+        Expr::Like {
+            expr: e,
+            pattern,
+            negated,
+        } => {
             if *negated {
                 format!("{} NOT LIKE {}", expr_to_sql(e), expr_to_sql(pattern))
             } else {
                 format!("{} LIKE {}", expr_to_sql(e), expr_to_sql(pattern))
             }
         }
-        Expr::Cast { expr: e, target_type } => {
+        Expr::Cast {
+            expr: e,
+            target_type,
+        } => {
             format!("CAST({} AS {})", expr_to_sql(e), target_type)
         }
         Expr::Subquery(q) => {
@@ -391,7 +476,11 @@ fn expr_to_sql(expr: &ast::Expr) -> String {
         Expr::Exists(q) => {
             format!("EXISTS ({})", query_stmt_to_sql(q))
         }
-        Expr::InSubquery { expr: e, query: q, negated } => {
+        Expr::InSubquery {
+            expr: e,
+            query: q,
+            negated,
+        } => {
             if *negated {
                 format!("{} NOT IN ({})", expr_to_sql(e), query_stmt_to_sql(q))
             } else {
@@ -434,6 +523,9 @@ fn binary_op_to_sql(op: &ast::BinaryOp) -> &'static str {
         ast::BinaryOp::NotLike => "NOT LIKE",
         ast::BinaryOp::In => "IN",
         ast::BinaryOp::NotIn => "NOT IN",
+        ast::BinaryOp::BitwiseAnd => "&",
+        ast::BinaryOp::BitwiseOr => "|",
+        ast::BinaryOp::BitwiseXor => "^",
     }
 }
 
@@ -447,7 +539,12 @@ fn table_ref_to_sql(t: &ast::TableRef) -> String {
                 name.clone()
             }
         }
-        ast::TableRef::Join { left, right, r#type, condition } => {
+        ast::TableRef::Join {
+            left,
+            right,
+            r#type,
+            condition,
+        } => {
             let join_type = match r#type {
                 ast::JoinType::Inner => "INNER JOIN",
                 ast::JoinType::LeftOuter => "LEFT JOIN",
@@ -455,7 +552,12 @@ fn table_ref_to_sql(t: &ast::TableRef) -> String {
                 ast::JoinType::FullOuter => "FULL JOIN",
                 ast::JoinType::Cross => "CROSS JOIN",
             };
-            let mut s = format!("{} {} {}", table_ref_to_sql(left), join_type, table_ref_to_sql(right));
+            let mut s = format!(
+                "{} {} {}",
+                table_ref_to_sql(left),
+                join_type,
+                table_ref_to_sql(right)
+            );
             if let Some(cond) = condition {
                 s.push_str(&format!(" ON {}", expr_to_sql(cond)));
             }
@@ -489,7 +591,8 @@ impl RorisQueryHandler {
 
         // Add a row index column so we can identify which rows match the WHERE condition
         let row_indices: Int64Array = (0i64..num_rows as i64).collect();
-        let indexed_fields: Vec<Field> = schema.fields().iter().map(|f| f.as_ref().clone()).collect();
+        let indexed_fields: Vec<Field> =
+            schema.fields().iter().map(|f| f.as_ref().clone()).collect();
         let mut all_fields = indexed_fields;
         all_fields.push(Field::new("__row_index", ADT::Int64, false));
         let indexed_schema = Arc::new(Schema::new(all_fields));
@@ -526,7 +629,8 @@ impl RorisQueryHandler {
         // Build the boolean mask from the matched row indices
         let mut matching = vec![false; num_rows];
         for batch in &matching_batches {
-            let idx_col = batch.column(0)
+            let idx_col = batch
+                .column(0)
                 .as_any()
                 .downcast_ref::<Int64Array>()
                 .ok_or_else(|| "Failed to downcast row index column".to_string())?;
@@ -591,8 +695,10 @@ impl RorisQueryHandler {
         let combined = if arrays.len() == 1 {
             arrays.into_iter().next().unwrap()
         } else {
-            datafusion::arrow::compute::concat(&arrays.iter().map(|a| a.as_ref()).collect::<Vec<_>>())
-                .map_err(|e| format!("Failed to concat result arrays: {}", e))?
+            datafusion::arrow::compute::concat(
+                &arrays.iter().map(|a| a.as_ref()).collect::<Vec<_>>(),
+            )
+            .map_err(|e| format!("Failed to concat result arrays: {}", e))?
         };
 
         Ok(combined)
@@ -600,7 +706,11 @@ impl RorisQueryHandler {
 }
 
 impl RorisQueryHandler {
-    pub(crate) fn update(&self, conn_id: u32, stmt: &ast::UpdateStmt) -> Result<QueryResult, String> {
+    pub(crate) fn update(
+        &self,
+        conn_id: u32,
+        stmt: &ast::UpdateStmt,
+    ) -> Result<QueryResult, String> {
         let parts: Vec<&str> = stmt.table.split('.').collect();
         let (database, table_name) = match parts.len() {
             1 => {
@@ -617,45 +727,65 @@ impl RorisQueryHandler {
         let set_clauses = stmt.set_clauses.clone();
         let selection = stmt.selection.clone();
 
-        let total_updated = self.storage.update(&database, &table_name, |batch| {
-            let mut total_updated = 0usize;
-            let update_mask: Vec<bool> = if let Some(ref sel) = selection {
-                self.evaluate_where_with_datafusion(&batch, sel).map_err(|e| fe_storage::StorageError::Other(e))?
-            } else {
-                vec![true; batch.num_rows()]
-            };
-            total_updated += update_mask.iter().filter(|&u| *u).count();
-
-            let mut updated_batch = batch;
-            for set_clause in &set_clauses {
-                let col_idx = updated_batch.schema().index_of(&set_clause.column)
-                    .map_err(|e| fe_storage::StorageError::Other(e.to_string()))?;
-
-                // Try fast path: literal value
-                if let Some(val_str) = expr_to_string_value(&set_clause.value) {
-                    update_column_in_batch(&mut updated_batch, col_idx, &val_str, &update_mask)
-                        .map_err(|e| fe_storage::StorageError::Other(e))?;
+        let total_updated = self
+            .storage
+            .update(&database, &table_name, |batch| {
+                let mut total_updated = 0usize;
+                let update_mask: Vec<bool> = if let Some(ref sel) = selection {
+                    self.evaluate_where_with_datafusion(&batch, sel)
+                        .map_err(|e| fe_storage::StorageError::Other(e))?
                 } else {
-                    // Expression path: evaluate per-row via DataFusion
-                    let new_values = self.evaluate_set_expr_with_datafusion(&updated_batch, &set_clause.value)
-                        .map_err(|e| fe_storage::StorageError::Other(format!("Failed to evaluate SET expression: {}", e)))?;
+                    vec![true; batch.num_rows()]
+                };
+                total_updated += update_mask.iter().filter(|&u| *u).count();
 
-                    // Replace column values where update_mask is true
-                    let old_col = updated_batch.column(col_idx);
-                    let merged = merge_columns(old_col, &new_values, &update_mask)
-                        .map_err(|e| fe_storage::StorageError::Other(e))?;
+                let mut updated_batch = batch;
+                for set_clause in &set_clauses {
+                    let col_idx = updated_batch
+                        .schema()
+                        .index_of(&set_clause.column)
+                        .map_err(|e| fe_storage::StorageError::Other(e.to_string()))?;
 
-                    let mut new_columns: Vec<ArrayRef> = updated_batch.columns().to_vec();
-                    new_columns[col_idx] = merged;
-                    updated_batch = RecordBatch::try_new(updated_batch.schema(), new_columns)
-                        .map_err(|e| fe_storage::StorageError::Other(format!("Failed to create updated batch: {}", e)))?;
+                    // Try fast path: literal value
+                    if let Some(val_str) = expr_to_string_value(&set_clause.value) {
+                        update_column_in_batch(&mut updated_batch, col_idx, &val_str, &update_mask)
+                            .map_err(|e| fe_storage::StorageError::Other(e))?;
+                    } else {
+                        // Expression path: evaluate per-row via DataFusion
+                        let new_values = self
+                            .evaluate_set_expr_with_datafusion(&updated_batch, &set_clause.value)
+                            .map_err(|e| {
+                                fe_storage::StorageError::Other(format!(
+                                    "Failed to evaluate SET expression: {}",
+                                    e
+                                ))
+                            })?;
+
+                        // Replace column values where update_mask is true
+                        let old_col = updated_batch.column(col_idx);
+                        let merged = merge_columns(old_col, &new_values, &update_mask)
+                            .map_err(|e| fe_storage::StorageError::Other(e))?;
+
+                        let mut new_columns: Vec<ArrayRef> = updated_batch.columns().to_vec();
+                        new_columns[col_idx] = merged;
+                        updated_batch = RecordBatch::try_new(updated_batch.schema(), new_columns)
+                            .map_err(|e| {
+                            fe_storage::StorageError::Other(format!(
+                                "Failed to create updated batch: {}",
+                                e
+                            ))
+                        })?;
+                    }
                 }
-            }
-            Ok((updated_batch, total_updated))
-        }).map_err(|e| format!("Update failed: {}", e))?;
+                Ok((updated_batch, total_updated))
+            })
+            .map_err(|e| format!("Update failed: {}", e))?;
 
         Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![ColumnDef {
+                name: "affected_rows".to_string(),
+                col_type: ColumnType::Int,
+            }],
             vec![vec![Some(total_updated.to_string())]],
         ))
     }
@@ -666,7 +796,9 @@ impl RorisQueryHandler {
                 fn get_base_table_name(t: &fe_sql_parser::ast::TableRef) -> String {
                     match t {
                         fe_sql_parser::ast::TableRef::Table { name, .. } => name.clone(),
-                        fe_sql_parser::ast::TableRef::Join { left, .. } => get_base_table_name(left),
+                        fe_sql_parser::ast::TableRef::Join { left, .. } => {
+                            get_base_table_name(left)
+                        }
                         fe_sql_parser::ast::TableRef::Subquery { alias, .. } => alias.clone(),
                     }
                 }
@@ -696,84 +828,102 @@ impl RorisQueryHandler {
         let order_by = stmt.order_by.clone();
         let delete_limit = stmt.limit;
 
-        let total_deleted = self.storage.delete(&database, &table_name, |batch| {
-            if let Some(ref sel) = selection {
-                let mut match_mask = self.evaluate_where_with_datafusion(&batch, sel)
-                    .map_err(|e| fe_storage::StorageError::Other(e))?;
+        let total_deleted = self
+            .storage
+            .delete(&database, &table_name, |batch| {
+                if let Some(ref sel) = selection {
+                    let mut match_mask = self
+                        .evaluate_where_with_datafusion(&batch, sel)
+                        .map_err(|e| fe_storage::StorageError::Other(e))?;
 
-                // Apply ORDER BY + LIMIT to the match_mask
-                if !order_by.is_empty() || delete_limit.is_some() {
-                    // Collect matching row indices
-                    let matching_indices: Vec<usize> = match_mask.iter()
-                        .enumerate()
-                        .filter(|(_, m)| **m)
-                        .map(|(i, _)| i)
-                        .collect();
+                    // Apply ORDER BY + LIMIT to the match_mask
+                    if !order_by.is_empty() || delete_limit.is_some() {
+                        // Collect matching row indices
+                        let matching_indices: Vec<usize> = match_mask
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, m)| **m)
+                            .map(|(i, _)| i)
+                            .collect();
 
-                    if !matching_indices.is_empty() {
-                        let mut sorted_indices = matching_indices;
+                        if !matching_indices.is_empty() {
+                            let mut sorted_indices = matching_indices;
 
-                        // If ORDER BY is specified, sort the indices using Arrow sort
-                        if !order_by.is_empty() {
-                            use datafusion::arrow::compute::kernels::sort::{SortColumn, SortOptions};
-
-                            let sort_columns: Vec<SortColumn> = order_by.iter().map(|item| {
-                                let col_name = match &item.expr {
-                                    ast::Expr::ColumnRef { column, .. } => column.clone(),
-                                    _ => String::new(),
+                            // If ORDER BY is specified, sort the indices using Arrow sort
+                            if !order_by.is_empty() {
+                                use datafusion::arrow::compute::kernels::sort::{
+                                    SortColumn, SortOptions,
                                 };
-                                let col_idx = batch.schema().index_of(&col_name).unwrap_or(0);
-                                SortColumn {
-                                    values: batch.column(col_idx).clone(),
-                                    options: Some(SortOptions {
-                                        descending: !item.ascending,
-                                        nulls_first: item.nulls_first,
-                                    }),
-                                }
-                            }).collect();
 
-                            // Get sort order for all rows using lexsort
-                            let sort_indices = datafusion::arrow::compute::lexsort_to_indices(&sort_columns, None)
+                                let sort_columns: Vec<SortColumn> = order_by
+                                    .iter()
+                                    .map(|item| {
+                                        let col_name = match &item.expr {
+                                            ast::Expr::ColumnRef { column, .. } => column.clone(),
+                                            _ => String::new(),
+                                        };
+                                        let col_idx =
+                                            batch.schema().index_of(&col_name).unwrap_or(0);
+                                        SortColumn {
+                                            values: batch.column(col_idx).clone(),
+                                            options: Some(SortOptions {
+                                                descending: !item.ascending,
+                                                nulls_first: item.nulls_first,
+                                            }),
+                                        }
+                                    })
+                                    .collect();
+
+                                // Get sort order for all rows using lexsort
+                                let sort_indices = datafusion::arrow::compute::lexsort_to_indices(
+                                    &sort_columns,
+                                    None,
+                                )
                                 .map_err(|e| fe_storage::StorageError::Arrow(e.to_string()))?;
 
-                            // Filter to only matching rows, preserving sort order
-                            sorted_indices = (0..sort_indices.len())
-                                .map(|i| sort_indices.value(i) as usize)
-                                .filter(|&row_idx| match_mask[row_idx])
-                                .collect();
-                        }
+                                // Filter to only matching rows, preserving sort order
+                                sorted_indices = (0..sort_indices.len())
+                                    .map(|i| sort_indices.value(i) as usize)
+                                    .filter(|&row_idx| match_mask[row_idx])
+                                    .collect();
+                            }
 
-                        // If LIMIT is specified, truncate to first N
-                        if let Some(limit_n) = delete_limit {
-                            sorted_indices.truncate(limit_n);
-                        }
+                            // If LIMIT is specified, truncate to first N
+                            if let Some(limit_n) = delete_limit {
+                                sorted_indices.truncate(limit_n);
+                            }
 
-                        // Rebuild match_mask: only the sorted+limited indices are "to delete"
-                        match_mask = vec![false; match_mask.len()];
-                        for &idx in &sorted_indices {
-                            match_mask[idx] = true;
+                            // Rebuild match_mask: only the sorted+limited indices are "to delete"
+                            match_mask = vec![false; match_mask.len()];
+                            for &idx in &sorted_indices {
+                                match_mask[idx] = true;
+                            }
                         }
                     }
-                }
 
-                let deleted_count = match_mask.iter().filter(|&&m| m).count();
-                // keep rows that do NOT match
-                let keep_mask: Vec<bool> = match_mask.iter().map(|&m| !m).collect();
-                let filtered = datafusion::arrow::compute::filter_record_batch(
-                    &batch,
-                    &datafusion::arrow::array::BooleanArray::from(keep_mask),
-                ).map_err(|e| fe_storage::StorageError::Arrow(e.to_string()))?;
-                Ok((filtered, deleted_count))
-            } else {
-                let count = batch.num_rows();
-                let schema = batch.schema();
-                let empty = datafusion::arrow::record_batch::RecordBatch::new_empty(schema);
-                Ok((empty, count))
-            }
-        }).map_err(|e| format!("Delete failed: {}", e))?;
+                    let deleted_count = match_mask.iter().filter(|&&m| m).count();
+                    // keep rows that do NOT match
+                    let keep_mask: Vec<bool> = match_mask.iter().map(|&m| !m).collect();
+                    let filtered = datafusion::arrow::compute::filter_record_batch(
+                        &batch,
+                        &datafusion::arrow::array::BooleanArray::from(keep_mask),
+                    )
+                    .map_err(|e| fe_storage::StorageError::Arrow(e.to_string()))?;
+                    Ok((filtered, deleted_count))
+                } else {
+                    let count = batch.num_rows();
+                    let schema = batch.schema();
+                    let empty = datafusion::arrow::record_batch::RecordBatch::new_empty(schema);
+                    Ok((empty, count))
+                }
+            })
+            .map_err(|e| format!("Delete failed: {}", e))?;
 
         Ok(QueryResult::with_rows(
-            vec![ColumnDef { name: "affected_rows".to_string(), col_type: ColumnType::Int }],
+            vec![ColumnDef {
+                name: "affected_rows".to_string(),
+                col_type: ColumnType::Int,
+            }],
             vec![vec![Some(total_deleted.to_string())]],
         ))
     }
@@ -804,22 +954,39 @@ impl RorisQueryHandler {
     }
 
     pub(crate) fn savepoint_cmd(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
-        self.with_session_mut(conn_id, |s| s.transaction.savepoint(name)).map_err(|e| e)?;
+        self.with_session_mut(conn_id, |s| s.transaction.savepoint(name))
+            .map_err(|e| e)?;
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn rollback_to_savepoint_cmd(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
-        self.with_session_mut(conn_id, |s| s.transaction.rollback_to_savepoint(&name)).map_err(|e| e)?;
+    pub(crate) fn rollback_to_savepoint_cmd(
+        &self,
+        conn_id: u32,
+        name: String,
+    ) -> Result<QueryResult, String> {
+        self.with_session_mut(conn_id, |s| s.transaction.rollback_to_savepoint(&name))
+            .map_err(|e| e)?;
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn release_savepoint_cmd(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
-        self.with_session_mut(conn_id, |s| s.transaction.release_savepoint(&name)).map_err(|e| e)?;
+    pub(crate) fn release_savepoint_cmd(
+        &self,
+        conn_id: u32,
+        name: String,
+    ) -> Result<QueryResult, String> {
+        self.with_session_mut(conn_id, |s| s.transaction.release_savepoint(&name))
+            .map_err(|e| e)?;
         Ok(QueryResult::ok())
     }
 
-    pub(crate) fn set_transaction_isolation(&self, conn_id: u32, level: String) -> Result<QueryResult, String> {
-        self.with_session_mut(conn_id, |s| s.transaction.set_isolation_level(level.clone()));
+    pub(crate) fn set_transaction_isolation(
+        &self,
+        conn_id: u32,
+        level: String,
+    ) -> Result<QueryResult, String> {
+        self.with_session_mut(conn_id, |s| {
+            s.transaction.set_isolation_level(level.clone())
+        });
         tracing::info!("Setting transaction isolation level to: {}", level);
         Ok(QueryResult::ok())
     }

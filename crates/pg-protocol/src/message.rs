@@ -191,9 +191,7 @@ pub enum FrontendMessage {
         params: HashMap<String, String>,
     },
     /// Simple Query: 'Q'
-    Query {
-        sql: String,
-    },
+    Query { sql: String },
     /// Extended Query Parse: 'P'
     Parse {
         name: String,
@@ -214,10 +212,7 @@ pub enum FrontendMessage {
         name: String,
     },
     /// Execute: 'E'
-    Execute {
-        portal: String,
-        max_rows: i32,
-    },
+    Execute { portal: String, max_rows: i32 },
     /// Close: 'C'
     Close {
         target: DescribeTarget,
@@ -228,9 +223,7 @@ pub enum FrontendMessage {
     /// Terminate: 'X'
     Terminate,
     /// PasswordMessage: 'p'
-    PasswordMessage {
-        password: String,
-    },
+    PasswordMessage { password: String },
 }
 
 impl FrontendMessage {
@@ -422,45 +415,25 @@ pub enum BackendMessage {
     /// AuthenticationOk: 'R', length=8, status=0
     AuthenticationOk,
     /// AuthenticationMD5Password: 'R', length=12, status=5, salt(4)
-    AuthenticationMD5Password {
-        salt: [u8; 4],
-    },
+    AuthenticationMD5Password { salt: [u8; 4] },
     /// AuthenticationCleartextPassword: 'R', length=8, status=3
     AuthenticationCleartextPassword,
     /// ParameterStatus: 'S', key\0, value\0
-    ParameterStatus {
-        key: String,
-        value: String,
-    },
+    ParameterStatus { key: String, value: String },
     /// BackendKeyData: 'K', pid(4), secret_key(4)
-    BackendKeyData {
-        pid: i32,
-        secret_key: i32,
-    },
+    BackendKeyData { pid: i32, secret_key: i32 },
     /// ReadyForQuery: 'Z', status(1)
-    ReadyForQuery {
-        status: TransactionStatus,
-    },
+    ReadyForQuery { status: TransactionStatus },
     /// RowDescription: 'T', field descriptions
-    RowDescription {
-        fields: Vec<FieldDescription>,
-    },
+    RowDescription { fields: Vec<FieldDescription> },
     /// DataRow: 'D', column values
-    DataRow {
-        values: Vec<Option<Vec<u8>>>,
-    },
+    DataRow { values: Vec<Option<Vec<u8>>> },
     /// CommandComplete: 'C', tag\0
-    CommandComplete {
-        tag: String,
-    },
+    CommandComplete { tag: String },
     /// ErrorResponse: 'E', severity + code + message fields
-    ErrorResponse {
-        fields: Vec<(u8, String)>,
-    },
+    ErrorResponse { fields: Vec<(u8, String)> },
     /// NoticeResponse: 'N', severity + code + message fields
-    NoticeResponse {
-        fields: Vec<(u8, String)>,
-    },
+    NoticeResponse { fields: Vec<(u8, String)> },
     /// EmptyQueryResponse: 'I', length=4
     EmptyQueryResponse,
     /// ParseComplete: '1', length=4
@@ -474,9 +447,7 @@ pub enum BackendMessage {
     /// PortalSuspended: 's', length=4
     PortalSuspended,
     /// ParameterDescription: 't', num_params(2), type_oids(4 each)
-    ParameterDescription {
-        type_oids: Vec<u32>,
-    },
+    ParameterDescription { type_oids: Vec<u32> },
 }
 
 impl BackendMessage {
@@ -730,11 +701,7 @@ pub mod sqlstate {
 }
 
 /// Create a simple error response for SQL errors.
-pub fn create_error_response(
-    severity: &str,
-    sqlstate_code: &str,
-    message: &str,
-) -> BackendMessage {
+pub fn create_error_response(severity: &str, sqlstate_code: &str, message: &str) -> BackendMessage {
     BackendMessage::ErrorResponse {
         fields: vec![
             (error_fields::SEVERITY, severity.to_string()),
@@ -859,11 +826,7 @@ mod tests {
     #[test]
     fn test_encode_data_row() {
         let mut buf = BytesMut::new();
-        let values = vec![
-            Some(b"42".to_vec()),
-            Some(b"hello".to_vec()),
-            None,
-        ];
+        let values = vec![Some(b"42".to_vec()), Some(b"hello".to_vec()), None];
         let msg = BackendMessage::DataRow { values };
         msg.encode(&mut buf);
 
@@ -972,10 +935,7 @@ mod tests {
         let mut buf = BytesMut::new();
         // Startup message: no type byte, just length + version + params
         let version = PG_PROTOCOL_VERSION_3; // 3 << 16 = 196608
-        let params = [
-            ("user", "testuser"),
-            ("database", "testdb"),
-        ];
+        let params = [("user", "testuser"), ("database", "testdb")];
 
         // Calculate total length: self(4) + version(4) + each pair (key\0 + value\0) + final \0
         let mut body_len = 4; // version
@@ -1011,9 +971,18 @@ mod tests {
         assert_eq!(TransactionStatus::InTransaction.to_byte(), b'T');
         assert_eq!(TransactionStatus::Failed.to_byte(), b'E');
 
-        assert_eq!(TransactionStatus::from_byte(b'I'), Some(TransactionStatus::Idle));
-        assert_eq!(TransactionStatus::from_byte(b'T'), Some(TransactionStatus::InTransaction));
-        assert_eq!(TransactionStatus::from_byte(b'E'), Some(TransactionStatus::Failed));
+        assert_eq!(
+            TransactionStatus::from_byte(b'I'),
+            Some(TransactionStatus::Idle)
+        );
+        assert_eq!(
+            TransactionStatus::from_byte(b'T'),
+            Some(TransactionStatus::InTransaction)
+        );
+        assert_eq!(
+            TransactionStatus::from_byte(b'E'),
+            Some(TransactionStatus::Failed)
+        );
         assert_eq!(TransactionStatus::from_byte(b'X'), None);
     }
 
@@ -1243,11 +1212,7 @@ mod tests {
     #[test]
     fn test_encode_data_row_with_null() {
         let mut buf = BytesMut::new();
-        let values = vec![
-            Some(b"hello".to_vec()),
-            None,
-            Some(b"world".to_vec()),
-        ];
+        let values = vec![Some(b"hello".to_vec()), None, Some(b"world".to_vec())];
         let msg = BackendMessage::DataRow { values };
         msg.encode(&mut buf);
 
@@ -1277,7 +1242,10 @@ mod tests {
             fields: vec![
                 (error_fields::SEVERITY, "ERROR".to_string()),
                 (error_fields::SQLSTATE, "42P01".to_string()),
-                (error_fields::MESSAGE, "relation \"users\" does not exist".to_string()),
+                (
+                    error_fields::MESSAGE,
+                    "relation \"users\" does not exist".to_string(),
+                ),
                 (error_fields::HINT, "check the table name".to_string()),
             ],
         };
@@ -1342,7 +1310,11 @@ mod tests {
         // But when decoding the second value, value_len(999) > remaining(~3 bytes)
         // which triggers the ProtocolViolation error
         let result = FrontendMessage::decode(&mut buf);
-        assert!(result.is_err(), "Bind with value_len exceeding buffer should return error, got: {:?}", result);
+        assert!(
+            result.is_err(),
+            "Bind with value_len exceeding buffer should return error, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1372,7 +1344,10 @@ mod tests {
                 (error_fields::SEVERITY, "ERROR".to_string()),
                 (error_fields::SQLSTATE, "42P01".to_string()),
                 (error_fields::MESSAGE, "table not found".to_string()),
-                (error_fields::DETAIL, "relation \"users\" does not exist".to_string()),
+                (
+                    error_fields::DETAIL,
+                    "relation \"users\" does not exist".to_string(),
+                ),
                 (error_fields::HINT, "check the table name".to_string()),
             ],
         };

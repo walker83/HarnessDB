@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use pg_protocol::auth::{compute_md5_password, AuthConfig};
+use pg_protocol::auth::{AuthConfig, compute_md5_password};
 use pg_protocol::connection::PgConnection;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -194,9 +194,17 @@ async fn perform_startup_and_auth<R, W>(
 
     // 2. Receive AuthenticationMD5Password
     let (msg_type, body) = read_message(reader).await;
-    assert_eq!(msg_type, b'R', "expected AuthenticationMD5Password, got type byte 0x{:02x}", msg_type);
+    assert_eq!(
+        msg_type, b'R',
+        "expected AuthenticationMD5Password, got type byte 0x{:02x}",
+        msg_type
+    );
     let auth_type = i32::from_be_bytes(body[..4].try_into().unwrap());
-    assert_eq!(auth_type, 5, "expected MD5 password auth type, got {}", auth_type);
+    assert_eq!(
+        auth_type, 5,
+        "expected MD5 password auth type, got {}",
+        auth_type
+    );
 
     // 3. Compute MD5 response and send PasswordMessage
     let salt: [u8; 4] = body[4..8].try_into().unwrap();
@@ -244,9 +252,7 @@ async fn start_server(
     handler: Arc<impl QueryHandler + 'static>,
     auth_config: AuthConfig,
 ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     let handle = tokio::spawn(async move {
@@ -316,7 +322,11 @@ async fn test_simple_query() {
 
     // Verify RowDescription
     let (msg_type, body) = read_message(&mut reader).await;
-    assert_eq!(msg_type, b'T', "expected RowDescription, got type={}", msg_type as char);
+    assert_eq!(
+        msg_type, b'T',
+        "expected RowDescription, got type={}",
+        msg_type as char
+    );
     let num_fields = u16::from_be_bytes(body[..2].try_into().unwrap());
     assert_eq!(num_fields, 1, "expected 1 column");
     // Check column name is "num"
@@ -326,7 +336,11 @@ async fn test_simple_query() {
 
     // Verify DataRow
     let (msg_type, body) = read_message(&mut reader).await;
-    assert_eq!(msg_type, b'D', "expected DataRow, got type={}", msg_type as char);
+    assert_eq!(
+        msg_type, b'D',
+        "expected DataRow, got type={}",
+        msg_type as char
+    );
     let num_cols = u16::from_be_bytes(body[..2].try_into().unwrap());
     assert_eq!(num_cols, 1, "expected 1 column in DataRow");
     let col_len = i32::from_be_bytes(body[2..6].try_into().unwrap());
@@ -335,13 +349,21 @@ async fn test_simple_query() {
 
     // Verify CommandComplete
     let (msg_type, body) = read_message(&mut reader).await;
-    assert_eq!(msg_type, b'C', "expected CommandComplete, got type={}", msg_type as char);
+    assert_eq!(
+        msg_type, b'C',
+        "expected CommandComplete, got type={}",
+        msg_type as char
+    );
     let tag = String::from_utf8_lossy(&body[..body.len() - 1]);
     assert_eq!(tag, "SELECT 1");
 
     // Verify ReadyForQuery
     let (msg_type, _body) = read_message(&mut reader).await;
-    assert_eq!(msg_type, b'Z', "expected ReadyForQuery, got type={}", msg_type as char);
+    assert_eq!(
+        msg_type, b'Z',
+        "expected ReadyForQuery, got type={}",
+        msg_type as char
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +410,11 @@ async fn test_extended_query_flow() {
 
     // RowDescription
     let (msg_type, body) = read_message(&mut reader).await;
-    assert_eq!(msg_type, b'T', "expected RowDescription, got 0x{:02x}", msg_type);
+    assert_eq!(
+        msg_type, b'T',
+        "expected RowDescription, got 0x{:02x}",
+        msg_type
+    );
     let num_fields = u16::from_be_bytes(body[..2].try_into().unwrap());
     assert_eq!(num_fields, 1);
 
@@ -401,7 +427,11 @@ async fn test_extended_query_flow() {
 
     // CommandComplete
     let (msg_type, body) = read_message(&mut reader).await;
-    assert_eq!(msg_type, b'C', "expected CommandComplete, got 0x{:02x}", msg_type);
+    assert_eq!(
+        msg_type, b'C',
+        "expected CommandComplete, got 0x{:02x}",
+        msg_type
+    );
     let tag = String::from_utf8_lossy(&body[..body.len() - 1]);
     assert_eq!(tag, "SELECT 1");
 
@@ -411,7 +441,11 @@ async fn test_extended_query_flow() {
 
     // ReadyForQuery
     let (msg_type, body) = read_message(&mut reader).await;
-    assert_eq!(msg_type, b'Z', "expected ReadyForQuery, got 0x{:02x}", msg_type);
+    assert_eq!(
+        msg_type, b'Z',
+        "expected ReadyForQuery, got 0x{:02x}",
+        msg_type
+    );
     assert_eq!(body[0], b'I', "expected idle transaction status");
 }
 
@@ -449,8 +483,8 @@ async fn test_auth_failure_wrong_password() {
 
     // Should receive an ErrorResponse, then the connection closes
     let mut buf = [0u8; 1];
-    let result = tokio::time::timeout(std::time::Duration::from_secs(3), reader.read(&mut buf))
-        .await;
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(3), reader.read(&mut buf)).await;
 
     match result {
         Ok(Ok(0)) => {
@@ -566,7 +600,11 @@ async fn test_ssl_request_declined() {
     // 2. Read single byte 'N' (server declines SSL)
     let mut resp = [0u8; 1];
     reader.read_exact(&mut resp).await.unwrap();
-    assert_eq!(resp[0], b'N', "expected 'N' (SSL declined), got 0x{:02x}", resp[0]);
+    assert_eq!(
+        resp[0], b'N',
+        "expected 'N' (SSL declined), got 0x{:02x}",
+        resp[0]
+    );
 
     // 3. Now send normal StartupMessage and complete auth
     perform_startup_and_auth(&mut reader, &mut writer, "roris", "default", "pass").await;

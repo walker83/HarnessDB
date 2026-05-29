@@ -72,7 +72,10 @@ impl ConnectionTracker {
         let mut peak = self.peak_connections.load(Ordering::Relaxed);
         while current_count > peak {
             match self.peak_connections.compare_exchange_weak(
-                peak, current_count, Ordering::SeqCst, Ordering::Relaxed
+                peak,
+                current_count,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(p) => peak = p,
@@ -100,7 +103,11 @@ impl ConnectionTracker {
         if let Some(info) = conns.get_mut(&id) {
             info.current_sql = sql.map(|s| s.to_string());
             info.command = if sql.is_some() { "Query" } else { "Sleep" }.to_string();
-            info.query_start = if sql.is_some() { Some(Instant::now()) } else { None };
+            info.query_start = if sql.is_some() {
+                Some(Instant::now())
+            } else {
+                None
+            };
             info.state = if sql.is_some() { "executing" } else { "" }.to_string();
         }
     }

@@ -3,16 +3,16 @@
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::cell::RefCell;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 30000;
@@ -37,14 +37,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -77,7 +84,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -110,7 +119,11 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn), db: RefCell::new(None) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+            db: RefCell::new(None),
+        }
     }
 
     /// Create a unique database name and return it
@@ -138,7 +151,8 @@ impl TestContext {
         if let Some(ref db) = *self.db.borrow() {
             conn.query_drop(&format!("USE {}", db)).unwrap();
         }
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -154,7 +168,8 @@ impl TestContext {
         if let Some(ref db) = *self.db.borrow() {
             conn.query_drop(&format!("USE {}", db)).unwrap();
         }
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -168,7 +183,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -184,7 +206,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -196,8 +219,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -269,8 +299,8 @@ fn test_length_on_columns() {
 
     // Note: DataFusion uses case-sensitive ASCII ordering: '' < 'Hello World' < 'cafe'
     let rows = ctx.query("SELECT LENGTH(s) FROM str_len ORDER BY s");
-    assert_eq!(get_i64(&rows[0], 0), 0);  // ''
-    assert_eq!(get_i64(&rows[1], 0), 11);  // 'Hello World'
+    assert_eq!(get_i64(&rows[0], 0), 0); // ''
+    assert_eq!(get_i64(&rows[1], 0), 11); // 'Hello World'
     assert_eq!(get_i64(&rows[2], 0), 4); // 'cafe'
 
     let rows = ctx.query("SELECT CHAR_LENGTH(s) FROM str_len ORDER BY s");
@@ -281,8 +311,8 @@ fn test_length_on_columns() {
     // LENGTH of NULL returns NULL
     // ORDER BY s: '' (t='bar'), 'Hello World' (t='foo'), 'cafe' (t=NULL)
     let rows = ctx.query("SELECT LENGTH(t) FROM str_len ORDER BY s");
-    assert_eq!(get_i64(&rows[0], 0), 3);  // 'bar'
-    assert_eq!(get_i64(&rows[1], 0), 3);  // 'foo'
+    assert_eq!(get_i64(&rows[0], 0), 3); // 'bar'
+    assert_eq!(get_i64(&rows[1], 0), 3); // 'foo'
     assert!(is_null(&rows[2], 0)); // NULL
 
     ctx.drop_db(&db);
@@ -344,9 +374,9 @@ fn test_upper_lower_on_columns() {
     ctx.exec("INSERT INTO str_case VALUES ('Hello'), ('WORLD'), (''), (NULL)");
 
     let rows = ctx.query("SELECT UPPER(s) FROM str_case ORDER BY s");
-    assert_eq!(get_string(&rows[0], 0), "");        // ''
-    assert_eq!(get_string(&rows[1], 0), "HELLO");   // 'Hello' -> 'HELLO'
-    assert_eq!(get_string(&rows[2], 0), "WORLD");   // 'WORLD' -> 'WORLD'
+    assert_eq!(get_string(&rows[0], 0), ""); // ''
+    assert_eq!(get_string(&rows[1], 0), "HELLO"); // 'Hello' -> 'HELLO'
+    assert_eq!(get_string(&rows[2], 0), "WORLD"); // 'WORLD' -> 'WORLD'
     // NULL stays NULL
 
     let rows = ctx.query("SELECT LOWER(s) FROM str_case ORDER BY s");
@@ -378,7 +408,11 @@ fn test_concat_literal() {
     // CONCAT with NULL — DataFusion skips NULL (returns 'ab'), MySQL returns NULL
     let rows = ctx.query("SELECT CONCAT('a', NULL, 'b')");
     let val = get_string(&rows[0], 0);
-    assert!(is_null(&rows[0], 0) || val == "ab", "CONCAT with NULL: expected NULL or 'ab', got '{}'", val);
+    assert!(
+        is_null(&rows[0], 0) || val == "ab",
+        "CONCAT with NULL: expected NULL or 'ab', got '{}'",
+        val
+    );
 
     // CONCAT with many arguments
     let rows = ctx.query("SELECT CONCAT('a', 'b', 'c', 'd', 'e')");
@@ -426,7 +460,9 @@ fn test_concat_on_columns() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE str_cat (first VARCHAR(20), last VARCHAR(20), n INT)");
-    ctx.exec("INSERT INTO str_cat VALUES ('John', 'Doe', 1), ('Jane', 'Smith', 2), (NULL, 'Unknown', 3)");
+    ctx.exec(
+        "INSERT INTO str_cat VALUES ('John', 'Doe', 1), ('Jane', 'Smith', 2), (NULL, 'Unknown', 3)",
+    );
 
     let rows = ctx.query("SELECT CONCAT(first, ' ', last) FROM str_cat ORDER BY n");
     assert_eq!(get_string(&rows[0], 0), "John Doe");
@@ -626,8 +662,8 @@ fn test_reverse_on_columns() {
     ctx.exec("INSERT INTO str_rev VALUES ('abc'), ('hello'), ('')");
 
     let rows = ctx.query("SELECT REVERSE(s) FROM str_rev ORDER BY s");
-    assert_eq!(get_string(&rows[0], 0), "");     // ''
-    assert_eq!(get_string(&rows[1], 0), "cba");  // 'abc' -> 'cba'
+    assert_eq!(get_string(&rows[0], 0), ""); // ''
+    assert_eq!(get_string(&rows[1], 0), "cba"); // 'abc' -> 'cba'
     assert_eq!(get_string(&rows[2], 0), "olleh"); // 'hello' -> 'olleh'
 
     ctx.drop_db(&db);
@@ -1057,7 +1093,10 @@ fn test_string_with_crud_operations() {
     assert_eq!(get_string(&rows[2], 0), "RUST");
 
     // DELETE with string function in WHERE
-    if ctx.exec_ignore_error("DELETE FROM str_crud WHERE UPPER(val) LIKE '%RUST%'").is_ok() {
+    if ctx
+        .exec_ignore_error("DELETE FROM str_crud WHERE UPPER(val) LIKE '%RUST%'")
+        .is_ok()
+    {
         let rows = ctx.query("SELECT val FROM str_crud ORDER BY id");
         assert_eq!(rows.len(), 2);
 
@@ -1078,7 +1117,9 @@ fn test_string_mixed_types_and_aliases() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE str_mix (s VARCHAR(50), n INT, d DOUBLE)");
-    ctx.exec("INSERT INTO str_mix VALUES ('hello', 10, 3.14), ('world', 20, 2.71), ('test', 0, -1.5)");
+    ctx.exec(
+        "INSERT INTO str_mix VALUES ('hello', 10, 3.14), ('world', 20, 2.71), ('test', 0, -1.5)",
+    );
 
     // CONCAT with multiple types
     let rows = ctx.query("SELECT CONCAT(s, '_', n) FROM str_mix ORDER BY n");
@@ -1093,7 +1134,8 @@ fn test_string_mixed_types_and_aliases() {
     assert_eq!(get_i64(&rows[2], 0), 7); // "world20" -> 7
 
     // Multiple string functions in one SELECT
-    let rows = ctx.query("SELECT UPPER(s), LOWER(s), LENGTH(s), REVERSE(s) FROM str_mix ORDER BY n");
+    let rows =
+        ctx.query("SELECT UPPER(s), LOWER(s), LENGTH(s), REVERSE(s) FROM str_mix ORDER BY n");
     assert_eq!(get_string(&rows[0], 0), "TEST");
     assert_eq!(get_string(&rows[0], 1), "test");
     assert_eq!(get_i64(&rows[0], 2), 4);

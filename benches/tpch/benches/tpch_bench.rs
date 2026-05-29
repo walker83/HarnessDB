@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use tpch_bench::{data_gen::TpchData, queries, TpchBenchmark};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use tpch_bench::{TpchBenchmark, data_gen::TpchData, queries};
 
 // ---------------------------------------------------------------------------
 // Data generation benchmarks
@@ -85,10 +85,12 @@ fn bench_lineitem_projection(c: &mut Criterion) {
         .fields()
         .iter()
         .enumerate()
-        .filter(|(_, f)| matches!(
-            f.name.as_str(),
-            "l_shipdate" | "l_discount" | "l_quantity" | "l_extendedprice"
-        ))
+        .filter(|(_, f)| {
+            matches!(
+                f.name.as_str(),
+                "l_shipdate" | "l_discount" | "l_quantity" | "l_extendedprice"
+            )
+        })
         .map(|(i, _)| i)
         .collect();
 

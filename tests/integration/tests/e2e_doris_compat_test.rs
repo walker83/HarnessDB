@@ -1,9 +1,9 @@
 use mysql::prelude::*;
 use mysql::{Conn, Opts, OptsBuilder, Row, Value};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
 
 // ===========================================================================
 // Test Configuration
@@ -185,7 +185,10 @@ fn test_doris_compat_e2e() {
     );
 
     // d. INSERT single row
-    exec_sql(&mut conn, "INSERT INTO users VALUES (1, 'Alice', 30, 50000.0)");
+    exec_sql(
+        &mut conn,
+        "INSERT INTO users VALUES (1, 'Alice', 30, 50000.0)",
+    );
 
     // e. INSERT multiple rows
     exec_sql(
@@ -198,7 +201,10 @@ fn test_doris_compat_e2e() {
     assert_eq!(rows.len(), 2, "WHERE age > 28 should return 2 rows");
 
     // g. SELECT with ORDER BY
-    let rows = query_rows(&mut conn, "SELECT name, salary FROM users ORDER BY salary DESC");
+    let rows = query_rows(
+        &mut conn,
+        "SELECT name, salary FROM users ORDER BY salary DESC",
+    );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Charlie");
     assert_eq!(get_string(&rows[1], 0), "Alice");
@@ -209,10 +215,17 @@ fn test_doris_compat_e2e() {
     assert_eq!(rows.len(), 1);
     assert_eq!(get_i64(&rows[0], 0), 3);
     let avg = get_f64(&rows[0], 1);
-    assert!((avg - 51666.67).abs() < 100.0, "AVG should be ~51666, got {}", avg);
+    assert!(
+        (avg - 51666.67).abs() < 100.0,
+        "AVG should be ~51666, got {}",
+        avg
+    );
 
     // i. UPDATE
-    exec_sql(&mut conn, "UPDATE users SET salary = 55000.0 WHERE name = 'Alice'");
+    exec_sql(
+        &mut conn,
+        "UPDATE users SET salary = 55000.0 WHERE name = 'Alice'",
+    );
 
     // j. Verify UPDATE
     let rows = query_rows(&mut conn, "SELECT salary FROM users WHERE name = 'Alice'");

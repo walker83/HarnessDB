@@ -27,7 +27,8 @@ fn test_select_specific_columns_parse() {
 
 #[test]
 fn test_select_with_alias_parse() {
-    let result = fe_sql_parser::parse_sql("SELECT salary AS sal, name AS employee_name FROM employees");
+    let result =
+        fe_sql_parser::parse_sql("SELECT salary AS sal, name AS employee_name FROM employees");
     assert!(result.is_ok());
 }
 
@@ -84,7 +85,8 @@ fn test_where_eq_block() {
 
 #[test]
 fn test_where_not_eq_parse() {
-    let result = fe_sql_parser::parse_sql("SELECT * FROM employees WHERE department != 'Engineering'");
+    let result =
+        fe_sql_parser::parse_sql("SELECT * FROM employees WHERE department != 'Engineering'");
     assert!(result.is_ok());
 }
 
@@ -103,19 +105,23 @@ fn test_where_gt_lt_block() {
 
 #[test]
 fn test_where_between_parse() {
-    let result = fe_sql_parser::parse_sql("SELECT * FROM employees WHERE salary BETWEEN 70000 AND 100000");
+    let result =
+        fe_sql_parser::parse_sql("SELECT * FROM employees WHERE salary BETWEEN 70000 AND 100000");
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_where_in_list_parse() {
-    let result = fe_sql_parser::parse_sql("SELECT * FROM employees WHERE department IN ('Engineering', 'Sales')");
+    let result = fe_sql_parser::parse_sql(
+        "SELECT * FROM employees WHERE department IN ('Engineering', 'Sales')",
+    );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_where_not_in_parse() {
-    let result = fe_sql_parser::parse_sql("SELECT * FROM employees WHERE department NOT IN ('Engineering')");
+    let result =
+        fe_sql_parser::parse_sql("SELECT * FROM employees WHERE department NOT IN ('Engineering')");
     assert!(result.is_ok());
 }
 
@@ -145,7 +151,8 @@ fn test_where_and_or_block() {
     let mut sel = types::Bitmap::with_capacity(block.num_rows());
     for i in 0..block.num_rows() {
         let salary_high = matches!(salary_col.scalar_at(i), ScalarValue::Float64(v) if v > 90000.0);
-        let is_eng = matches!(dept_col.scalar_at(i), ScalarValue::String(ref s) if s == "Engineering");
+        let is_eng =
+            matches!(dept_col.scalar_at(i), ScalarValue::String(ref s) if s == "Engineering");
         // WHERE salary > 90000 OR department = 'Engineering'
         sel.push(salary_high || is_eng);
     }
@@ -157,7 +164,7 @@ fn test_where_and_or_block() {
 #[test]
 fn test_where_complex_combination_parse() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT * FROM employees WHERE (department = 'Engineering' AND salary > 100000) OR (department = 'Sales' AND salary > 50000)"
+        "SELECT * FROM employees WHERE (department = 'Engineering' AND salary > 100000) OR (department = 'Sales' AND salary > 50000)",
     );
     assert!(result.is_ok());
 }
@@ -237,7 +244,9 @@ fn test_group_by_single_column_block() {
 
     let mut groups: HashMap<String, (f64, usize)> = HashMap::new();
     for i in 0..block.num_rows() {
-        if let (ScalarValue::String(d), ScalarValue::Float64(s)) = (dept_col.scalar_at(i), salary_col.scalar_at(i)) {
+        if let (ScalarValue::String(d), ScalarValue::Float64(s)) =
+            (dept_col.scalar_at(i), salary_col.scalar_at(i))
+        {
             let entry = groups.entry(d).or_insert((0.0, 0));
             entry.0 += s;
             entry.1 += 1;
@@ -253,7 +262,7 @@ fn test_group_by_single_column_block() {
 #[test]
 fn test_group_by_with_having_parse() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT department, AVG(salary) AS avg_sal FROM employees GROUP BY department HAVING AVG(salary) > 80000"
+        "SELECT department, AVG(salary) AS avg_sal FROM employees GROUP BY department HAVING AVG(salary) > 80000",
     );
     assert!(result.is_ok());
 }
@@ -261,7 +270,8 @@ fn test_group_by_with_having_parse() {
 #[test]
 fn test_group_by_with_order_limit_parse() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT department, COUNT(*) AS cnt FROM employees GROUP BY department ORDER BY cnt DESC LIMIT 2");
+        "SELECT department, COUNT(*) AS cnt FROM employees GROUP BY department ORDER BY cnt DESC LIMIT 2",
+    );
     assert!(result.is_ok());
 }
 
@@ -318,10 +328,17 @@ fn test_left_join_null_handling_block() {
             let mut found = false;
             for j in 0..departments.num_rows() {
                 if let ScalarValue::String(ref dn) = dept_name.scalar_at(j) {
-                    if dept == dn { found = true; break; }
+                    if dept == dn {
+                        found = true;
+                        break;
+                    }
                 }
             }
-            if found { matched += 1; } else { unmatched += 1; }
+            if found {
+                matched += 1;
+            } else {
+                unmatched += 1;
+            }
         }
     }
     assert_eq!(matched, 5);
@@ -331,7 +348,7 @@ fn test_left_join_null_handling_block() {
 #[test]
 fn test_parse_inner_join() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT e.name, d.name FROM employees e INNER JOIN departments d ON e.department = d.name"
+        "SELECT e.name, d.name FROM employees e INNER JOIN departments d ON e.department = d.name",
     );
     assert!(result.is_ok());
 }
@@ -339,7 +356,7 @@ fn test_parse_inner_join() {
 #[test]
 fn test_parse_left_join() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT e.name, d.budget FROM employees e LEFT JOIN departments d ON e.department = d.name"
+        "SELECT e.name, d.budget FROM employees e LEFT JOIN departments d ON e.department = d.name",
     );
     assert!(result.is_ok());
 }
@@ -347,7 +364,7 @@ fn test_parse_left_join() {
 #[test]
 fn test_parse_right_join() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT e.name, d.name FROM employees e RIGHT JOIN departments d ON e.department = d.name"
+        "SELECT e.name, d.name FROM employees e RIGHT JOIN departments d ON e.department = d.name",
     );
     assert!(result.is_ok());
 }
@@ -355,23 +372,22 @@ fn test_parse_right_join() {
 #[test]
 fn test_parse_full_join() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT e.name, d.name FROM employees e FULL JOIN departments d ON e.department = d.name"
+        "SELECT e.name, d.name FROM employees e FULL JOIN departments d ON e.department = d.name",
     );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_cross_join() {
-    let result = fe_sql_parser::parse_sql(
-        "SELECT e.name, d.name FROM employees e CROSS JOIN departments d"
-    );
+    let result =
+        fe_sql_parser::parse_sql("SELECT e.name, d.name FROM employees e CROSS JOIN departments d");
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_self_join() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT e1.name, e2.name FROM employees e1 JOIN employees e2 ON e1.department = e2.department AND e1.id < e2.id"
+        "SELECT e1.name, e2.name FROM employees e1 JOIN employees e2 ON e1.department = e2.department AND e1.id < e2.id",
     );
     assert!(result.is_ok());
 }
@@ -379,7 +395,7 @@ fn test_parse_self_join() {
 #[test]
 fn test_parse_multi_table_join() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT e.name, d.name, p.name FROM employees e JOIN departments d ON e.department = d.name JOIN projects p ON d.id = p.dept_id"
+        "SELECT e.name, d.name, p.name FROM employees e JOIN departments d ON e.department = d.name JOIN projects p ON d.id = p.dept_id",
     );
     assert!(result.is_ok());
 }
@@ -391,7 +407,7 @@ fn test_parse_multi_table_join() {
 #[test]
 fn test_parse_scalar_subquery() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name, salary FROM employees WHERE salary > (SELECT AVG(salary) FROM employees)"
+        "SELECT name, salary FROM employees WHERE salary > (SELECT AVG(salary) FROM employees)",
     );
     assert!(result.is_ok());
 }
@@ -399,7 +415,7 @@ fn test_parse_scalar_subquery() {
 #[test]
 fn test_parse_in_subquery() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT * FROM employees WHERE department IN (SELECT name FROM departments WHERE budget > 250000)"
+        "SELECT * FROM employees WHERE department IN (SELECT name FROM departments WHERE budget > 250000)",
     );
     assert!(result.is_ok());
 }
@@ -407,7 +423,7 @@ fn test_parse_in_subquery() {
 #[test]
 fn test_parse_exists_subquery() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT * FROM employees e WHERE EXISTS (SELECT 1 FROM departments d WHERE d.name = e.department AND d.budget > 400000)"
+        "SELECT * FROM employees e WHERE EXISTS (SELECT 1 FROM departments d WHERE d.name = e.department AND d.budget > 400000)",
     );
     assert!(result.is_ok());
 }
@@ -415,7 +431,7 @@ fn test_parse_exists_subquery() {
 #[test]
 fn test_parse_not_exists_subquery() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT * FROM employees e WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.name = e.department)"
+        "SELECT * FROM employees e WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.name = e.department)",
     );
     assert!(result.is_ok());
 }
@@ -423,7 +439,7 @@ fn test_parse_not_exists_subquery() {
 #[test]
 fn test_parse_from_subquery() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT dept, avg_sal FROM (SELECT department AS dept, AVG(salary) AS avg_sal FROM employees GROUP BY department) AS t WHERE avg_sal > 80000"
+        "SELECT dept, avg_sal FROM (SELECT department AS dept, AVG(salary) AS avg_sal FROM employees GROUP BY department) AS t WHERE avg_sal > 80000",
     );
     assert!(result.is_ok());
 }
@@ -431,7 +447,7 @@ fn test_parse_from_subquery() {
 #[test]
 fn test_parse_nested_subquery() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT * FROM employees WHERE salary > (SELECT AVG(salary) FROM employees WHERE department IN (SELECT name FROM departments WHERE budget > 200000))"
+        "SELECT * FROM employees WHERE salary > (SELECT AVG(salary) FROM employees WHERE department IN (SELECT name FROM departments WHERE budget > 200000))",
     );
     assert!(result.is_ok());
 }
@@ -443,7 +459,7 @@ fn test_parse_nested_subquery() {
 #[test]
 fn test_parse_union() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name FROM employees WHERE department = 'Engineering' UNION SELECT name FROM employees WHERE salary > 90000"
+        "SELECT name FROM employees WHERE department = 'Engineering' UNION SELECT name FROM employees WHERE salary > 90000",
     );
     assert!(result.is_ok());
 }
@@ -451,7 +467,7 @@ fn test_parse_union() {
 #[test]
 fn test_parse_union_all() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT department FROM employees UNION ALL SELECT name FROM departments"
+        "SELECT department FROM employees UNION ALL SELECT name FROM departments",
     );
     assert!(result.is_ok());
 }
@@ -459,7 +475,7 @@ fn test_parse_union_all() {
 #[test]
 fn test_parse_intersect() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name FROM employees WHERE department = 'Engineering' INTERSECT SELECT name FROM employees WHERE salary > 90000"
+        "SELECT name FROM employees WHERE department = 'Engineering' INTERSECT SELECT name FROM employees WHERE salary > 90000",
     );
     assert!(result.is_ok());
 }
@@ -467,7 +483,7 @@ fn test_parse_intersect() {
 #[test]
 fn test_parse_except() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name FROM employees EXCEPT SELECT name FROM employees WHERE department = 'Marketing'"
+        "SELECT name FROM employees EXCEPT SELECT name FROM employees WHERE department = 'Marketing'",
     );
     assert!(result.is_ok());
 }
@@ -479,7 +495,7 @@ fn test_parse_except() {
 #[test]
 fn test_parse_simple_cte() {
     let result = fe_sql_parser::parse_sql(
-        "WITH high_earners AS (SELECT name, salary FROM employees WHERE salary > 80000) SELECT * FROM high_earners"
+        "WITH high_earners AS (SELECT name, salary FROM employees WHERE salary > 80000) SELECT * FROM high_earners",
     );
     assert!(result.is_ok());
 }
@@ -487,7 +503,7 @@ fn test_parse_simple_cte() {
 #[test]
 fn test_parse_multi_cte() {
     let result = fe_sql_parser::parse_sql(
-        "WITH eng AS (SELECT * FROM employees WHERE department = 'Engineering'), mkt AS (SELECT * FROM employees WHERE department = 'Marketing') SELECT * FROM eng UNION ALL SELECT * FROM mkt"
+        "WITH eng AS (SELECT * FROM employees WHERE department = 'Engineering'), mkt AS (SELECT * FROM employees WHERE department = 'Marketing') SELECT * FROM eng UNION ALL SELECT * FROM mkt",
     );
     assert!(result.is_ok());
 }
@@ -499,7 +515,7 @@ fn test_parse_multi_cte() {
 #[test]
 fn test_parse_row_number() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name, salary, ROW_NUMBER() OVER (ORDER BY salary DESC) AS rank FROM employees"
+        "SELECT name, salary, ROW_NUMBER() OVER (ORDER BY salary DESC) AS rank FROM employees",
     );
     assert!(result.is_ok());
 }
@@ -507,7 +523,7 @@ fn test_parse_row_number() {
 #[test]
 fn test_parse_rank_dense_rank() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name, salary, RANK() OVER (ORDER BY salary DESC) AS rnk, DENSE_RANK() OVER (ORDER BY salary DESC) AS drnk FROM employees"
+        "SELECT name, salary, RANK() OVER (ORDER BY salary DESC) AS rnk, DENSE_RANK() OVER (ORDER BY salary DESC) AS drnk FROM employees",
     );
     assert!(result.is_ok());
 }
@@ -515,7 +531,7 @@ fn test_parse_rank_dense_rank() {
 #[test]
 fn test_parse_lag_lead() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name, salary, LAG(salary, 1) OVER (ORDER BY salary) AS prev_sal, LEAD(salary, 1) OVER (ORDER BY salary) AS next_sal FROM employees"
+        "SELECT name, salary, LAG(salary, 1) OVER (ORDER BY salary) AS prev_sal, LEAD(salary, 1) OVER (ORDER BY salary) AS next_sal FROM employees",
     );
     assert!(result.is_ok());
 }
@@ -523,7 +539,7 @@ fn test_parse_lag_lead() {
 #[test]
 fn test_parse_window_partition_by() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT name, department, salary, ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS dept_rank FROM employees"
+        "SELECT name, department, salary, ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS dept_rank FROM employees",
     );
     assert!(result.is_ok());
 }
@@ -535,42 +551,45 @@ fn test_parse_window_partition_by() {
 #[test]
 fn test_parse_insert_values() {
     let result = fe_sql_parser::parse_sql(
-        "INSERT INTO employees (id, name, department, salary) VALUES (6, 'Frank', 'Engineering', 92000.0)");
+        "INSERT INTO employees (id, name, department, salary) VALUES (6, 'Frank', 'Engineering', 92000.0)",
+    );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_insert_multi_values() {
     let result = fe_sql_parser::parse_sql(
-        "INSERT INTO employees (id, name, department, salary) VALUES (6, 'Frank', 'Engineering', 92000.0), (7, 'Grace', 'Sales', 78000.0)");
+        "INSERT INTO employees (id, name, department, salary) VALUES (6, 'Frank', 'Engineering', 92000.0), (7, 'Grace', 'Sales', 78000.0)",
+    );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_insert_select() {
     let result = fe_sql_parser::parse_sql(
-        "INSERT INTO employees (id, name, department, salary) SELECT id + 100, name, department, salary FROM employees WHERE salary > 80000");
+        "INSERT INTO employees (id, name, department, salary) SELECT id + 100, name, department, salary FROM employees WHERE salary > 80000",
+    );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_update() {
-    let result = fe_sql_parser::parse_sql(
-        "UPDATE employees SET salary = 100000.0 WHERE name = 'Alice'");
+    let result =
+        fe_sql_parser::parse_sql("UPDATE employees SET salary = 100000.0 WHERE name = 'Alice'");
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_update_multiple_columns() {
     let result = fe_sql_parser::parse_sql(
-        "UPDATE employees SET salary = 100000.0, department = 'Sales' WHERE id = 1");
+        "UPDATE employees SET salary = 100000.0, department = 'Sales' WHERE id = 1",
+    );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_delete() {
-    let result = fe_sql_parser::parse_sql(
-        "DELETE FROM employees WHERE id = 5");
+    let result = fe_sql_parser::parse_sql("DELETE FROM employees WHERE id = 5");
     assert!(result.is_ok());
 }
 
@@ -587,7 +606,7 @@ fn test_parse_delete_all() {
 #[test]
 fn test_ssb_query1_revenue_by_year_parse() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT d_year, SUM(lo_revenue) AS total_revenue FROM lineorder l JOIN date_dim d ON l.lo_orderdate = d.d_datekey GROUP BY d_year ORDER BY total_revenue DESC"
+        "SELECT d_year, SUM(lo_revenue) AS total_revenue FROM lineorder l JOIN date_dim d ON l.lo_orderdate = d.d_datekey GROUP BY d_year ORDER BY total_revenue DESC",
     );
     assert!(result.is_ok());
 }
@@ -595,7 +614,7 @@ fn test_ssb_query1_revenue_by_year_parse() {
 #[test]
 fn test_ssb_query2_revenue_by_supplier_nation_parse() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT s_nation, SUM(lo_revenue) AS total_revenue FROM lineorder l JOIN supplier s ON l.lo_suppkey = s.s_suppkey GROUP BY s_nation ORDER BY total_revenue DESC LIMIT 5"
+        "SELECT s_nation, SUM(lo_revenue) AS total_revenue FROM lineorder l JOIN supplier s ON l.lo_suppkey = s.s_suppkey GROUP BY s_nation ORDER BY total_revenue DESC LIMIT 5",
     );
     assert!(result.is_ok());
 }
@@ -603,7 +622,7 @@ fn test_ssb_query2_revenue_by_supplier_nation_parse() {
 #[test]
 fn test_ssb_query3_profit_by_year_category_parse() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT d_year, p_category, SUM(lo_revenue) AS total_profit FROM lineorder l JOIN date_dim d ON l.lo_orderdate = d.d_datekey JOIN part p ON l.lo_partkey = p.p_partkey WHERE lo_discount BETWEEN 0.05 AND 0.10 GROUP BY d_year, p_category HAVING SUM(lo_revenue) > 10000 ORDER BY total_profit DESC"
+        "SELECT d_year, p_category, SUM(lo_revenue) AS total_profit FROM lineorder l JOIN date_dim d ON l.lo_orderdate = d.d_datekey JOIN part p ON l.lo_partkey = p.p_partkey WHERE lo_discount BETWEEN 0.05 AND 0.10 GROUP BY d_year, p_category HAVING SUM(lo_revenue) > 10000 ORDER BY total_profit DESC",
     );
     assert!(result.is_ok());
 }
@@ -611,7 +630,7 @@ fn test_ssb_query3_profit_by_year_category_parse() {
 #[test]
 fn test_ssb_query4_multi_join_parse() {
     let result = fe_sql_parser::parse_sql(
-        "SELECT c_nation, s_nation, d_year, SUM(lo_revenue) AS revenue FROM lineorder l JOIN customer c ON l.lo_custkey = c.c_custkey JOIN supplier s ON l.lo_suppkey = s.s_suppkey JOIN date_dim d ON l.lo_orderdate = d.d_datekey GROUP BY c_nation, s_nation, d_year ORDER BY d_year, revenue DESC"
+        "SELECT c_nation, s_nation, d_year, SUM(lo_revenue) AS revenue FROM lineorder l JOIN customer c ON l.lo_custkey = c.c_custkey JOIN supplier s ON l.lo_suppkey = s.s_suppkey JOIN date_dim d ON l.lo_orderdate = d.d_datekey GROUP BY c_nation, s_nation, d_year ORDER BY d_year, revenue DESC",
     );
     assert!(result.is_ok());
 }
@@ -626,7 +645,9 @@ fn test_ssb_lineorder_block_aggregation() {
 
     let mut revenue_by_supplier: HashMap<i64, f64> = HashMap::new();
     for i in 0..block.num_rows() {
-        if let (ScalarValue::Int64(s), ScalarValue::Float64(r)) = (supp_col.scalar_at(i), revenue_col.scalar_at(i)) {
+        if let (ScalarValue::Int64(s), ScalarValue::Float64(r)) =
+            (supp_col.scalar_at(i), revenue_col.scalar_at(i))
+        {
             *revenue_by_supplier.entry(s).or_insert(0.0) += r;
         }
     }

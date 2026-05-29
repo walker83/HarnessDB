@@ -1,4 +1,4 @@
-use crate::{Schema, Vector, ScalarValue};
+use crate::{ScalarValue, Schema, Vector};
 
 #[derive(Debug, Clone)]
 pub struct Block {
@@ -10,12 +10,29 @@ pub struct Block {
 impl Block {
     pub fn new(schema: Schema, columns: Vec<Vector>) -> Self {
         let row_count = columns.first().map(|c| c.len()).unwrap_or(0);
-        Self { schema, columns, row_count }
+        debug_assert!(
+            columns.iter().all(|c| c.len() == row_count),
+            "Block::new: all columns must have the same length, got lengths: {:?}",
+            columns.iter().map(|c| c.len()).collect::<Vec<_>>(),
+        );
+        Self {
+            schema,
+            columns,
+            row_count,
+        }
     }
 
     pub fn empty(schema: Schema) -> Self {
-        let columns = schema.fields().iter().map(|f| empty_vector(&f.data_type)).collect();
-        Self { schema, columns, row_count: 0 }
+        let columns = schema
+            .fields()
+            .iter()
+            .map(|f| empty_vector(&f.data_type))
+            .collect();
+        Self {
+            schema,
+            columns,
+            row_count: 0,
+        }
     }
 
     pub fn single_row() -> Self {
@@ -50,7 +67,10 @@ impl Block {
     }
 
     pub fn num_rows(&self) -> usize {
-        self.columns.first().map(|c| c.len()).unwrap_or(self.row_count)
+        self.columns
+            .first()
+            .map(|c| c.len())
+            .unwrap_or(self.row_count)
     }
 
     pub fn num_columns(&self) -> usize {
@@ -62,32 +82,57 @@ impl Block {
     }
 
     pub fn row(&self, idx: usize) -> Vec<ScalarValue> {
+        if idx >= self.num_rows() {
+            tracing::warn!(
+                "Block::row: index out of bounds: the block has {} rows but the index is {}",
+                self.num_rows(),
+                idx,
+            );
+            return Vec::new();
+        }
         self.columns.iter().map(|c| c.scalar_at(idx)).collect()
     }
 
     pub fn slice(&self, start: usize, len: usize) -> Self {
-        let columns: Vec<Vector> = self.columns.iter()
+        let columns: Vec<Vector> = self
+            .columns
+            .iter()
             .map(|c: &Vector| c.slice(start, len))
             .collect();
         let row_count = columns.first().map(|c: &Vector| c.len()).unwrap_or(0);
-        Self { schema: self.schema.clone(), columns, row_count }
+        Self {
+            schema: self.schema.clone(),
+            columns,
+            row_count,
+        }
     }
 
     pub fn project(&self, indices: &[usize]) -> Self {
         let schema = self.schema.project(indices);
-        let columns: Vec<Vector> = indices.iter()
-            .map(|&i| self.columns[i].clone())
-            .collect();
-        let row_count = columns.first().map(|c: &Vector| c.len()).unwrap_or(self.row_count);
-        Self { schema, columns, row_count }
+        let columns: Vec<Vector> = indices.iter().map(|&i| self.columns[i].clone()).collect();
+        let row_count = columns
+            .first()
+            .map(|c: &Vector| c.len())
+            .unwrap_or(self.row_count);
+        Self {
+            schema,
+            columns,
+            row_count,
+        }
     }
 
     pub fn filter(&self, selection: &crate::Bitmap) -> Self {
-        let columns: Vec<Vector> = self.columns.iter()
+        let columns: Vec<Vector> = self
+            .columns
+            .iter()
             .map(|c: &Vector| c.filter(selection))
             .collect();
         let row_count = columns.first().map(|c: &Vector| c.len()).unwrap_or(0);
-        Self { schema: self.schema.clone(), columns, row_count }
+        Self {
+            schema: self.schema.clone(),
+            columns,
+            row_count,
+        }
     }
 
     pub fn append_block(&mut self, other: &Block) {
@@ -100,7 +145,9 @@ impl Block {
     }
 
     pub fn concat(blocks: &[Block]) -> Option<Block> {
-        if blocks.is_empty() { return None; }
+        if blocks.is_empty() {
+            return None;
+        }
         let first = &blocks[0];
         let mut result = first.clone();
         for block in &blocks[1..] {

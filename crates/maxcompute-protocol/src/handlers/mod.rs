@@ -17,7 +17,10 @@ pub mod tables;
 pub fn build_router() -> Router<std::sync::Arc<crate::server::McServerState>> {
     Router::new()
         // Project endpoints
-        .route("/projects/{project}", axum::routing::get(projects::get_project))
+        .route(
+            "/projects/{project}",
+            axum::routing::get(projects::get_project),
+        )
         // Table endpoints
         .route(
             "/projects/{project}/tables",
@@ -278,13 +281,19 @@ mod tests {
         assert!(mgr.cancel("test-1"), "cancel should succeed");
         let retrieved = mgr.get("test-1").unwrap();
         assert_eq!(retrieved.status, InstanceStatus::Cancelled);
-        assert!(retrieved.end_time.is_some(), "end_time should be set on cancel");
+        assert!(
+            retrieved.end_time.is_some(),
+            "end_time should be set on cancel"
+        );
     }
 
     #[test]
     fn test_instance_manager_cancel_nonexistent() {
         let mgr = InstanceManager::new();
-        assert!(!mgr.cancel("nonexistent"), "cancel should return false for missing id");
+        assert!(
+            !mgr.cancel("nonexistent"),
+            "cancel should return false for missing id"
+        );
     }
 
     #[test]
@@ -301,19 +310,28 @@ mod tests {
             vec![vec![Some("value".to_string())]],
         );
 
-        assert!(mgr.set_result("test-1", result.clone()), "set_result should succeed");
+        assert!(
+            mgr.set_result("test-1", result.clone()),
+            "set_result should succeed"
+        );
 
         let retrieved = mgr.get("test-1").unwrap();
         assert_eq!(retrieved.status, InstanceStatus::Success);
         assert!(retrieved.result.is_some(), "result should be set");
-        assert!(retrieved.end_time.is_some(), "end_time should be set on success");
+        assert!(
+            retrieved.end_time.is_some(),
+            "end_time should be set on success"
+        );
     }
 
     #[test]
     fn test_instance_manager_set_result_nonexistent() {
         let mgr = InstanceManager::new();
         let result = mysql_protocol::server::QueryResult::ok();
-        assert!(!mgr.set_result("nonexistent", result), "set_result should return false for missing id");
+        assert!(
+            !mgr.set_result("nonexistent", result),
+            "set_result should return false for missing id"
+        );
     }
 
     #[test]
@@ -322,18 +340,27 @@ mod tests {
         let info = make_info("test-1", Utc::now());
         mgr.insert(info);
 
-        assert!(mgr.set_error("test-1", "Something went wrong".to_string()), "set_error should succeed");
+        assert!(
+            mgr.set_error("test-1", "Something went wrong".to_string()),
+            "set_error should succeed"
+        );
 
         let retrieved = mgr.get("test-1").unwrap();
         assert_eq!(retrieved.status, InstanceStatus::Failed);
         assert_eq!(retrieved.error.as_deref(), Some("Something went wrong"));
-        assert!(retrieved.end_time.is_some(), "end_time should be set on error");
+        assert!(
+            retrieved.end_time.is_some(),
+            "end_time should be set on error"
+        );
     }
 
     #[test]
     fn test_instance_manager_set_error_nonexistent() {
         let mgr = InstanceManager::new();
-        assert!(!mgr.set_error("nonexistent", "error".to_string()), "set_error should return false for missing id");
+        assert!(
+            !mgr.set_error("nonexistent", "error".to_string()),
+            "set_error should return false for missing id"
+        );
     }
 
     #[test]
@@ -345,7 +372,10 @@ mod tests {
         let removed = mgr.remove("test-1");
         assert!(removed.is_some(), "remove should return the removed entry");
         assert_eq!(removed.unwrap().0, "test-1");
-        assert!(mgr.get("test-1").is_none(), "removed entry should not exist anymore");
+        assert!(
+            mgr.get("test-1").is_none(),
+            "removed entry should not exist anymore"
+        );
     }
 
     #[test]
@@ -408,11 +438,15 @@ mod tests {
         assert!(
             len < total,
             "Eviction should have reduced entries from {} to less than {}",
-            total, total
+            total,
+            total
         );
 
         // The oldest entries should have been evicted
-        assert!(mgr.get("id-0000").is_none(), "oldest entry should be evicted");
+        assert!(
+            mgr.get("id-0000").is_none(),
+            "oldest entry should be evicted"
+        );
     }
 
     #[test]
@@ -427,7 +461,11 @@ mod tests {
             mgr.insert(info);
         }
 
-        assert_eq!(mgr.len(), MAX_INSTANCES - 10, "No eviction should happen before capacity");
+        assert_eq!(
+            mgr.len(),
+            MAX_INSTANCES - 10,
+            "No eviction should happen before capacity"
+        );
     }
 
     #[test]
@@ -449,8 +487,14 @@ mod tests {
         mgr.cleanup();
 
         assert_eq!(mgr.len(), 1, "old instance should be cleaned up");
-        assert!(mgr.get("old-instance").is_none(), "old instance should be removed");
-        assert!(mgr.get("recent-instance").is_some(), "recent instance should remain");
+        assert!(
+            mgr.get("old-instance").is_none(),
+            "old instance should be removed"
+        );
+        assert!(
+            mgr.get("recent-instance").is_some(),
+            "recent instance should remain"
+        );
     }
 
     #[test]

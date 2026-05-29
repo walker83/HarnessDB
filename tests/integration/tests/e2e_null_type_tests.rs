@@ -4,16 +4,16 @@
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 30020;
@@ -38,14 +38,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -78,7 +85,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -110,7 +119,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -134,7 +146,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -144,7 +157,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     #[allow(dead_code)]
@@ -157,7 +171,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -173,7 +194,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -185,8 +207,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -201,8 +230,11 @@ fn get_string(row: &Row, idx: usize) -> String {
         Value::Double(d) => d.to_string(),
         &Value::Date(y, m, d, _, _, _, _) => format!("{}-{:02}-{:02}", y, m, d),
         &Value::Time(neg, days, h, mi, s, _) => {
-            if neg { format!("-{} {:02}:{:02}:{:02}", days, h, mi, s) }
-            else { format!("{} {:02}:{:02}:{:02}", days, h, mi, s) }
+            if neg {
+                format!("-{} {:02}:{:02}:{:02}", days, h, mi, s)
+            } else {
+                format!("{} {:02}:{:02}:{:02}", days, h, mi, s)
+            }
         }
     }
 }
@@ -311,7 +343,8 @@ fn test_null_in_where_clause() {
     assert_eq!(get_i64(&rows[0], 0), 1);
 
     // WHERE with OR and NULLs
-    let rows = ctx.query("SELECT id FROM null_where WHERE score IS NULL OR grade IS NULL ORDER BY id");
+    let rows =
+        ctx.query("SELECT id FROM null_where WHERE score IS NULL OR grade IS NULL ORDER BY id");
     assert_eq!(rows.len(), 3);
 
     ctx.drop_db(&db);
@@ -426,7 +459,9 @@ fn test_nullif_with_columns() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE nullif_test (id INT, a INT, b INT)");
-    ctx.exec("INSERT INTO nullif_test VALUES (1, 10, 10), (2, 10, 20), (3, NULL, 10), (4, NULL, NULL)");
+    ctx.exec(
+        "INSERT INTO nullif_test VALUES (1, 10, 10), (2, 10, 20), (3, NULL, 10), (4, NULL, NULL)",
+    );
 
     let rows = ctx.query("SELECT id, NULLIF(a, b) FROM nullif_test ORDER BY id");
     assert_eq!(rows.len(), 4);
@@ -493,8 +528,11 @@ fn test_null_string_functions() {
     let rows = ctx.query("SELECT CONCAT(name, ' world') FROM null_str WHERE id = 1");
     let val = get_string(&rows[0], 0);
     // DataFusion CONCAT: NULL → empty string, so result is " world" (or NULL in MySQL mode)
-    assert!(val == " world" || val.is_empty() || is_null(&rows[0], 0),
-        "CONCAT(NULL, 'world'): DataFusion treats NULL as empty, got {:?}", val);
+    assert!(
+        val == " world" || val.is_empty() || is_null(&rows[0], 0),
+        "CONCAT(NULL, 'world'): DataFusion treats NULL as empty, got {:?}",
+        val
+    );
 
     // CONCAT with non-NULL
     let rows = ctx.query("SELECT CONCAT(name, ' world') FROM null_str WHERE id = 2");
@@ -556,11 +594,11 @@ fn test_null_aggregates_sum_avg_min_max() {
 
     // SUM excludes NULLs
     let rows = ctx.query("SELECT SUM(val) FROM null_agg2");
-    assert_eq!(get_i64(&rows[0], 0), 60);  // 10 + 20 + 30
+    assert_eq!(get_i64(&rows[0], 0), 60); // 10 + 20 + 30
 
     // AVG excludes NULLs
     let rows = ctx.query("SELECT AVG(val) FROM null_agg2");
-    assert_eq!(get_f64(&rows[0], 0), 20.0);  // 60 / 3
+    assert_eq!(get_f64(&rows[0], 0), 20.0); // 60 / 3
 
     // MIN excludes NULLs
     let rows = ctx.query("SELECT MIN(val) FROM null_agg2");
@@ -637,7 +675,8 @@ fn test_null_group_by() {
     ctx.exec("INSERT INTO null_gb VALUES (1, 'A', 10), (2, NULL, 20), (3, 'B', 30), (4, NULL, 40), (5, 'A', 50)");
 
     // GROUP BY with NULL — NULL forms its own group
-    let rows = ctx.query("SELECT category, COUNT(*) FROM null_gb GROUP BY category ORDER BY category");
+    let rows =
+        ctx.query("SELECT category, COUNT(*) FROM null_gb GROUP BY category ORDER BY category");
     // NULL group and A, B groups
     // DataFusion: NULL sorts LAST in ORDER BY ASC
     assert_eq!(rows.len(), 3);
@@ -652,12 +691,16 @@ fn test_null_group_by() {
 
     // Check NULL group (last) — may come back as actual NULL or "NULL" string
     let null_val = get_string(&rows[2], 0);
-    assert!(is_null(&rows[2], 0) || null_val == "NULL" || null_val.is_empty(),
-        "Last group should be NULL, got: {:?}", null_val);
+    assert!(
+        is_null(&rows[2], 0) || null_val == "NULL" || null_val.is_empty(),
+        "Last group should be NULL, got: {:?}",
+        null_val
+    );
     assert_eq!(get_i64(&rows[2], 1), 2, "NULL group count = 2");
 
     // GROUP BY with SUM and NULL
-    let rows = ctx.query("SELECT category, SUM(amount) FROM null_gb GROUP BY category ORDER BY category");
+    let rows =
+        ctx.query("SELECT category, SUM(amount) FROM null_gb GROUP BY category ORDER BY category");
     assert_eq!(rows.len(), 3);
     // A group (first, sum=10+50=60)
     assert_eq!(get_string(&rows[0], 0), "A");
@@ -667,8 +710,11 @@ fn test_null_group_by() {
     assert_eq!(get_i64(&rows[1], 1), 30, "B group SUM = 30");
     // NULL group (last, sum=20+40=60)
     let null_val = get_string(&rows[2], 0);
-    assert!(is_null(&rows[2], 0) || null_val == "NULL" || null_val.is_empty(),
-        "Last group should be NULL, got: {:?}", null_val);
+    assert!(
+        is_null(&rows[2], 0) || null_val == "NULL" || null_val.is_empty(),
+        "Last group should be NULL, got: {:?}",
+        null_val
+    );
     assert_eq!(get_i64(&rows[2], 1), 60, "NULL group SUM = 20 + 40 = 60");
 
     ctx.drop_db(&db);
@@ -714,7 +760,10 @@ fn test_cast_basics() {
     // DOUBLE to VARCHAR
     let rows = ctx.query("SELECT CAST(3.14 AS VARCHAR)");
     let s = get_string(&rows[0], 0);
-    assert!(s.contains("3.14") || s.contains("3.14"), "CAST(3.14 AS VARCHAR) should contain 3.14");
+    assert!(
+        s.contains("3.14") || s.contains("3.14"),
+        "CAST(3.14 AS VARCHAR) should contain 3.14"
+    );
 
     ctx.drop_db(&db);
 }
@@ -733,7 +782,11 @@ fn test_cast_dates() {
         let s = get_string(&rows[0], 0);
         // Date may come back as NULL, empty, or formatted — accept any
         if !s.is_empty() && !s.starts_with("ERROR") {
-            assert!(s.contains("2024") || s.contains("24"), "Date string should contain year, got: {}", s);
+            assert!(
+                s.contains("2024") || s.contains("24"),
+                "Date string should contain year, got: {}",
+                s
+            );
         }
     }
 
@@ -777,13 +830,20 @@ fn test_implicit_conversion() {
     let rows = ctx.query("SELECT val / 3 FROM implicit_conv WHERE id = 1");
     let result = get_f64(&rows[0], 0);
     // DataFusion: integer division truncates
-    assert!((result - 3.0).abs() < 0.01 || (result - 3.333).abs() < 0.01,
-        "10 / 3 should be 3 (int div) or ~3.333 (float div), got {}", result);
+    assert!(
+        (result - 3.0).abs() < 0.01 || (result - 3.333).abs() < 0.01,
+        "10 / 3 should be 3 (int div) or ~3.333 (float div), got {}",
+        result
+    );
 
     // Use CAST for float division
     let rows = ctx.query("SELECT CAST(val AS DOUBLE) / 3 FROM implicit_conv WHERE id = 1");
     let result = get_f64(&rows[0], 0);
-    assert!((result - 3.333).abs() < 0.01, "CAST(val AS DOUBLE) / 3 should be ~3.333, got {}", result);
+    assert!(
+        (result - 3.333).abs() < 0.01,
+        "CAST(val AS DOUBLE) / 3 should be ~3.333, got {}",
+        result
+    );
 
     // Compare INT column with double literal
     let rows = ctx.query("SELECT id FROM implicit_conv WHERE val > 15.0");
@@ -833,31 +893,71 @@ fn test_type_boundaries() {
     assert_eq!(get_i64(&rows[0], 0), 0);
     assert_eq!(get_i64(&rows[1], 0), 127);
     // -128 may be NULL due to negative value parsing
-    let min_val = if is_null(&rows[2], 0) { 0 } else { get_i64(&rows[2], 0) };
-    assert!(min_val == -128 || min_val == 0, "TINYINT min: expected -128 or NULL/0, got {}", min_val);
+    let min_val = if is_null(&rows[2], 0) {
+        0
+    } else {
+        get_i64(&rows[2], 0)
+    };
+    assert!(
+        min_val == -128 || min_val == 0,
+        "TINYINT min: expected -128 or NULL/0, got {}",
+        min_val
+    );
 
     // SMALLINT boundaries
     let rows = ctx.query("SELECT i16_val FROM type_bounds ORDER BY id");
     assert_eq!(get_i64(&rows[0], 0), 0);
     assert_eq!(get_i64(&rows[1], 0), 32767);
-    let min_val = if is_null(&rows[2], 0) { 0 } else { get_i64(&rows[2], 0) };
-    assert!(min_val == -32768 || min_val == 0, "SMALLINT min: expected -32768 or NULL/0, got {}", min_val);
+    let min_val = if is_null(&rows[2], 0) {
+        0
+    } else {
+        get_i64(&rows[2], 0)
+    };
+    assert!(
+        min_val == -32768 || min_val == 0,
+        "SMALLINT min: expected -32768 or NULL/0, got {}",
+        min_val
+    );
 
     // INT boundaries
     let rows = ctx.query("SELECT i32_val FROM type_bounds ORDER BY id");
     assert_eq!(get_i64(&rows[0], 0), 0);
     assert_eq!(get_i64(&rows[1], 0), 2147483647);
-    let min_val = if is_null(&rows[2], 0) { 0 } else { get_i64(&rows[2], 0) };
-    assert!(min_val == -2147483648 || min_val == 0, "INT min: expected -2147483648 or NULL/0, got {}", min_val);
+    let min_val = if is_null(&rows[2], 0) {
+        0
+    } else {
+        get_i64(&rows[2], 0)
+    };
+    assert!(
+        min_val == -2147483648 || min_val == 0,
+        "INT min: expected -2147483648 or NULL/0, got {}",
+        min_val
+    );
 
     // BIGINT boundaries — max may overflow, min may be NULL
     let rows = ctx.query("SELECT i64_val FROM type_bounds ORDER BY id");
     assert_eq!(get_i64(&rows[0], 0), 0);
     // Max BIGINT may or may not roundtrip correctly
-    let max_val = if is_null(&rows[1], 0) { 0 } else { get_i64(&rows[1], 0) };
-    assert!(max_val == 9223372036854775807i64 || max_val == 0, "BIGINT max: got {}", max_val);
-    let min_val = if is_null(&rows[2], 0) { 0 } else { get_i64(&rows[2], 0) };
-    assert!(min_val == -9223372036854775808i64 || min_val == 0, "BIGINT min: got {}", min_val);
+    let max_val = if is_null(&rows[1], 0) {
+        0
+    } else {
+        get_i64(&rows[1], 0)
+    };
+    assert!(
+        max_val == 9223372036854775807i64 || max_val == 0,
+        "BIGINT max: got {}",
+        max_val
+    );
+    let min_val = if is_null(&rows[2], 0) {
+        0
+    } else {
+        get_i64(&rows[2], 0)
+    };
+    assert!(
+        min_val == -9223372036854775808i64 || min_val == 0,
+        "BIGINT min: got {}",
+        min_val
+    );
 
     ctx.drop_db(&db);
 }
@@ -875,8 +975,16 @@ fn test_boolean_type() {
     let v0 = get_string(&rows[0], 0);
     let v1 = get_string(&rows[1], 0);
     // Accept either representation
-    assert!(v0 == "true" || v0 == "1", "true boolean should be truthy, got: {}", v0);
-    assert!(v1 == "false" || v1 == "0", "false boolean should be falsy, got: {}", v1);
+    assert!(
+        v0 == "true" || v0 == "1",
+        "true boolean should be truthy, got: {}",
+        v0
+    );
+    assert!(
+        v1 == "false" || v1 == "0",
+        "false boolean should be falsy, got: {}",
+        v1
+    );
 
     // WHERE on boolean column
     let rows = ctx.query("SELECT id FROM bool_test WHERE flag");
@@ -911,7 +1019,11 @@ fn test_float_double_precision() {
     // DOUBLE values
     let rows = ctx.query("SELECT d FROM float_test ORDER BY id");
     let d0 = get_f64(&rows[0], 0);
-    assert!((d0 - 2.718281828459045).abs() < 0.0001, "DOUBLE precision, got {}", d0);
+    assert!(
+        (d0 - 2.718281828459045).abs() < 0.0001,
+        "DOUBLE precision, got {}",
+        d0
+    );
     let d1 = get_f64(&rows[1], 0);
     assert!((d1 + 1.0e-10).abs() < 1e-11, "DOUBLE -1e-10, got {}", d1);
 
@@ -969,7 +1081,9 @@ fn test_varchar_operations() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE varchar_ops (id INT, s1 VARCHAR(50), s2 VARCHAR(50))");
-    ctx.exec("INSERT INTO varchar_ops VALUES (1, 'hello', 'world'), (2, 'foo', 'bar'), (3, '', 'empty')");
+    ctx.exec(
+        "INSERT INTO varchar_ops VALUES (1, 'hello', 'world'), (2, 'foo', 'bar'), (3, '', 'empty')",
+    );
 
     // VARCHAR concatenation
     let rows = ctx.query("SELECT CONCAT(s1, ' ', s2) FROM varchar_ops ORDER BY id");
@@ -1018,7 +1132,7 @@ fn test_types_unsigned_boundaries() {
     ctx.exec("CREATE TABLE unsigned_test (id INT, u_val BIGINT)");
     // Insert large unsigned-like values into BIGINT
     ctx.exec("INSERT INTO unsigned_test VALUES (1, 0)");
-    ctx.exec("INSERT INTO unsigned_test VALUES (2, 4294967295)");  // max uint32 (fits in BIGINT)
+    ctx.exec("INSERT INTO unsigned_test VALUES (2, 4294967295)"); // max uint32 (fits in BIGINT)
 
     let rows = ctx.query("SELECT u_val FROM unsigned_test ORDER BY id");
     assert_eq!(get_i64(&rows[0], 0), 0);

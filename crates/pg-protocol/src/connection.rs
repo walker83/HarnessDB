@@ -12,12 +12,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
 
-use crate::auth::{generate_salt, validate_password, AuthConfig};
+use crate::auth::{AuthConfig, generate_salt, validate_password};
 use crate::message::{
-    create_error_response, BackendMessage, DescribeTarget, FieldDescription, FrontendMessage,
-    PgProtocolError, TransactionStatus, CANCEL_REQUEST_CODE, OID_BOOL, OID_DATE, OID_FLOAT4,
-    OID_FLOAT8, OID_INT4, OID_TEXT, OID_TIMESTAMP,
-    PG_PROTOCOL_VERSION_3, SSL_REQUEST_CODE, sqlstate,
+    BackendMessage, CANCEL_REQUEST_CODE, DescribeTarget, FieldDescription, FrontendMessage,
+    OID_BOOL, OID_DATE, OID_FLOAT4, OID_FLOAT8, OID_INT4, OID_TEXT, OID_TIMESTAMP,
+    PG_PROTOCOL_VERSION_3, PgProtocolError, SSL_REQUEST_CODE, TransactionStatus,
+    create_error_response, sqlstate,
 };
 use mysql_protocol::server::{ColumnType, QueryHandler, QueryResult};
 
@@ -97,7 +97,8 @@ impl PgConnection {
             .peer_addr()
             .map(|a| a.to_string())
             .unwrap_or_else(|_| "unknown".to_string());
-        self.handler.on_connect(self.conn_id, &self.session.username, &peer_addr);
+        self.handler
+            .on_connect(self.conn_id, &self.session.username, &peer_addr);
         self.handle_auth().await?;
         self.send_parameter_status().await?;
         self.send_backend_key_data().await?;
@@ -128,21 +129,20 @@ impl PgConnection {
 
             match version {
                 PG_PROTOCOL_VERSION_3 => {
-                    let msg = FrontendMessage::decode_startup(&mut self.read_buf)?.ok_or_else(
-                        || {
+                    let msg =
+                        FrontendMessage::decode_startup(&mut self.read_buf)?.ok_or_else(|| {
                             PgProtocolError::ProtocolViolation(
                                 "incomplete startup message".to_string(),
                             )
-                        },
-                    )?;
+                        })?;
                     match msg {
                         FrontendMessage::StartupMessage { params, .. } => {
-                            self.session.username =
-                                params.get("user").cloned().unwrap_or_else(|| "root".to_string());
-                            self.session.database = params
-                                .get("database")
+                            self.session.username = params
+                                .get("user")
                                 .cloned()
-                                .unwrap_or_default();
+                                .unwrap_or_else(|| "root".to_string());
+                            self.session.database =
+                                params.get("database").cloned().unwrap_or_default();
                             info!(
                                 "PG conn {}: startup user='{}' database='{}'",
                                 self.conn_id, self.session.username, self.session.database
@@ -163,7 +163,10 @@ impl PgConnection {
                     if len >= 16 {
                         let pid = (&self.read_buf[8..12]).get_i32();
                         let key = (&self.read_buf[12..16]).get_i32();
-                        warn!("PG conn {}: cancel request pid={} key={}", self.conn_id, pid, key);
+                        warn!(
+                            "PG conn {}: cancel request pid={} key={}",
+                            self.conn_id, pid, key
+                        );
                     }
                     return Err(PgProtocolError::CancelRequest);
                 }
@@ -184,8 +187,7 @@ impl PgConnection {
     async fn handle_auth(&mut self) -> Result<(), PgProtocolError> {
         let salt = generate_salt();
 
-        BackendMessage::AuthenticationMD5Password { salt }
-            .encode(&mut self.write_buf);
+        BackendMessage::AuthenticationMD5Password { salt }.encode(&mut self.write_buf);
         self.flush_write().await?;
 
         self.read_buf_ensure(5).await?;
@@ -204,7 +206,10 @@ impl PgConnection {
         };
 
         if !validate_password(&self.auth_config, &self.session.username, &password, &salt) {
-            warn!("PG conn {}: auth failed for user '{}'", self.conn_id, self.session.username);
+            warn!(
+                "PG conn {}: auth failed for user '{}'",
+                self.conn_id, self.session.username
+            );
             create_error_response(
                 "FATAL",
                 sqlstate::INVALID_PASSWORD,
@@ -217,7 +222,10 @@ impl PgConnection {
             ));
         }
 
-        info!("PG conn {}: auth OK for user '{}'", self.conn_id, self.session.username);
+        info!(
+            "PG conn {}: auth OK for user '{}'",
+            self.conn_id, self.session.username
+        );
         BackendMessage::AuthenticationOk.encode(&mut self.write_buf);
         self.flush_write().await
     }
@@ -299,16 +307,24 @@ impl PgConnection {
                     info!("PG conn {}: Terminate", self.conn_id);
                     return Ok(());
                 }
-                FrontendMessage::Parse { name, query, param_types } => {
+                FrontendMessage::Parse {
+                    name,
+                    query,
+                    param_types,
+                } => {
                     self.handle_parse(&name, &query, &param_types).await;
                 }
-                FrontendMessage::Bind { portal, statement, .. } => {
+                FrontendMessage::Bind {
+                    portal, statement, ..
+                } => {
                     self.handle_bind(&portal, &statement).await;
                 }
                 FrontendMessage::Describe { target, name } => {
                     self.handle_describe(target, &name).await;
                 }
-                FrontendMessage::Execute { portal, max_rows } => self.handle_execute(&portal, max_rows).await,
+                FrontendMessage::Execute { portal, max_rows } => {
+                    self.handle_execute(&portal, max_rows).await
+                }
                 FrontendMessage::Close { target, name } => self.handle_close(target, &name).await,
                 FrontendMessage::Sync => self.send_ready_for_query().await?,
                 other => {
@@ -343,7 +359,11 @@ impl PgConnection {
         self.send_ready_for_query().await
     }
 
-    async fn send_query_result(&mut self, result: &QueryResult, sql: &str) -> Result<(), PgProtocolError> {
+    async fn send_query_result(
+        &mut self,
+        result: &QueryResult,
+        sql: &str,
+    ) -> Result<(), PgProtocolError> {
         let fields: Vec<FieldDescription> = result
             .columns
             .iter()
@@ -411,7 +431,10 @@ impl PgConnection {
         }
         BackendMessage::ParseComplete.encode(&mut self.write_buf);
         if let Err(e) = self.flush_write().await {
-            error!("PG conn {}: flush error in handle_parse: {}", self.conn_id, e);
+            error!(
+                "PG conn {}: flush error in handle_parse: {}",
+                self.conn_id, e
+            );
         }
     }
 
@@ -440,7 +463,10 @@ impl PgConnection {
             )
             .encode(&mut self.write_buf);
             if let Err(e) = self.flush_write().await {
-                error!("PG conn {}: flush error in handle_bind: {}", self.conn_id, e);
+                error!(
+                    "PG conn {}: flush error in handle_bind: {}",
+                    self.conn_id, e
+                );
             }
             return;
         }
@@ -448,7 +474,10 @@ impl PgConnection {
         self.session.portals.insert(portal_name, stmt_name);
         BackendMessage::BindComplete.encode(&mut self.write_buf);
         if let Err(e) = self.flush_write().await {
-            error!("PG conn {}: flush error in handle_bind: {}", self.conn_id, e);
+            error!(
+                "PG conn {}: flush error in handle_bind: {}",
+                self.conn_id, e
+            );
         }
     }
 
@@ -484,7 +513,10 @@ impl PgConnection {
             }
         }
         if let Err(e) = self.flush_write().await {
-            error!("PG conn {}: flush error in handle_describe: {}", self.conn_id, e);
+            error!(
+                "PG conn {}: flush error in handle_describe: {}",
+                self.conn_id, e
+            );
         }
     }
 
@@ -503,7 +535,10 @@ impl PgConnection {
         let stmt_name = match self.session.portals.get(&portal_name) {
             Some(name) => name.clone(),
             None => {
-                error!("PG conn {}: portal '{}' not found", self.conn_id, portal_name);
+                error!(
+                    "PG conn {}: portal '{}' not found",
+                    self.conn_id, portal_name
+                );
                 create_error_response(
                     "ERROR",
                     sqlstate::INVALID_CURSOR_STATE,
@@ -596,7 +631,10 @@ impl PgConnection {
         }
 
         if let Err(e) = self.flush_write().await {
-            error!("PG conn {}: flush error in handle_execute: {}", self.conn_id, e);
+            error!(
+                "PG conn {}: flush error in handle_execute: {}",
+                self.conn_id, e
+            );
         }
     }
 
@@ -621,7 +659,10 @@ impl PgConnection {
         }
         BackendMessage::CloseComplete.encode(&mut self.write_buf);
         if let Err(e) = self.flush_write().await {
-            error!("PG conn {}: flush error in handle_close: {}", self.conn_id, e);
+            error!(
+                "PG conn {}: flush error in handle_close: {}",
+                self.conn_id, e
+            );
         }
     }
 
@@ -664,10 +705,7 @@ impl PgConnection {
 /// Infer a PostgreSQL command tag from SQL text (e.g., "SELECT 5", "INSERT 0 1").
 fn infer_command_tag(sql: &str, row_count: i64) -> String {
     let upper = sql.trim().to_uppercase();
-    if upper.starts_with("SELECT")
-        || upper.starts_with("WITH")
-        || upper.starts_with("VALUES")
-    {
+    if upper.starts_with("SELECT") || upper.starts_with("WITH") || upper.starts_with("VALUES") {
         format!("SELECT {}", row_count)
     } else if upper.starts_with("INSERT") {
         format!("INSERT 0 {}", row_count)
@@ -703,7 +741,8 @@ fn infer_command_tag(sql: &str, row_count: i64) -> String {
         "SHOW".to_string()
     } else if upper.starts_with("USE") {
         "SET".to_string()
-    } else if upper.starts_with("EXPLAIN") || upper.starts_with("DESCRIBE")
+    } else if upper.starts_with("EXPLAIN")
+        || upper.starts_with("DESCRIBE")
         || upper.starts_with("DESC")
     {
         format!("EXPLAIN {}", row_count)
@@ -767,7 +806,10 @@ mod tests {
 
     #[test]
     fn test_infer_command_tag_insert() {
-        assert_eq!(infer_command_tag("INSERT INTO t VALUES (1)", 1), "INSERT 0 1");
+        assert_eq!(
+            infer_command_tag("INSERT INTO t VALUES (1)", 1),
+            "INSERT 0 1"
+        );
     }
 
     #[test]
@@ -782,7 +824,10 @@ mod tests {
 
     #[test]
     fn test_infer_command_tag_create_table() {
-        assert_eq!(infer_command_tag("CREATE TABLE t (id INT)", 0), "CREATE TABLE");
+        assert_eq!(
+            infer_command_tag("CREATE TABLE t (id INT)", 0),
+            "CREATE TABLE"
+        );
     }
 
     #[test]
@@ -817,7 +862,10 @@ mod tests {
 
     #[test]
     fn test_infer_command_tag_with_cte() {
-        assert_eq!(infer_command_tag("WITH t AS (SELECT 1) SELECT * FROM t", 3), "SELECT 3");
+        assert_eq!(
+            infer_command_tag("WITH t AS (SELECT 1) SELECT * FROM t", 3),
+            "SELECT 3"
+        );
     }
 
     #[test]
@@ -1079,9 +1127,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extended_query_full_flow() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1128,14 +1174,22 @@ mod tests {
         writer.write_all(&bind_msg).await.unwrap();
 
         let (msg_type, _body) = read_pg_message(&mut reader).await;
-        assert_eq!(msg_type, b'2', "expected BindComplete, got 0x{:02x}", msg_type);
+        assert_eq!(
+            msg_type, b'2',
+            "expected BindComplete, got 0x{:02x}",
+            msg_type
+        );
 
         // === Describe(Portal) ===
         let describe_msg = build_describe_message(b'P', "");
         writer.write_all(&describe_msg).await.unwrap();
 
         let (msg_type, _body) = read_pg_message(&mut reader).await;
-        assert_eq!(msg_type, b'n', "expected NoData for portal, got 0x{:02x}", msg_type);
+        assert_eq!(
+            msg_type, b'n',
+            "expected NoData for portal, got 0x{:02x}",
+            msg_type
+        );
 
         // === Execute ===
         let execute_msg = build_execute_message("", 0);
@@ -1146,7 +1200,11 @@ mod tests {
 
         // RowDescription ('T')
         let (msg_type, body) = read_pg_message(&mut reader).await;
-        assert_eq!(msg_type, b'T', "expected RowDescription, got 0x{:02x}", msg_type);
+        assert_eq!(
+            msg_type, b'T',
+            "expected RowDescription, got 0x{:02x}",
+            msg_type
+        );
         let num_fields = u16::from_be_bytes(body[..2].try_into().unwrap());
         assert_eq!(num_fields, 1, "expected 1 column in RowDescription");
 
@@ -1161,7 +1219,11 @@ mod tests {
 
         // CommandComplete ('C')
         let (msg_type, body) = read_pg_message(&mut reader).await;
-        assert_eq!(msg_type, b'C', "expected CommandComplete, got 0x{:02x}", msg_type);
+        assert_eq!(
+            msg_type, b'C',
+            "expected CommandComplete, got 0x{:02x}",
+            msg_type
+        );
         let tag = String::from_utf8_lossy(&body[..body.len() - 1]);
         assert_eq!(tag, "SELECT 1");
 
@@ -1171,15 +1233,17 @@ mod tests {
 
         // ReadyForQuery ('Z')
         let (msg_type, body) = read_pg_message(&mut reader).await;
-        assert_eq!(msg_type, b'Z', "expected ReadyForQuery, got 0x{:02x}", msg_type);
+        assert_eq!(
+            msg_type, b'Z',
+            "expected ReadyForQuery, got 0x{:02x}",
+            msg_type
+        );
         assert_eq!(body[0], b'I', "expected idle status");
     }
 
     #[tokio::test]
     async fn test_describe_statement_after_execute_returns_row_description() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1261,9 +1325,7 @@ mod tests {
     async fn test_on_connect_called_with_actual_username() {
         use std::sync::Mutex;
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         // Use a shared state to verify on_connect was called with correct username
@@ -1319,14 +1381,15 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let user = connected_user.lock().unwrap().clone();
-        assert_eq!(user, "mycustomuser", "on_connect should be called with actual username, not 'root'");
+        assert_eq!(
+            user, "mycustomuser",
+            "on_connect should be called with actual username, not 'root'"
+        );
     }
 
     #[tokio::test]
     async fn test_decode_error_closes_connection() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1363,16 +1426,16 @@ mod tests {
 
         // The server should close the connection. Reading should return 0 bytes.
         let mut buf = [0u8; 1];
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            reader.read(&mut buf),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(2), reader.read(&mut buf)).await;
 
         match result {
             Ok(Ok(0)) => {} // Good - connection closed
             Ok(Ok(n)) => {
-                panic!("expected connection closed (read 0), but read {} bytes: {:?}", n, buf);
+                panic!(
+                    "expected connection closed (read 0), but read {} bytes: {:?}",
+                    n, buf
+                );
             }
             Ok(Err(e)) => {
                 // Connection reset is also acceptable
@@ -1402,9 +1465,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_to_nonexistent_statement_returns_error() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1450,9 +1511,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_unknown_portal_returns_error() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1497,9 +1556,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_portal_after_close_returns_error() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1546,7 +1603,10 @@ mod tests {
         close_msg.extend_from_slice(&close_body);
         writer.write_all(&close_msg).await.unwrap();
         let (msg_type, _body) = read_pg_message(&mut reader).await;
-        assert_eq!(msg_type, b'3', "expected CloseComplete after closing portal");
+        assert_eq!(
+            msg_type, b'3',
+            "expected CloseComplete after closing portal"
+        );
 
         // Execute the now-closed portal -> should get error
         let execute_msg = build_execute_message("", 0);
@@ -1565,9 +1625,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_close_nonexistent_statement() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1610,9 +1668,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_close_nonexistent_portal() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1655,9 +1711,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_describe_nonexistent_statement_returns_nodata() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);
@@ -1696,9 +1750,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_describe_unnamed_portal_returns_nodata() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let handler = Arc::new(MockHandler);

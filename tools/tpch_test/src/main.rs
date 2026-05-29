@@ -27,14 +27,22 @@ fn main() {
     let storage = bench.storage();
     let mut all_ok = true;
     for (name, expected) in &table_specs {
-        let read_rows = storage.read("tpch", name)
+        let read_rows = storage
+            .read("tpch", name)
             .map(|b| b.num_rows())
             .unwrap_or(0);
-        let read_status = if read_rows == *expected { "OK" } else { "MISMATCH" };
+        let read_status = if read_rows == *expected {
+            "OK"
+        } else {
+            "MISMATCH"
+        };
         if read_rows != *expected {
             all_ok = false;
         }
-        println!("  {} table={} rows={}/{}", read_status, name, read_rows, expected);
+        println!(
+            "  {} table={} rows={}/{}",
+            read_status, name, read_rows, expected
+        );
     }
 
     if !all_ok {
@@ -112,27 +120,28 @@ fn main() {
 async fn exec_df(ctx: &datafusion::prelude::SessionContext, sql: &str, label: &str) {
     let start = Instant::now();
     match ctx.sql(sql).await {
-        Ok(df) => {
-            match df.collect().await {
-                Ok(batches) => {
-                    let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-                    let elapsed = start.elapsed().as_millis();
-                    if rows > 0 {
-                        println!("  OK  {} => {} rows ({} ms)", label, rows, elapsed);
-                        if let Some(b) = batches.first() {
-                            let cols: Vec<String> = b.schema().fields().iter()
-                                .take(5)
-                                .map(|f| format!("{}", f.name()))
-                                .collect();
-                            println!("       columns: [{}]", cols.join(", "));
-                        }
-                    } else {
-                        println!("  EMPTY  {} => 0 rows ({} ms)", label, elapsed);
+        Ok(df) => match df.collect().await {
+            Ok(batches) => {
+                let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                let elapsed = start.elapsed().as_millis();
+                if rows > 0 {
+                    println!("  OK  {} => {} rows ({} ms)", label, rows, elapsed);
+                    if let Some(b) = batches.first() {
+                        let cols: Vec<String> = b
+                            .schema()
+                            .fields()
+                            .iter()
+                            .take(5)
+                            .map(|f| format!("{}", f.name()))
+                            .collect();
+                        println!("       columns: [{}]", cols.join(", "));
                     }
+                } else {
+                    println!("  EMPTY  {} => 0 rows ({} ms)", label, elapsed);
                 }
-                Err(e) => println!("  FAIL  {} => collect error: {:.60}", label, e),
             }
-        }
+            Err(e) => println!("  FAIL  {} => collect error: {:.60}", label, e),
+        },
         Err(e) => println!("  FAIL  {} => plan error: {:.60}", label, e),
     }
 }

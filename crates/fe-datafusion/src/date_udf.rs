@@ -14,7 +14,9 @@ use arrow_array::*;
 use arrow_schema::DataType;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 use datafusion::error::DataFusionError;
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility};
+use datafusion::logical_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
+};
 use datafusion::scalar::ScalarValue;
 
 /// Parse various date string formats into days since epoch (Date32).
@@ -80,8 +82,7 @@ fn mysql_to_chrono_fmt(fmt: &str) -> String {
 
 /// Convert Date32 days-since-epoch to a NaiveDate.
 fn days_to_date(days: i32) -> Option<NaiveDate> {
-    NaiveDate::from_ymd_opt(1970, 1, 1)?
-        .checked_add_signed(chrono::TimeDelta::days(days as i64))
+    NaiveDate::from_ymd_opt(1970, 1, 1)?.checked_add_signed(chrono::TimeDelta::days(days as i64))
 }
 
 // ---------------------------------------------------------------------------
@@ -124,28 +125,43 @@ pub fn create_year_udf() -> ScalarUDF {
             Ok(DataType::Int64)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Date32 => {
-                    let arr = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                        DataFusionError::Internal("year: expected Date32Array".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|d| {
-                        d.and_then(|days| days_to_date(days))
-                            .map(|date| date.year() as i64)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<Date32Array>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("year: expected Date32Array".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|d| {
+                            d.and_then(|days| days_to_date(days))
+                                .map(|date| date.year() as i64)
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("year: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                        s.and_then(parse_date_str_to_days)
-                            .and_then(days_to_date)
-                            .map(|date| date.year() as i64)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("year: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(parse_date_str_to_days)
+                                .and_then(days_to_date)
+                                .map(|date| date.year() as i64)
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -203,28 +219,40 @@ pub fn create_month_udf() -> ScalarUDF {
             Ok(DataType::Int64)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Date32 => {
-                    let arr = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                        DataFusionError::Internal("month: expected Date32Array".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|d| {
-                        d.and_then(days_to_date)
-                            .map(|date| date.month() as i64)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<Date32Array>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("month: expected Date32Array".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|d| d.and_then(days_to_date).map(|date| date.month() as i64))
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("month: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                        s.and_then(parse_date_str_to_days)
-                            .and_then(days_to_date)
-                            .map(|date| date.month() as i64)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("month: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(parse_date_str_to_days)
+                                .and_then(days_to_date)
+                                .map(|date| date.month() as i64)
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -269,24 +297,33 @@ impl DayUdfInner {
         let args = ColumnarValue::values_to_arrays(args)?;
         match args[0].data_type() {
             DataType::Date32 => {
-                let arr = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                    DataFusionError::Internal(format!("{}: expected Date32Array", self.name))
-                })?;
-                let result: Vec<Option<i64>> = arr.iter().map(|d| {
-                    d.and_then(days_to_date)
-                        .map(|date| date.day() as i64)
-                }).collect();
+                let arr = args[0]
+                    .as_any()
+                    .downcast_ref::<Date32Array>()
+                    .ok_or_else(|| {
+                        DataFusionError::Internal(format!("{}: expected Date32Array", self.name))
+                    })?;
+                let result: Vec<Option<i64>> = arr
+                    .iter()
+                    .map(|d| d.and_then(days_to_date).map(|date| date.day() as i64))
+                    .collect();
                 Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
             }
             DataType::Utf8 => {
-                let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                    DataFusionError::Internal(format!("{}: expected StringArray", self.name))
-                })?;
-                let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                    s.and_then(parse_date_str_to_days)
-                        .and_then(days_to_date)
-                        .map(|date| date.day() as i64)
-                }).collect();
+                let arr = args[0]
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| {
+                        DataFusionError::Internal(format!("{}: expected StringArray", self.name))
+                    })?;
+                let result: Vec<Option<i64>> = arr
+                    .iter()
+                    .map(|s| {
+                        s.and_then(parse_date_str_to_days)
+                            .and_then(days_to_date)
+                            .map(|date| date.day() as i64)
+                    })
+                    .collect();
                 Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
             }
             _ => Err(DataFusionError::Internal(format!(
@@ -315,7 +352,10 @@ impl ScalarUDFImpl for DayUdfInner {
         Ok(DataType::Int64)
     }
 
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+    fn invoke_with_args(
+        &self,
+        args: ScalarFunctionArgs,
+    ) -> datafusion::error::Result<ColumnarValue> {
         self.execute(&args.args)
     }
 
@@ -375,40 +415,55 @@ pub fn create_hour_udf() -> ScalarUDF {
             Ok(DataType::Int64)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Timestamp(_, _) => {
-                    let arr = args[0].as_any().downcast_ref::<TimestampSecondArray>().ok_or_else(
-                        || {
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<TimestampSecondArray>()
+                        .ok_or_else(|| {
                             DataFusionError::Internal(
                                 "hour: expected TimestampSecondArray".to_string(),
                             )
-                        },
-                    )?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|ts| {
-                        ts.and_then(|secs| {
-                            chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.naive_utc())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|ts| {
+                            ts.and_then(|secs| {
+                                chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.naive_utc())
+                            })
+                            .map(|dt| dt.hour() as i64)
                         })
-                        .map(|dt| dt.hour() as i64)
-                    }).collect();
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("hour: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                        s.and_then(|s| {
-                            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                                .ok()
-                                .or_else(|| NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok())
-                                .or_else(|| {
-                                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
-                                })
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("hour: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(|s| {
+                                NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                                    .ok()
+                                    .or_else(|| {
+                                        NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok()
+                                    })
+                                    .or_else(|| {
+                                        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
+                                    })
+                            })
+                            .map(|dt| dt.hour() as i64)
                         })
-                        .map(|dt| dt.hour() as i64)
-                    }).collect();
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -469,38 +524,55 @@ pub fn create_minute_udf() -> ScalarUDF {
             Ok(DataType::Int64)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Timestamp(_, _) => {
-                    let arr = args[0].as_any().downcast_ref::<TimestampSecondArray>().ok_or_else(
-                        || {
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<TimestampSecondArray>()
+                        .ok_or_else(|| {
                             DataFusionError::Internal(
                                 "minute: expected TimestampSecondArray".to_string(),
                             )
-                        },
-                    )?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|ts| {
-                        ts.and_then(|secs| chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.naive_utc()))
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|ts| {
+                            ts.and_then(|secs| {
+                                chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.naive_utc())
+                            })
                             .map(|dt| dt.minute() as i64)
-                    }).collect();
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("minute: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                        s.and_then(|s| {
-                            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                                .ok()
-                                .or_else(|| NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok())
-                                .or_else(|| {
-                                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
-                                })
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("minute: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(|s| {
+                                NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                                    .ok()
+                                    .or_else(|| {
+                                        NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok()
+                                    })
+                                    .or_else(|| {
+                                        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
+                                    })
+                            })
+                            .map(|dt| dt.minute() as i64)
                         })
-                        .map(|dt| dt.minute() as i64)
-                    }).collect();
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -561,38 +633,55 @@ pub fn create_second_udf() -> ScalarUDF {
             Ok(DataType::Int64)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Timestamp(_, _) => {
-                    let arr = args[0].as_any().downcast_ref::<TimestampSecondArray>().ok_or_else(
-                        || {
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<TimestampSecondArray>()
+                        .ok_or_else(|| {
                             DataFusionError::Internal(
                                 "second: expected TimestampSecondArray".to_string(),
                             )
-                        },
-                    )?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|ts| {
-                        ts.and_then(|secs| chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.naive_utc()))
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|ts| {
+                            ts.and_then(|secs| {
+                                chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.naive_utc())
+                            })
                             .map(|dt| dt.second() as i64)
-                    }).collect();
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("second: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                        s.and_then(|s| {
-                            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                                .ok()
-                                .or_else(|| NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok())
-                                .or_else(|| {
-                                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
-                                })
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("second: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(|s| {
+                                NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                                    .ok()
+                                    .or_else(|| {
+                                        NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok()
+                                    })
+                                    .or_else(|| {
+                                        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
+                                    })
+                            })
+                            .map(|dt| dt.second() as i64)
                         })
-                        .map(|dt| dt.second() as i64)
-                    }).collect();
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -650,28 +739,43 @@ pub fn create_dayofweek_udf() -> ScalarUDF {
             Ok(DataType::Int64)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Date32 => {
-                    let arr = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                        DataFusionError::Internal("dayofweek: expected Date32Array".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|d| {
-                        d.and_then(days_to_date)
-                            .map(|date| date.weekday().num_days_from_sunday() as i64 + 1)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<Date32Array>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("dayofweek: expected Date32Array".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|d| {
+                            d.and_then(days_to_date)
+                                .map(|date| date.weekday().num_days_from_sunday() as i64 + 1)
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("dayofweek: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                        s.and_then(parse_date_str_to_days)
-                            .and_then(days_to_date)
-                            .map(|date| date.weekday().num_days_from_sunday() as i64 + 1)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("dayofweek: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(parse_date_str_to_days)
+                                .and_then(days_to_date)
+                                .map(|date| date.weekday().num_days_from_sunday() as i64 + 1)
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -729,28 +833,40 @@ pub fn create_dayofyear_udf() -> ScalarUDF {
             Ok(DataType::Int64)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Date32 => {
-                    let arr = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                        DataFusionError::Internal("dayofyear: expected Date32Array".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|d| {
-                        d.and_then(days_to_date)
-                            .map(|date| date.ordinal() as i64)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<Date32Array>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("dayofyear: expected Date32Array".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|d| d.and_then(days_to_date).map(|date| date.ordinal() as i64))
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("dayofyear: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i64>> = arr.iter().map(|s| {
-                        s.and_then(parse_date_str_to_days)
-                            .and_then(days_to_date)
-                            .map(|date| date.ordinal() as i64)
-                    }).collect();
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("dayofyear: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i64>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(parse_date_str_to_days)
+                                .and_then(days_to_date)
+                                .map(|date| date.ordinal() as i64)
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -812,12 +928,18 @@ pub fn create_datediff_udf() -> ScalarUDF {
             args: ScalarFunctionArgs,
         ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
-            let d1 = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                DataFusionError::Internal("datediff: d1 must be Date32Array".to_string())
-            })?;
-            let d2 = args[1].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                DataFusionError::Internal("datediff: d2 must be Date32Array".to_string())
-            })?;
+            let d1 = args[0]
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("datediff: d1 must be Date32Array".to_string())
+                })?;
+            let d2 = args[1]
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("datediff: d2 must be Date32Array".to_string())
+                })?;
 
             let result: Vec<Option<i64>> = d1
                 .iter()
@@ -900,20 +1022,19 @@ pub fn create_date_format_udf() -> ScalarUDF {
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(|| {
-                    DataFusionError::Internal(
-                        "date_format: format must be StringArray".to_string(),
-                    )
+                    DataFusionError::Internal("date_format: format must be StringArray".to_string())
                 })?;
 
             match raw_args[0].data_type() {
                 DataType::Date32 => {
-                    let date_arr = raw_args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(
-                        || {
+                    let date_arr = raw_args[0]
+                        .as_any()
+                        .downcast_ref::<Date32Array>()
+                        .ok_or_else(|| {
                             DataFusionError::Internal(
                                 "date_format: expected Date32Array".to_string(),
                             )
-                        },
-                    )?;
+                        })?;
 
                     let result: Vec<Option<String>> = date_arr
                         .iter()
@@ -929,7 +1050,7 @@ pub fn create_date_format_udf() -> ScalarUDF {
                         .collect();
 
                     Ok(ColumnarValue::Array(
-                        Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+                        Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>
                     ))
                 }
                 DataType::Utf8 => {
@@ -968,7 +1089,7 @@ pub fn create_date_format_udf() -> ScalarUDF {
                         .collect();
 
                     Ok(ColumnarValue::Array(
-                        Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+                        Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>
                     ))
                 }
                 DataType::Timestamp(_, _) => {
@@ -995,7 +1116,7 @@ pub fn create_date_format_udf() -> ScalarUDF {
                         .collect();
 
                     Ok(ColumnarValue::Array(
-                        Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+                        Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>
                     ))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -1061,17 +1182,13 @@ pub fn create_str_to_date_udf() -> ScalarUDF {
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(|| {
-                    DataFusionError::Internal(
-                        "str_to_date: str must be StringArray".to_string(),
-                    )
+                    DataFusionError::Internal("str_to_date: str must be StringArray".to_string())
                 })?;
             let fmt_arr = args[1]
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(|| {
-                    DataFusionError::Internal(
-                        "str_to_date: fmt must be StringArray".to_string(),
-                    )
+                    DataFusionError::Internal("str_to_date: fmt must be StringArray".to_string())
                 })?;
 
             let result: Vec<Option<i32>> = str_arr
@@ -1082,8 +1199,7 @@ pub fn create_str_to_date_udf() -> ScalarUDF {
                         let chrono_fmt = mysql_to_chrono_fmt(fmt);
                         let date = NaiveDate::parse_from_str(s, &chrono_fmt).ok()?;
                         Some(
-                            (date - NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
-                                .num_days() as i32,
+                            (date - NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).num_days() as i32,
                         )
                     }
                     _ => None,
@@ -1091,7 +1207,7 @@ pub fn create_str_to_date_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -1113,10 +1229,7 @@ pub fn create_from_unixtime_udf() -> ScalarUDF {
     impl FromUnixtimeUdf {
         fn new() -> Self {
             Self {
-                signature: Signature::exact(
-                    vec![DataType::Int64],
-                    Volatility::Immutable,
-                ),
+                signature: Signature::exact(vec![DataType::Int64], Volatility::Immutable),
             }
         }
     }
@@ -1147,9 +1260,7 @@ pub fn create_from_unixtime_udf() -> ScalarUDF {
                 .as_any()
                 .downcast_ref::<Int64Array>()
                 .ok_or_else(|| {
-                    DataFusionError::Internal(
-                        "from_unixtime: expected Int64Array".to_string(),
-                    )
+                    DataFusionError::Internal("from_unixtime: expected Int64Array".to_string())
                 })?;
 
             let result: Vec<Option<String>> = arr
@@ -1163,7 +1274,7 @@ pub fn create_from_unixtime_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -1240,8 +1351,12 @@ pub fn create_unix_timestamp_udf() -> ScalarUDF {
                             // Try datetime formats first, then date-only
                             NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
                                 .ok()
-                                .or_else(|| NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok())
-                                .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
+                                .or_else(|| {
+                                    NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S").ok()
+                                })
+                                .or_else(|| {
+                                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
+                                })
                                 .or_else(|| {
                                     NaiveDate::parse_from_str(s, "%Y-%m-%d")
                                         .ok()
@@ -1258,7 +1373,7 @@ pub fn create_unix_timestamp_udf() -> ScalarUDF {
                     .collect();
 
                 Ok(ColumnarValue::Array(
-                    Arc::new(Int64Array::from(result)) as Arc<dyn arrow_array::Array>,
+                    Arc::new(Int64Array::from(result)) as Arc<dyn arrow_array::Array>
                 ))
             }
         }
@@ -1315,17 +1430,13 @@ pub fn create_makedate_udf() -> ScalarUDF {
                 .as_any()
                 .downcast_ref::<Int64Array>()
                 .ok_or_else(|| {
-                    DataFusionError::Internal(
-                        "makedate: year must be Int64Array".to_string(),
-                    )
+                    DataFusionError::Internal("makedate: year must be Int64Array".to_string())
                 })?;
             let doy_arr = args[1]
                 .as_any()
                 .downcast_ref::<Int64Array>()
                 .ok_or_else(|| {
-                    DataFusionError::Internal(
-                        "makedate: dayofyear must be Int64Array".to_string(),
-                    )
+                    DataFusionError::Internal("makedate: dayofyear must be Int64Array".to_string())
                 })?;
 
             let result: Vec<Option<i32>> = year_arr
@@ -1342,7 +1453,7 @@ pub fn create_makedate_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -1418,15 +1529,13 @@ pub fn create_maketime_udf() -> ScalarUDF {
                 .zip(m_arr.iter())
                 .zip(s_arr.iter())
                 .map(|((h, m), s)| match (h, m, s) {
-                    (Some(h), Some(m), Some(s)) => {
-                        Some(format!("{:02}:{:02}:{:02}", h, m, s))
-                    }
+                    (Some(h), Some(m), Some(s)) => Some(format!("{:02}:{:02}:{:02}", h, m, s)),
                     _ => None,
                 })
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -1474,38 +1583,25 @@ pub fn create_last_day_udf() -> ScalarUDF {
             Ok(DataType::Date32)
         }
 
-        fn invoke_with_args(&self, args: ScalarFunctionArgs) -> datafusion::error::Result<ColumnarValue> {
+        fn invoke_with_args(
+            &self,
+            args: ScalarFunctionArgs,
+        ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
             match args[0].data_type() {
                 DataType::Date32 => {
-                    let arr = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                        DataFusionError::Internal("last_day: expected Date32Array".to_string())
-                    })?;
-                    let result: Vec<Option<i32>> = arr.iter().map(|d| {
-                        d.and_then(|days| {
-                            let date = days_to_date(days)?;
-                            // First day of next month, then subtract one day
-                            let (y, m) = if date.month() == 12 {
-                                (date.year() + 1, 1u32)
-                            } else {
-                                (date.year(), date.month() + 1)
-                            };
-                            let first_of_next = NaiveDate::from_ymd_opt(y, m, 1)?;
-                            let last_day = first_of_next.pred_opt()?;
-                            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)?;
-                            Some(last_day.signed_duration_since(epoch).num_days() as i32)
-                        })
-                    }).collect();
-                    Ok(ColumnarValue::Array(Arc::new(Date32Array::from(result))))
-                }
-                DataType::Utf8 => {
-                    let arr = args[0].as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                        DataFusionError::Internal("last_day: expected StringArray".to_string())
-                    })?;
-                    let result: Vec<Option<i32>> = arr.iter().map(|s| {
-                        s.and_then(parse_date_str_to_days)
-                            .and_then(days_to_date)
-                            .and_then(|date| {
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<Date32Array>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("last_day: expected Date32Array".to_string())
+                        })?;
+                    let result: Vec<Option<i32>> = arr
+                        .iter()
+                        .map(|d| {
+                            d.and_then(|days| {
+                                let date = days_to_date(days)?;
+                                // First day of next month, then subtract one day
                                 let (y, m) = if date.month() == 12 {
                                     (date.year() + 1, 1u32)
                                 } else {
@@ -1516,7 +1612,35 @@ pub fn create_last_day_udf() -> ScalarUDF {
                                 let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)?;
                                 Some(last_day.signed_duration_since(epoch).num_days() as i32)
                             })
-                    }).collect();
+                        })
+                        .collect();
+                    Ok(ColumnarValue::Array(Arc::new(Date32Array::from(result))))
+                }
+                DataType::Utf8 => {
+                    let arr = args[0]
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal("last_day: expected StringArray".to_string())
+                        })?;
+                    let result: Vec<Option<i32>> = arr
+                        .iter()
+                        .map(|s| {
+                            s.and_then(parse_date_str_to_days)
+                                .and_then(days_to_date)
+                                .and_then(|date| {
+                                    let (y, m) = if date.month() == 12 {
+                                        (date.year() + 1, 1u32)
+                                    } else {
+                                        (date.year(), date.month() + 1)
+                                    };
+                                    let first_of_next = NaiveDate::from_ymd_opt(y, m, 1)?;
+                                    let last_day = first_of_next.pred_opt()?;
+                                    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)?;
+                                    Some(last_day.signed_duration_since(epoch).num_days() as i32)
+                                })
+                        })
+                        .collect();
                     Ok(ColumnarValue::Array(Arc::new(Date32Array::from(result))))
                 }
                 _ => Err(DataFusionError::Internal(format!(
@@ -1677,20 +1801,18 @@ pub fn create_date_add_udf() -> ScalarUDF {
             args: ScalarFunctionArgs,
         ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
-            let dates = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "date_add: dates must be Date32Array".to_string(),
-                    )
-                },
-            )?;
-            let days = args[1].as_any().downcast_ref::<Int64Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "date_add: days must be Int64Array".to_string(),
-                    )
-                },
-            )?;
+            let dates = args[0]
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("date_add: dates must be Date32Array".to_string())
+                })?;
+            let days = args[1]
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("date_add: days must be Int64Array".to_string())
+                })?;
 
             let result: Vec<Option<i32>> = dates
                 .iter()
@@ -1705,7 +1827,7 @@ pub fn create_date_add_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -1757,20 +1879,18 @@ pub fn create_date_sub_udf() -> ScalarUDF {
             args: ScalarFunctionArgs,
         ) -> datafusion::error::Result<ColumnarValue> {
             let args = ColumnarValue::values_to_arrays(&args.args)?;
-            let dates = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "date_sub: dates must be Date32Array".to_string(),
-                    )
-                },
-            )?;
-            let days = args[1].as_any().downcast_ref::<Int64Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "date_sub: days must be Int64Array".to_string(),
-                    )
-                },
-            )?;
+            let dates = args[0]
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("date_sub: dates must be Date32Array".to_string())
+                })?;
+            let days = args[1]
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("date_sub: days must be Int64Array".to_string())
+                })?;
 
             let result: Vec<Option<i32>> = dates
                 .iter()
@@ -1785,7 +1905,7 @@ pub fn create_date_sub_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }

@@ -1,15 +1,15 @@
 //! MaxCompute REST API server using axum.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use axum::{
+    Router,
     body::Body,
     extract::State,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    Router,
 };
 use mysql_protocol::server::QueryHandler;
 use tokio::net::TcpListener;
@@ -160,7 +160,10 @@ mod tests {
         let config = McServerConfig::default();
         let state = McServerState::new(handler, config);
 
-        assert!(state.instance_manager.is_empty(), "Instance manager should be empty initially");
+        assert!(
+            state.instance_manager.is_empty(),
+            "Instance manager should be empty initially"
+        );
     }
 
     // ======================================================================
@@ -204,8 +207,10 @@ mod tests {
     fn test_mock_query_handler_ok() {
         let handler = MockQueryHandler::new();
         let result = handler.handle_query(1, "SELECT 1");
-        assert!(result.columns.is_empty() && result.rows.is_empty(),
-                "Unrecognized queries should return QueryResult::ok()");
+        assert!(
+            result.columns.is_empty() && result.rows.is_empty(),
+            "Unrecognized queries should return QueryResult::ok()"
+        );
     }
 }
 

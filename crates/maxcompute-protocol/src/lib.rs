@@ -24,10 +24,10 @@ pub mod server;
 pub mod sql;
 pub mod xml_models;
 
-pub use server::{start_mc_server, McServerConfig, McServerState};
+pub use server::{McServerConfig, McServerState, start_mc_server};
 
 use axum::{
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 
@@ -86,14 +86,23 @@ mod tests {
     #[test]
     fn test_error_xml_basic() {
         let xml = error_xml("ODPS-0130161", "Project 'test' not found");
-        assert!(xml.contains("<Code>ODPS-0130161</Code>"), "Should contain error code");
+        assert!(
+            xml.contains("<Code>ODPS-0130161</Code>"),
+            "Should contain error code"
+        );
         assert!(
             xml.contains("<Message>Project &apos;test&apos; not found</Message>"),
             "Should contain escaped message"
         );
-        assert!(xml.contains("<RequestId>"), "Should contain RequestId element");
+        assert!(
+            xml.contains("<RequestId>"),
+            "Should contain RequestId element"
+        );
         assert!(xml.contains("</Error>"), "Should close Error element");
-        assert!(xml.starts_with("<?xml"), "Should start with XML declaration");
+        assert!(
+            xml.starts_with("<?xml"),
+            "Should start with XML declaration"
+        );
     }
 
     #[test]
@@ -156,9 +165,11 @@ mod tests {
         let body = "<Root><Item>hello</Item></Root>".to_string();
         let response = XmlResponse(body.clone()).into_response();
         // Use axum's body collection to check the body
-        let body_bytes = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { axum::body::to_bytes(response.into_body(), 1024).await.unwrap() });
+        let body_bytes = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap()
+        });
         let response_body = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert_eq!(response_body, body);
     }
@@ -166,9 +177,11 @@ mod tests {
     #[test]
     fn test_xml_response_into_response_empty_body() {
         let response = XmlResponse(String::new()).into_response();
-        let body_bytes = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { axum::body::to_bytes(response.into_body(), 1024).await.unwrap() });
+        let body_bytes = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap()
+        });
         assert!(body_bytes.is_empty());
     }
 }

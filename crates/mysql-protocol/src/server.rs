@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tracing::{error, info, info_span, warn, Instrument};
+use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::auth::{AuthPluginType, Credentials, default_credentials};
 use crate::connection::Connection;
@@ -120,7 +120,10 @@ impl MysqlServer {
     pub async fn run(&self) -> std::io::Result<()> {
         let addr = format!("{}:{}", self.config.bind_addr, self.config.port);
         let listener = TcpListener::bind(&addr).await?;
-        info!("MySQL server listening on {} (max_connections={})", addr, self.config.max_connections);
+        info!(
+            "MySQL server listening on {} (max_connections={})",
+            addr, self.config.max_connections
+        );
 
         let auth_timeout_secs = self.config.auth_timeout_secs;
         let semaphore = self.connection_semaphore.clone();
@@ -139,7 +142,16 @@ impl MysqlServer {
 
                     tokio::spawn(
                         async move {
-                            if let Err(e) = handle_connection(stream, conn_id, handler, auth_timeout_secs, permit, creds).await {
+                            if let Err(e) = handle_connection(
+                                stream,
+                                conn_id,
+                                handler,
+                                auth_timeout_secs,
+                                permit,
+                                creds,
+                            )
+                            .await
+                            {
                                 error!("Connection {} error: {}", conn_id, e);
                             }
                             info!("Connection {} closed", conn_id);
@@ -148,8 +160,10 @@ impl MysqlServer {
                     );
                 }
                 Err(_) => {
-                    warn!("Connection {} from {} rejected: max connections ({}) reached",
-                        conn_id, peer_addr, self.config.max_connections);
+                    warn!(
+                        "Connection {} from {} rejected: max connections ({}) reached",
+                        conn_id, peer_addr, self.config.max_connections
+                    );
                     // Drop the stream — client will see a connection reset
                     drop(stream);
                 }
@@ -166,9 +180,18 @@ async fn handle_connection(
     _permit: OwnedSemaphorePermit,
     credentials: Credentials,
 ) -> std::io::Result<()> {
-    let peer_addr = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
+    let peer_addr = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
     handler.on_connect(conn_id, "root", &peer_addr);
-    let mut conn = Connection::new(stream, conn_id, handler.clone(), auth_timeout_secs, credentials);
+    let mut conn = Connection::new(
+        stream,
+        conn_id,
+        handler.clone(),
+        auth_timeout_secs,
+        credentials,
+    );
     let result = conn.run().await;
     handler.on_disconnect(conn_id);
     result

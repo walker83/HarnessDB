@@ -15,8 +15,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::server::McServerState;
 use crate::XmlResponse;
+use crate::server::McServerState;
 
 /// Validate that a string is a valid SQL identifier (prevents SQL injection).
 ///
@@ -62,10 +62,7 @@ pub async fn list_tables(
     if !project.eq_ignore_ascii_case(&state.config.default_project) {
         return (
             StatusCode::NOT_FOUND,
-            crate::error_xml(
-                "ODPS-0130161",
-                &format!("Project '{}' not found", project),
-            ),
+            crate::error_xml("ODPS-0130161", &format!("Project '{}' not found", project)),
         )
             .into_response();
     }
@@ -73,14 +70,12 @@ pub async fn list_tables(
     // Execute SHOW TABLES in a blocking thread
     let handler = state.handler.clone();
     let conn_id = state.next_conn_id();
-    let result = tokio::task::spawn_blocking(move || {
-        handler.handle_query(conn_id, "SHOW TABLES")
-    })
-    .await
-    .unwrap_or_else(|join_err| {
-        tracing::error!("Blocking task join error: {}", join_err);
-        mysql_protocol::server::QueryResult::ok()
-    });
+    let result = tokio::task::spawn_blocking(move || handler.handle_query(conn_id, "SHOW TABLES"))
+        .await
+        .unwrap_or_else(|join_err| {
+            tracing::error!("Blocking task join error: {}", join_err);
+            mysql_protocol::server::QueryResult::ok()
+        });
 
     let mut table_names: Vec<String> = result
         .rows
@@ -149,10 +144,7 @@ pub async fn get_table(
     if !project.eq_ignore_ascii_case(&state.config.default_project) {
         return (
             StatusCode::NOT_FOUND,
-            crate::error_xml(
-                "ODPS-0130161",
-                &format!("Project '{}' not found", project),
-            ),
+            crate::error_xml("ODPS-0130161", &format!("Project '{}' not found", project)),
         )
             .into_response();
     }
@@ -161,10 +153,7 @@ pub async fn get_table(
     if !validate_sql_identifier(&table) {
         return (
             StatusCode::BAD_REQUEST,
-            crate::error_xml(
-                "ODPS-0130011",
-                &format!("Invalid table name: '{}'", table),
-            ),
+            crate::error_xml("ODPS-0130011", &format!("Invalid table name: '{}'", table)),
         )
             .into_response();
     }
@@ -246,10 +235,7 @@ pub async fn delete_table(
     if !project.eq_ignore_ascii_case(&state.config.default_project) {
         return (
             StatusCode::NOT_FOUND,
-            crate::error_xml(
-                "ODPS-0130161",
-                &format!("Project '{}' not found", project),
-            ),
+            crate::error_xml("ODPS-0130161", &format!("Project '{}' not found", project)),
         )
             .into_response();
     }
@@ -258,10 +244,7 @@ pub async fn delete_table(
     if !validate_sql_identifier(&table) {
         return (
             StatusCode::BAD_REQUEST,
-            crate::error_xml(
-                "ODPS-0130011",
-                &format!("Invalid table name: '{}'", table),
-            ),
+            crate::error_xml("ODPS-0130011", &format!("Invalid table name: '{}'", table)),
         )
             .into_response();
     }
@@ -300,8 +283,9 @@ fn mysql_type_to_maxcompute(mysql_type: &str) -> &'static str {
         "tinyint" | "smallint" | "int" | "integer" | "bigint" => "bigint",
         "float" | "double" | "decimal" | "numeric" | "real" => "double",
         // String
-        "char" | "varchar" | "tinytext" | "text" | "mediumtext" | "longtext"
-        | "enum" | "set" => "string",
+        "char" | "varchar" | "tinytext" | "text" | "mediumtext" | "longtext" | "enum" | "set" => {
+            "string"
+        }
         "binary" | "varbinary" | "blob" | "tinyblob" | "mediumblob" | "longblob" => "binary",
         // Date/Time
         "date" => "datetime",
@@ -343,12 +327,12 @@ mod tests {
     #[test]
     fn test_validate_sql_identifier_invalid() {
         assert!(!validate_sql_identifier(""));
-        assert!(!validate_sql_identifier("123abc"));  // starts with digit
-        assert!(!validate_sql_identifier("table name"));  // space
-        assert!(!validate_sql_identifier("DROP TABLE"));  // space
-        assert!(!validate_sql_identifier("a;b"));  // semicolon
-        assert!(!validate_sql_identifier("a--"));  // dash
-        assert!(!validate_sql_identifier("' OR '1'='1"));  // SQL injection
+        assert!(!validate_sql_identifier("123abc")); // starts with digit
+        assert!(!validate_sql_identifier("table name")); // space
+        assert!(!validate_sql_identifier("DROP TABLE")); // space
+        assert!(!validate_sql_identifier("a;b")); // semicolon
+        assert!(!validate_sql_identifier("a--")); // dash
+        assert!(!validate_sql_identifier("' OR '1'='1")); // SQL injection
     }
 
     #[tokio::test]
@@ -406,7 +390,10 @@ mod tests {
         ));
         let resp = get_table(
             State(state),
-            Path(("myproject".to_string(), "users; DROP TABLE users".to_string())),
+            Path((
+                "myproject".to_string(),
+                "users; DROP TABLE users".to_string(),
+            )),
         )
         .await;
         let resp = resp.into_response();
@@ -468,7 +455,10 @@ mod tests {
         ));
         let resp = delete_table(
             State(state),
-            Path(("myproject".to_string(), "users; DROP TABLE users".to_string())),
+            Path((
+                "myproject".to_string(),
+                "users; DROP TABLE users".to_string(),
+            )),
         )
         .await;
         let resp = resp.into_response();

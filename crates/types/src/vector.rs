@@ -1,11 +1,11 @@
-use crate::{Bitmap, DataType, ScalarValue};
 use crate::scalar::JsonValue;
+use crate::{Bitmap, DataType, ScalarValue};
 use std::fmt;
 use std::sync::Arc;
 
 pub trait TypedVector: Clone + Send + Sync {
     type Primitive;
-    
+
     fn new() -> Self;
     fn from_vec(data: Vec<Self::Primitive>) -> Self;
     fn from_nullable_vec(data: Vec<Option<Self::Primitive>>) -> Self;
@@ -52,23 +52,35 @@ macro_rules! impl_typed_vector {
 
         impl $name {
             pub fn new() -> Self {
-                Self { data: Vec::new(), validity: Bitmap::new() }
+                Self {
+                    data: Vec::new(),
+                    validity: Bitmap::new(),
+                }
             }
 
             pub fn from_vec(data: Vec<$prim>) -> Self {
                 let len = data.len();
-                Self { data, validity: Bitmap::all_set(len) }
+                Self {
+                    data,
+                    validity: Bitmap::all_set(len),
+                }
             }
 
             pub fn from_nullable_vec(data: Vec<Option<$prim>>) -> Self {
                 let len = data.len();
                 let mut validity = Bitmap::with_capacity(len);
-                let values: Vec<$prim> = data.into_iter().map(|v| {
-                    let is_some = v.is_some();
-                    validity.push(is_some);
-                    v.unwrap_or_else(|| $zero)
-                }).collect();
-                Self { data: values, validity }
+                let values: Vec<$prim> = data
+                    .into_iter()
+                    .map(|v| {
+                        let is_some = v.is_some();
+                        validity.push(is_some);
+                        v.unwrap_or_else(|| $zero)
+                    })
+                    .collect();
+                Self {
+                    data: values,
+                    validity,
+                }
             }
 
             pub fn push(&mut self, val: Option<$prim>) {
@@ -93,6 +105,7 @@ macro_rules! impl_typed_vector {
             }
 
             pub fn get_checked(&self, idx: usize) -> $prim {
+                debug_assert!(idx < self.data.len(), "get_checked: index {} out of bounds (len {})", idx, self.data.len());
                 self.data[idx]
             }
 
@@ -242,11 +255,7 @@ macro_rules! impl_numeric_vector {
                         count += 1;
                     }
                 }
-                if count > 0 {
-                    Some(sum)
-                } else {
-                    None
-                }
+                if count > 0 { Some(sum) } else { None }
             }
         }
     };
@@ -294,7 +303,11 @@ impl Default for StringVector {
 
 impl StringVector {
     pub fn new() -> Self {
-        Self { offsets: vec![0], data: Vec::new(), validity: Bitmap::new() }
+        Self {
+            offsets: vec![0],
+            data: Vec::new(),
+            validity: Bitmap::new(),
+        }
     }
 
     pub fn from_vec(vals: Vec<&str>) -> Self {
@@ -306,7 +319,11 @@ impl StringVector {
             offsets.push(data.len() as u32);
             validity.push(true);
         }
-        Self { offsets, data, validity }
+        Self {
+            offsets,
+            data,
+            validity,
+        }
     }
 
     pub fn from_option_vec(vals: Vec<Option<String>>) -> Self {
@@ -326,7 +343,11 @@ impl StringVector {
                 }
             }
         }
-        Self { offsets, data, validity }
+        Self {
+            offsets,
+            data,
+            validity,
+        }
     }
 
     pub fn push(&mut self, val: Option<&str>) {
@@ -347,7 +368,14 @@ impl StringVector {
         if self.validity.is_valid(idx) && idx + 1 < self.offsets.len() {
             let start = self.offsets[idx] as usize;
             let end = self.offsets[idx + 1] as usize;
-            Some(std::str::from_utf8(&self.data[start..end]).unwrap_or(""))
+            let slice = &self.data[start..end];
+            match std::str::from_utf8(slice) {
+                Ok(s) => Some(s),
+                Err(_) => {
+                    tracing::warn!("StringVector::get: invalid UTF-8 at index {}", idx);
+                    None
+                }
+            }
         } else {
             None
         }
@@ -385,7 +413,11 @@ impl StringVector {
                 validity.push(false);
             }
         }
-        Self { offsets, data, validity }
+        Self {
+            offsets,
+            data,
+            validity,
+        }
     }
 
     pub fn slice(&self, start: usize, len: usize) -> Self {
@@ -403,7 +435,11 @@ impl StringVector {
                 validity.push(false);
             }
         }
-        Self { offsets, data, validity }
+        Self {
+            offsets,
+            data,
+            validity,
+        }
     }
 
     pub fn data(&self) -> &[u8] {
@@ -419,7 +455,11 @@ impl TypedVector for StringVector {
     type Primitive = String;
 
     fn new() -> Self {
-        Self { offsets: vec![0], data: Vec::new(), validity: Bitmap::new() }
+        Self {
+            offsets: vec![0],
+            data: Vec::new(),
+            validity: Bitmap::new(),
+        }
     }
 
     fn from_vec(data: Vec<String>) -> Self {
@@ -431,7 +471,11 @@ impl TypedVector for StringVector {
             offsets.push(str_data.len() as u32);
             validity.push(true);
         }
-        Self { offsets, data: str_data, validity }
+        Self {
+            offsets,
+            data: str_data,
+            validity,
+        }
     }
 
     fn from_nullable_vec(data: Vec<Option<String>>) -> Self {
@@ -451,7 +495,11 @@ impl TypedVector for StringVector {
                 }
             }
         }
-        Self { offsets, data: str_data, validity }
+        Self {
+            offsets,
+            data: str_data,
+            validity,
+        }
     }
 
     fn push(&mut self, val: Option<String>) {
@@ -472,7 +520,11 @@ impl TypedVector for StringVector {
         if self.validity.is_valid(idx) && idx + 1 < self.offsets.len() {
             let start = self.offsets[idx] as usize;
             let end = self.offsets[idx + 1] as usize;
-            Some(std::str::from_utf8(&self.data[start..end]).unwrap_or("").to_string())
+            Some(
+                std::str::from_utf8(&self.data[start..end])
+                    .unwrap_or("")
+                    .to_string(),
+            )
         } else {
             None
         }
@@ -506,7 +558,11 @@ impl TypedVector for StringVector {
                 validity.push(false);
             }
         }
-        Self { offsets, data, validity }
+        Self {
+            offsets,
+            data,
+            validity,
+        }
     }
 
     fn slice(&self, start: usize, len: usize) -> Self {
@@ -524,7 +580,11 @@ impl TypedVector for StringVector {
                 validity.push(false);
             }
         }
-        Self { offsets, data, validity }
+        Self {
+            offsets,
+            data,
+            validity,
+        }
     }
 }
 
@@ -629,7 +689,7 @@ impl StringViewVector {
     pub fn filter_zero_copy(&self, selection: &Bitmap) -> Self {
         let indices: Vec<usize> = selection.iter_set_bits().collect();
         let mut validity = Bitmap::with_capacity(indices.len());
-        
+
         for &idx in &indices {
             validity.push(self.validity.is_valid(idx));
         }
@@ -645,7 +705,7 @@ impl StringViewVector {
 
     pub fn slice_zero_copy(&self, start: usize, len: usize) -> Self {
         let end = (start + len).min(self.len());
-        
+
         let new_indices = if let Some(indices) = &self.indices {
             indices[start..end].to_vec()
         } else {
@@ -701,7 +761,10 @@ impl Default for JsonVector {
 
 impl JsonVector {
     pub fn new() -> Self {
-        Self { data: Vec::new(), validity: Bitmap::new() }
+        Self {
+            data: Vec::new(),
+            validity: Bitmap::new(),
+        }
     }
 
     pub fn from_vec(vals: Vec<ScalarValue>) -> Self {
@@ -709,21 +772,27 @@ impl JsonVector {
         for v in &vals {
             validity.push(!matches!(v, ScalarValue::Null));
         }
-        Self { data: vals, validity }
+        Self {
+            data: vals,
+            validity,
+        }
     }
 
     pub fn from_option_vec(vals: Vec<Option<ScalarValue>>) -> Self {
         let mut validity = Bitmap::with_capacity(vals.len());
-        let data: Vec<ScalarValue> = vals.into_iter().map(|v| {
-            let _is_valid = v.is_some();
-            if let Some(val) = v {
-                validity.push(true);
-                val
-            } else {
-                validity.push(false);
-                ScalarValue::Json(JsonValue::Null)
-            }
-        }).collect();
+        let data: Vec<ScalarValue> = vals
+            .into_iter()
+            .map(|v| {
+                let _is_valid = v.is_some();
+                if let Some(val) = v {
+                    validity.push(true);
+                    val
+                } else {
+                    validity.push(false);
+                    ScalarValue::Json(JsonValue::Null)
+                }
+            })
+            .collect();
         Self { data, validity }
     }
 
@@ -785,9 +854,13 @@ impl JsonVector {
 
     pub fn slice(&self, start: usize, len: usize) -> Self {
         let end = (start + len).min(self.len());
-        let data: Vec<ScalarValue> = (start..end).filter_map(|i| self.get(i)).collect();
+        let mut data = Vec::with_capacity(len);
         let mut validity = Bitmap::with_capacity(len);
         for i in start..end {
+            match self.get(i) {
+                Some(val) => data.push(val),
+                None => data.push(ScalarValue::Null), // sentinel for NULL
+            }
             validity.push(self.validity.is_valid(i));
         }
         Self { data, validity }
@@ -798,7 +871,10 @@ impl TypedVector for JsonVector {
     type Primitive = ScalarValue;
 
     fn new() -> Self {
-        Self { data: Vec::new(), validity: Bitmap::new() }
+        Self {
+            data: Vec::new(),
+            validity: Bitmap::new(),
+        }
     }
 
     fn from_vec(data: Vec<ScalarValue>) -> Self {
@@ -811,16 +887,22 @@ impl TypedVector for JsonVector {
 
     fn from_nullable_vec(data: Vec<Option<ScalarValue>>) -> Self {
         let mut validity = Bitmap::with_capacity(data.len());
-        let values: Vec<ScalarValue> = data.into_iter().map(|v| {
-            if let Some(val) = v {
-                validity.push(true);
-                val
-            } else {
-                validity.push(false);
-                ScalarValue::Json(JsonValue::Null)
-            }
-        }).collect();
-        Self { data: values, validity }
+        let values: Vec<ScalarValue> = data
+            .into_iter()
+            .map(|v| {
+                if let Some(val) = v {
+                    validity.push(true);
+                    val
+                } else {
+                    validity.push(false);
+                    ScalarValue::Json(JsonValue::Null)
+                }
+            })
+            .collect();
+        Self {
+            data: values,
+            validity,
+        }
     }
 
     fn push(&mut self, val: Option<ScalarValue>) {
@@ -873,9 +955,13 @@ impl TypedVector for JsonVector {
 
     fn slice(&self, start: usize, len: usize) -> Self {
         let end = (start + len).min(self.len());
-        let data: Vec<ScalarValue> = (start..end).filter_map(|i| self.get(i)).collect();
+        let mut data = Vec::with_capacity(len);
         let mut validity = Bitmap::with_capacity(len);
         for i in start..end {
+            match self.get(i) {
+                Some(val) => data.push(val),
+                None => data.push(ScalarValue::Null),
+            }
             validity.push(self.validity.is_valid(i));
         }
         Self { data, validity }
@@ -937,11 +1023,15 @@ impl TypedVector for NullVector {
     }
 
     fn filter(&self, selection: &Bitmap) -> Self {
-        Self { len: selection.set_count() }
+        Self {
+            len: selection.set_count(),
+        }
     }
 
     fn slice(&self, offset: usize, len: usize) -> Self {
-        Self { len: len.min(self.len.saturating_sub(offset)) }
+        Self {
+            len: len.min(self.len.saturating_sub(offset)),
+        }
     }
 }
 
@@ -954,12 +1044,18 @@ pub struct Float32ArrayVector {
 
 impl Float32ArrayVector {
     pub fn new() -> Self {
-        Self { data: Vec::new(), validity: Bitmap::new() }
+        Self {
+            data: Vec::new(),
+            validity: Bitmap::new(),
+        }
     }
 
     pub fn from_vec(data: Vec<Vec<f32>>) -> Self {
         let len = data.len();
-        Self { data, validity: Bitmap::all_set(len) }
+        Self {
+            data,
+            validity: Bitmap::all_set(len),
+        }
     }
 
     pub fn push(&mut self, val: Option<Vec<f32>>) {
@@ -1015,7 +1111,10 @@ impl Float32ArrayVector {
                 new_validity.push(false);
             }
         }
-        Self { data: new_data, validity: new_validity }
+        Self {
+            data: new_data,
+            validity: new_validity,
+        }
     }
 
     pub fn slice(&self, offset: usize, len: usize) -> Self {
@@ -1024,7 +1123,11 @@ impl Float32ArrayVector {
             return Self::new();
         }
         let data = self.data[offset..end].to_vec();
-        Self::from_vec(data)
+        let mut validity = Bitmap::with_capacity(data.len());
+        for i in offset..end {
+            validity.push(self.validity.is_valid(i));
+        }
+        Self { data, validity }
     }
 }
 
@@ -1119,9 +1222,9 @@ impl Vector {
                 None => ScalarValue::Null,
             },
             Self::Json(v) => match v.get(idx) {
-            Some(j) => j,
-            None => ScalarValue::Null,
-        },
+                Some(j) => j,
+                None => ScalarValue::Null,
+            },
             Self::Float32Array(v) => match v.get(idx) {
                 Some(arr) => ScalarValue::Float32Array(arr.to_vec()),
                 None => ScalarValue::Null,
@@ -1145,7 +1248,7 @@ impl Vector {
             Self::DateTime(v) => Self::DateTime(v.filter(selection)),
             Self::Json(v) => Self::Json(v.filter(selection)),
             Self::Null(v) => Self::Null(NullVector::new(
-                (0..v.len()).filter(|&i| selection.get(i)).count()
+                (0..v.len()).filter(|&i| selection.get(i)).count(),
             )),
             Self::Float32Array(v) => Self::Float32Array(v.filter(selection)),
         }
@@ -1201,7 +1304,9 @@ impl Vector {
             (Self::Int128(a), Self::Int128(b)) => a.append(b),
             (Self::Date(a), Self::Date(b)) => a.append(b),
             (Self::DateTime(a), Self::DateTime(b)) => a.append(b),
-            _ => {}
+            _ => {
+                tracing::warn!("Vector::append_vector: type mismatch, ignoring");
+            }
         }
     }
 
@@ -1219,7 +1324,19 @@ impl Vector {
                 let v: Vec<&str> = (0..len).map(|_| s.as_str()).collect();
                 Self::String(StringVector::from_vec(v))
             }
-            ScalarValue::Json(j) => Self::Json(JsonVector::from_vec(vec![ScalarValue::Json(j.clone()); len])),
+            ScalarValue::Json(j) => {
+                Self::Json(JsonVector::from_vec(vec![
+                    ScalarValue::Json(j.clone());
+                    len
+                ]))
+            }
+            ScalarValue::Date(d) => Self::Date(DateVector::from_vec(vec![*d; len])),
+            ScalarValue::DateTime(ts) => Self::DateTime(DateTimeVector::from_vec(vec![*ts; len])),
+            ScalarValue::Binary(b) => Self::String(StringVector::from_option_vec(
+                (0..len)
+                    .map(|_| Some(String::from_utf8_lossy(b).to_string()))
+                    .collect(),
+            )),
             _ => Self::Null(NullVector::new(len)),
         }
     }
@@ -1275,12 +1392,13 @@ impl Vector {
                 let mut min: Option<&str> = None;
                 for i in 0..v.len() {
                     if v.validity().is_valid(i)
-                        && let Some(s) = v.get(i) {
-                            min = Some(min.map_or(s, |m| m.min(s)));
-                        }
+                        && let Some(s) = v.get(i)
+                    {
+                        min = Some(min.map_or(s, |m| m.min(s)));
+                    }
                 }
                 min.map(|s| ScalarValue::String(s.to_string()))
-            },
+            }
             _ => None,
         }
     }
@@ -1301,12 +1419,13 @@ impl Vector {
                 let mut max: Option<&str> = None;
                 for i in 0..v.len() {
                     if v.validity().is_valid(i)
-                        && let Some(s) = v.get(i) {
-                            max = Some(max.map_or(s, |m| m.max(s)));
-                        }
+                        && let Some(s) = v.get(i)
+                    {
+                        max = Some(max.map_or(s, |m| m.max(s)));
+                    }
                 }
                 max.map(|s| ScalarValue::String(s.to_string()))
-            },
+            }
             _ => None,
         }
     }
@@ -1316,59 +1435,66 @@ impl Vector {
             Self::Int8(v) => {
                 let count = v.count_batch();
                 if count > 0 {
-                    v.sum_batch().map(|s| ScalarValue::Float64(s as f64 / count as f64))
+                    v.sum_batch()
+                        .map(|s| ScalarValue::Float64(s as f64 / count as f64))
                 } else {
                     None
                 }
-            },
+            }
             Self::Int16(v) => {
                 let count = v.count_batch();
                 if count > 0 {
-                    v.sum_batch().map(|s| ScalarValue::Float64(s as f64 / count as f64))
+                    v.sum_batch()
+                        .map(|s| ScalarValue::Float64(s as f64 / count as f64))
                 } else {
                     None
                 }
-            },
+            }
             Self::Int32(v) => {
                 let count = v.count_batch();
                 if count > 0 {
-                    v.sum_batch().map(|s| ScalarValue::Float64(s as f64 / count as f64))
+                    v.sum_batch()
+                        .map(|s| ScalarValue::Float64(s as f64 / count as f64))
                 } else {
                     None
                 }
-            },
+            }
             Self::Int64(v) => {
                 let count = v.count_batch();
                 if count > 0 {
-                    v.sum_batch().map(|s| ScalarValue::Float64(s as f64 / count as f64))
+                    v.sum_batch()
+                        .map(|s| ScalarValue::Float64(s as f64 / count as f64))
                 } else {
                     None
                 }
-            },
+            }
             Self::Int128(v) => {
                 let count = v.count_batch();
                 if count > 0 {
-                    v.sum_batch().map(|s| ScalarValue::Float64(s as f64 / count as f64))
+                    v.sum_batch()
+                        .map(|s| ScalarValue::Float64(s as f64 / count as f64))
                 } else {
                     None
                 }
-            },
+            }
             Self::Float32(v) => {
                 let count = v.count_batch();
                 if count > 0 {
-                    v.sum_batch().map(|s| ScalarValue::Float64(s as f64 / count as f64))
+                    v.sum_batch()
+                        .map(|s| ScalarValue::Float64(s as f64 / count as f64))
                 } else {
                     None
                 }
-            },
+            }
             Self::Float64(v) => {
                 let count = v.count_batch();
                 if count > 0 {
-                    v.sum_batch().map(|s| ScalarValue::Float64(s / count as f64))
+                    v.sum_batch()
+                        .map(|s| ScalarValue::Float64(s / count as f64))
                 } else {
                     None
                 }
-            },
+            }
             _ => None,
         }
     }
@@ -1439,7 +1565,13 @@ impl Vector {
                 let a = v.get(idx_a);
                 let b = v.get(idx_b);
                 match (a, b) {
-                    (Some(va), Some(vb)) => va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal),
+                    (Some(va), Some(vb)) => match (va.partial_cmp(&vb), va.is_nan(), vb.is_nan()) {
+                        (_, true, true) => std::cmp::Ordering::Equal,
+                        (_, true, false) => std::cmp::Ordering::Greater,
+                        (_, false, true) => std::cmp::Ordering::Less,
+                        (Some(ord), _, _) => ord,
+                        (None, _, _) => std::cmp::Ordering::Equal,
+                    },
                     (Some(_), None) => std::cmp::Ordering::Greater,
                     (None, Some(_)) => std::cmp::Ordering::Less,
                     (None, None) => std::cmp::Ordering::Equal,
@@ -1449,7 +1581,13 @@ impl Vector {
                 let a = v.get(idx_a);
                 let b = v.get(idx_b);
                 match (a, b) {
-                    (Some(va), Some(vb)) => va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal),
+                    (Some(va), Some(vb)) => match (va.partial_cmp(&vb), va.is_nan(), vb.is_nan()) {
+                        (_, true, true) => std::cmp::Ordering::Equal,
+                        (_, true, false) => std::cmp::Ordering::Greater,
+                        (_, false, true) => std::cmp::Ordering::Less,
+                        (Some(ord), _, _) => ord,
+                        (None, _, _) => std::cmp::Ordering::Equal,
+                    },
                     (Some(_), None) => std::cmp::Ordering::Greater,
                     (None, Some(_)) => std::cmp::Ordering::Less,
                     (None, None) => std::cmp::Ordering::Equal,

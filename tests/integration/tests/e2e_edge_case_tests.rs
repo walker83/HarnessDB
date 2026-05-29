@@ -7,16 +7,16 @@
 // CRITICAL: Server returns ALL values as Bytes (strings).
 // Always use get_i64(), get_f64(), get_string(), is_null().
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 30050;
@@ -41,14 +41,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -81,7 +88,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -113,7 +122,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -137,7 +149,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -147,7 +160,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -158,7 +172,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -173,7 +194,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -185,8 +207,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -228,22 +257,26 @@ fn result_has_error(result: &Result<Vec<Row>, String>) -> bool {
 // ============================================================================
 
 fn create_items_table(ctx: &TestContext) {
-    ctx.exec("CREATE TABLE items (
+    ctx.exec(
+        "CREATE TABLE items (
         id INT,
         name VARCHAR(100),
         price DOUBLE,
         qty INT
-    )");
+    )",
+    );
 }
 
 fn create_orders_table(ctx: &TestContext) {
-    ctx.exec("CREATE TABLE orders (
+    ctx.exec(
+        "CREATE TABLE orders (
         order_id INT,
         item_id INT,
         customer VARCHAR(100),
         amount DOUBLE,
         order_date VARCHAR(20)
-    )");
+    )",
+    );
 }
 
 // ============================================================================
@@ -275,7 +308,11 @@ fn test_empty_table_select_count() {
 
     // 2. SELECT COUNT(*) FROM empty table → 0
     let rows = ctx.query("SELECT COUNT(*) FROM items");
-    assert_eq!(get_i64(&rows[0], 0), 0, "COUNT(*) on empty table should be 0");
+    assert_eq!(
+        get_i64(&rows[0], 0),
+        0,
+        "COUNT(*) on empty table should be 0"
+    );
 
     ctx.drop_db(&db);
 }
@@ -288,8 +325,10 @@ fn test_empty_table_aggregates() {
 
     // 3. SELECT SUM(col) FROM empty table → NULL
     let rows = ctx.query("SELECT SUM(qty) FROM items");
-    assert!(is_null(&rows[0], 0) || get_i64(&rows[0], 0) == 0,
-        "SUM on empty table should be NULL or 0");
+    assert!(
+        is_null(&rows[0], 0) || get_i64(&rows[0], 0) == 0,
+        "SUM on empty table should be NULL or 0"
+    );
 
     // 4. SELECT AVG(col) FROM empty table → NULL
     let rows = ctx.query("SELECT AVG(qty) FROM items");
@@ -408,7 +447,11 @@ fn test_single_row_operations() {
     // 16. DELETE the only row, then SELECT → 0 rows
     ctx.exec("DELETE FROM items WHERE id = 1");
     let rows = ctx.query("SELECT * FROM items");
-    assert_eq!(rows.len(), 0, "After DELETE single row, table should be empty");
+    assert_eq!(
+        rows.len(),
+        0,
+        "After DELETE single row, table should be empty"
+    );
 
     ctx.exec("INSERT INTO items VALUES (1, 'Single Item', 42.5, 7)");
 
@@ -433,7 +476,7 @@ fn test_single_row_join() {
     // 18. JOIN with single row tables
     let rows = ctx.query(
         "SELECT i.name, o.customer, o.amount \
-         FROM items i JOIN orders o ON i.id = o.item_id"
+         FROM items i JOIN orders o ON i.id = o.item_id",
     );
     assert_eq!(rows.len(), 1, "Single row JOIN result");
     assert_eq!(get_string(&rows[0], 0), "Widget", "JOIN name");
@@ -489,7 +532,10 @@ fn test_large_values() {
 
     // 25. Very long VARCHAR (1000+ chars)
     let long_str = "A".repeat(2000);
-    ctx.exec(&format!("INSERT INTO items VALUES (20, '{}', 5.0, 7)", long_str));
+    ctx.exec(&format!(
+        "INSERT INTO items VALUES (20, '{}', 5.0, 7)",
+        long_str
+    ));
     let rows = ctx.query("SELECT name FROM items WHERE id = 20");
     let retrieved = get_string(&rows[0], 0);
     assert_eq!(retrieved.len(), 2000, "Long VARCHAR length");
@@ -498,8 +544,13 @@ fn test_large_values() {
     // 26. Many rows (100+ rows insert and COUNT)
     // Use name prefix to count only the bulk inserted rows
     for i in 0..100 {
-        ctx.exec(&format!("INSERT INTO items VALUES ({}, 'Bulk{}', {}, {})",
-            1000 + i, i, i as f64 * 1.5, i));
+        ctx.exec(&format!(
+            "INSERT INTO items VALUES ({}, 'Bulk{}', {}, {})",
+            1000 + i,
+            i,
+            i as f64 * 1.5,
+            i
+        ));
     }
     let rows = ctx.query("SELECT COUNT(*) FROM items WHERE name LIKE 'Bulk%'");
     assert_eq!(get_i64(&rows[0], 0), 100, "Bulk insert 100 rows");
@@ -525,12 +576,18 @@ fn test_boundary_conditions() {
 
     // 27. WHERE col = 0 (note: negative INT values may be stored as 0)
     let rows = ctx.query("SELECT * FROM items WHERE qty = 0");
-    assert!(rows.len() >= 1, "WHERE qty = 0 should return at least 1 row");
+    assert!(
+        rows.len() >= 1,
+        "WHERE qty = 0 should return at least 1 row"
+    );
     // Zero row is always present; negative row may also match if stored as 0
 
     // 28. WHERE col = -1 (negative INT values may be stored as NULL or 0)
     let rows = ctx.query("SELECT * FROM items WHERE qty = -1");
-    assert!(rows.len() <= 1, "WHERE qty = -1 should return at most 1 row");
+    assert!(
+        rows.len() <= 1,
+        "WHERE qty = -1 should return at most 1 row"
+    );
 
     // 29. WHERE col = '' (empty string)
     let rows = ctx.query("SELECT * FROM items WHERE name = ''");
@@ -552,7 +609,11 @@ fn test_boundary_conditions() {
             let val = get_string(&rows[0], 0);
             // Accept either NULL, 0, or error text as row value
             if !is_null(&rows[0], 0) && val != "0" {
-                assert!(val.starts_with("ERROR"), "Division by zero unexpected: {}", val);
+                assert!(
+                    val.starts_with("ERROR"),
+                    "Division by zero unexpected: {}",
+                    val
+                );
             }
         }
     }
@@ -597,7 +658,10 @@ fn test_insert_fifty_rows_and_count() {
     for i in 0..50 {
         ctx.exec(&format!(
             "INSERT INTO items VALUES ({}, 'Item{}', {}, {})",
-            i, i, i as f64 * 1.0, i * 2
+            i,
+            i,
+            i as f64 * 1.0,
+            i * 2
         ));
     }
 
@@ -645,8 +709,10 @@ fn test_insert_delete_half_verify() {
 
     // 45. Insert 20 rows
     for i in 0..20 {
-        ctx.exec(&format!("INSERT INTO items VALUES ({}, 'Item{}', {}, {})",
-            i, i, i as f64, i));
+        ctx.exec(&format!(
+            "INSERT INTO items VALUES ({}, 'Item{}', {}, {})",
+            i, i, i as f64, i
+        ));
     }
 
     // 46. Delete half (even IDs)
@@ -673,7 +739,10 @@ fn test_insert_update_all_verify() {
 
     // 48. Insert 10 rows
     for i in 0..10 {
-        ctx.exec(&format!("INSERT INTO items VALUES ({}, 'Old{}', 1.0, 1)", i, i));
+        ctx.exec(&format!(
+            "INSERT INTO items VALUES ({}, 'Old{}', 1.0, 1)",
+            i, i
+        ));
     }
 
     // 49. Update all rows
@@ -703,7 +772,11 @@ fn test_multiple_insert_batches() {
     ctx.exec("INSERT INTO items VALUES (6, 'F', 6.0, 6)");
 
     let rows = ctx.query("SELECT COUNT(*) FROM items");
-    assert_eq!(get_i64(&rows[0], 0), 6, "Total after multiple INSERT batches");
+    assert_eq!(
+        get_i64(&rows[0], 0),
+        6,
+        "Total after multiple INSERT batches"
+    );
 
     let rows = ctx.query("SELECT SUM(qty) FROM items");
     assert_eq!(get_i64(&rows[0], 0), 21, "SUM of qtys: 1+2+3+4+5+6");
@@ -791,7 +864,11 @@ fn test_update_no_matching_where() {
     // 57. Update with no matching WHERE, verify no changes
     ctx.exec("UPDATE items SET price = 999.0 WHERE id = 999");
     let rows = ctx.query("SELECT price FROM items WHERE id = 1");
-    assert_eq!(get_f64(&rows[0], 0), 10.0, "Price unchanged after no-match UPDATE");
+    assert_eq!(
+        get_f64(&rows[0], 0),
+        10.0,
+        "Price unchanged after no-match UPDATE"
+    );
 
     ctx.drop_db(&db);
 }
@@ -858,7 +935,10 @@ fn test_delete_complex_where() {
     for i in 1..=10 {
         ctx.exec(&format!(
             "INSERT INTO items VALUES ({}, 'Item{}', {}, {})",
-            i, i, i as f64 * 10.0, i * 5
+            i,
+            i,
+            i as f64 * 10.0,
+            i * 5
         ));
     }
 
@@ -867,7 +947,10 @@ fn test_delete_complex_where() {
     let rows = ctx.query("SELECT id FROM items ORDER BY id");
     // Server may not support complex AND/OR in DELETE WHERE — just verify no crash
     // and that the remaining count is reasonable
-    assert!(rows.len() > 0, "At least some rows should remain after DELETE");
+    assert!(
+        rows.len() > 0,
+        "At least some rows should remain after DELETE"
+    );
     // If complex WHERE worked: 7 rows remain (ids 1,6,7 deleted).
     // If not: 10 rows remain (no rows deleted). Both are acceptable.
 
@@ -925,7 +1008,7 @@ fn test_insert_into_select_joined() {
     let result = ctx.exec_ignore_error(
         "INSERT INTO summary SELECT i.name, SUM(o.amount) \
          FROM items i JOIN orders o ON i.id = o.item_id \
-         GROUP BY i.name"
+         GROUP BY i.name",
     );
     if result.is_ok() {
         let rows = ctx.query("SELECT * FROM summary ORDER BY item_name");
@@ -991,8 +1074,10 @@ fn test_create_insert_alter_insert_select() {
         if let Ok(rows) = &rows {
             if !rows.is_empty() {
                 assert_eq!(get_i64(&rows[0], 0), 1, "After ALTER, id intact");
-                assert!(is_null(&rows[0], 3) || get_string(&rows[0], 3).is_empty(),
-                    "New column should be NULL for existing row");
+                assert!(
+                    is_null(&rows[0], 3) || get_string(&rows[0], 3).is_empty(),
+                    "New column should be NULL for existing row"
+                );
             }
         }
 
@@ -1045,15 +1130,24 @@ fn test_insert_200_rows_and_count() {
 
     // 81. Insert 200 rows and COUNT
     for i in 0..200 {
-        ctx.exec(&format!("INSERT INTO items VALUES ({}, 'Stress{}', {}, {})",
-            i, i, i as f64 * 0.5, i));
+        ctx.exec(&format!(
+            "INSERT INTO items VALUES ({}, 'Stress{}', {}, {})",
+            i,
+            i,
+            i as f64 * 0.5,
+            i
+        ));
     }
     let rows = ctx.query("SELECT COUNT(*) FROM items");
     assert_eq!(get_i64(&rows[0], 0), 200, "COUNT after 200 inserts");
 
     // 82. Verify some values
     let rows = ctx.query("SELECT name FROM items WHERE id = 199");
-    assert_eq!(get_string(&rows[0], 0), "Stress199", "Last stress item name");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Stress199",
+        "Last stress item name"
+    );
 
     ctx.drop_db(&db);
 }
@@ -1066,7 +1160,10 @@ fn test_insert_100_rows_update_all() {
 
     // 83. Insert 100 rows, UPDATE all, verify
     for i in 0..100 {
-        ctx.exec(&format!("INSERT INTO items VALUES ({}, 'Old{}', 1.0, 1)", i, i));
+        ctx.exec(&format!(
+            "INSERT INTO items VALUES ({}, 'Old{}', 1.0, 1)",
+            i, i
+        ));
     }
 
     ctx.exec("UPDATE items SET price = 999.0, name = 'UpdatedAll'");
@@ -1086,11 +1183,21 @@ fn test_sequential_insert_select_cycles() {
 
     // 84-85. 10 sequential INSERT-SELECT cycles
     for i in 0..10 {
-        ctx.exec(&format!("INSERT INTO items VALUES ({}, 'Cycle{}', {}, {})",
-            i, i, i as f64 * 10.0, i + 1));
+        ctx.exec(&format!(
+            "INSERT INTO items VALUES ({}, 'Cycle{}', {}, {})",
+            i,
+            i,
+            i as f64 * 10.0,
+            i + 1
+        ));
         let rows = ctx.query("SELECT COUNT(*) FROM items");
-        assert_eq!(get_i64(&rows[0], 0), (i + 1) as i64,
-            "After cycle {}, count should be {}", i + 1, i + 1);
+        assert_eq!(
+            get_i64(&rows[0], 0),
+            (i + 1) as i64,
+            "After cycle {}, count should be {}",
+            i + 1,
+            i + 1
+        );
     }
 
     ctx.drop_db(&db);
@@ -1105,14 +1212,16 @@ fn test_multiple_tables_cross_queries() {
     ctx.exec("CREATE TABLE users (id INT, name VARCHAR(50), city VARCHAR(50))");
     ctx.exec("CREATE TABLE purchases (id INT, user_id INT, item VARCHAR(50), amount DOUBLE)");
 
-    ctx.exec("INSERT INTO users VALUES (1, 'Alice', 'NYC'), (2, 'Bob', 'LA'), (3, 'Charlie', 'NYC')");
+    ctx.exec(
+        "INSERT INTO users VALUES (1, 'Alice', 'NYC'), (2, 'Bob', 'LA'), (3, 'Charlie', 'NYC')",
+    );
     ctx.exec("INSERT INTO purchases VALUES (1, 1, 'Laptop', 1200.0), (2, 2, 'Phone', 800.0), (3, 1, 'Mouse', 25.0), (4, 3, 'Keyboard', 100.0)");
 
     // Cross-table query: count purchases per user
     let rows = ctx.query(
         "SELECT u.name, COUNT(p.id) AS purchase_count \
          FROM users u LEFT JOIN purchases p ON u.id = p.user_id \
-         GROUP BY u.name ORDER BY u.name"
+         GROUP BY u.name ORDER BY u.name",
     );
     assert_eq!(rows.len(), 3, "Cross-table query 3 users");
     assert_eq!(get_string(&rows[0], 0), "Alice", "Alice row");
@@ -1126,7 +1235,7 @@ fn test_multiple_tables_cross_queries() {
     let rows = ctx.query(
         "SELECT u.name, SUM(p.amount) AS total \
          FROM users u LEFT JOIN purchases p ON u.id = p.user_id \
-         GROUP BY u.name ORDER BY u.name"
+         GROUP BY u.name ORDER BY u.name",
     );
     assert_eq!(get_f64(&rows[0], 1), 1225.0, "Alice total: 1200+25");
     assert_eq!(get_f64(&rows[1], 1), 800.0, "Bob total: 800");
@@ -1146,7 +1255,10 @@ fn test_select_from_non_existent_table() {
 
     // 91. SELECT from non-existent table → error (returned as row or MySQL error)
     let result = ctx.query_ignore_error("SELECT * FROM nonexistent_table");
-    assert!(result_has_error(&result), "SELECT from non-existent table should error");
+    assert!(
+        result_has_error(&result),
+        "SELECT from non-existent table should error"
+    );
 
     ctx.drop_db(&db);
 }
@@ -1171,7 +1283,10 @@ fn test_select_non_existent_column() {
 
     // 93. SELECT non-existent column → error (returned as row or MySQL error)
     let result = ctx.query_ignore_error("SELECT nonexistent_column FROM items");
-    assert!(result_has_error(&result), "SELECT non-existent column should error");
+    assert!(
+        result_has_error(&result),
+        "SELECT non-existent column should error"
+    );
 
     ctx.drop_db(&db);
 }

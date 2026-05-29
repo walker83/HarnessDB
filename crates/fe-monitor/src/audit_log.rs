@@ -1,10 +1,10 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::RwLock;
 
 /// Audit log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,7 +232,8 @@ impl AuditLogger {
     async fn write_entry(&self, entry: &AuditLogEntry) {
         self.rotate_if_needed().await;
 
-        let log_line = serde_json::to_string(entry).unwrap_or_else(|_| "Failed to serialize entry".to_string());
+        let log_line = serde_json::to_string(entry)
+            .unwrap_or_else(|_| "Failed to serialize entry".to_string());
         let log_line = format!("{}\n", log_line);
 
         let mut file = self.current_file.write().await;
@@ -263,7 +264,9 @@ impl AuditLogger {
         if !self.config.enabled {
             return;
         }
-        if self.config.log_slow_queries_only && entry.duration_ms < self.config.slow_query_threshold_ms {
+        if self.config.log_slow_queries_only
+            && entry.duration_ms < self.config.slow_query_threshold_ms
+        {
             return;
         }
         if self.config.log_queries {
@@ -298,43 +301,93 @@ mod tests {
         };
         let logger = AuditLogger::with_config(config);
 
-        logger.log_query(
-            "test_user".to_string(),
-            "127.0.0.1".to_string(),
-            Some("test_db".to_string()),
-            "SELECT * FROM users".to_string(),
-            QueryStatus::Success,
-            100,
-            Some(10),
-            Some(1024),
-            None,
-        ).await;
+        logger
+            .log_query(
+                "test_user".to_string(),
+                "127.0.0.1".to_string(),
+                Some("test_db".to_string()),
+                "SELECT * FROM users".to_string(),
+                QueryStatus::Success,
+                100,
+                Some(10),
+                Some(1024),
+                None,
+            )
+            .await;
 
         logger.flush().await;
     }
 
     #[test]
     fn test_query_type_from_sql() {
-        assert!(matches!(QueryType::from_sql("SELECT * FROM users"), QueryType::Select));
-        assert!(matches!(QueryType::from_sql("INSERT INTO users VALUES (1)"), QueryType::Insert));
-        assert!(matches!(QueryType::from_sql("UPDATE users SET name='test'"), QueryType::Update));
-        assert!(matches!(QueryType::from_sql("DELETE FROM users"), QueryType::Delete));
-        assert!(matches!(QueryType::from_sql("CREATE DATABASE test"), QueryType::CreateDatabase));
-        assert!(matches!(QueryType::from_sql("DROP DATABASE test"), QueryType::DropDatabase));
-        assert!(matches!(QueryType::from_sql("CREATE TABLE test (id INT)"), QueryType::CreateTable));
-        assert!(matches!(QueryType::from_sql("DROP TABLE test"), QueryType::DropTable));
-        assert!(matches!(QueryType::from_sql("ALTER TABLE test ADD COLUMN name VARCHAR"), QueryType::AlterTable));
-        assert!(matches!(QueryType::from_sql("SHOW DATABASES"), QueryType::ShowDatabases));
-        assert!(matches!(QueryType::from_sql("SHOW TABLES"), QueryType::ShowTables));
-        assert!(matches!(QueryType::from_sql("UNKNOWN QUERY"), QueryType::Other));
+        assert!(matches!(
+            QueryType::from_sql("SELECT * FROM users"),
+            QueryType::Select
+        ));
+        assert!(matches!(
+            QueryType::from_sql("INSERT INTO users VALUES (1)"),
+            QueryType::Insert
+        ));
+        assert!(matches!(
+            QueryType::from_sql("UPDATE users SET name='test'"),
+            QueryType::Update
+        ));
+        assert!(matches!(
+            QueryType::from_sql("DELETE FROM users"),
+            QueryType::Delete
+        ));
+        assert!(matches!(
+            QueryType::from_sql("CREATE DATABASE test"),
+            QueryType::CreateDatabase
+        ));
+        assert!(matches!(
+            QueryType::from_sql("DROP DATABASE test"),
+            QueryType::DropDatabase
+        ));
+        assert!(matches!(
+            QueryType::from_sql("CREATE TABLE test (id INT)"),
+            QueryType::CreateTable
+        ));
+        assert!(matches!(
+            QueryType::from_sql("DROP TABLE test"),
+            QueryType::DropTable
+        ));
+        assert!(matches!(
+            QueryType::from_sql("ALTER TABLE test ADD COLUMN name VARCHAR"),
+            QueryType::AlterTable
+        ));
+        assert!(matches!(
+            QueryType::from_sql("SHOW DATABASES"),
+            QueryType::ShowDatabases
+        ));
+        assert!(matches!(
+            QueryType::from_sql("SHOW TABLES"),
+            QueryType::ShowTables
+        ));
+        assert!(matches!(
+            QueryType::from_sql("UNKNOWN QUERY"),
+            QueryType::Other
+        ));
     }
 
     #[test]
     fn test_query_type_from_sql_case_insensitive() {
-        assert!(matches!(QueryType::from_sql("select * from users"), QueryType::Select));
-        assert!(matches!(QueryType::from_sql("Select * From Users"), QueryType::Select));
-        assert!(matches!(QueryType::from_sql("INSERT INTO users VALUES (1)"), QueryType::Insert));
-        assert!(matches!(QueryType::from_sql("insert into users values (1)"), QueryType::Insert));
+        assert!(matches!(
+            QueryType::from_sql("select * from users"),
+            QueryType::Select
+        ));
+        assert!(matches!(
+            QueryType::from_sql("Select * From Users"),
+            QueryType::Select
+        ));
+        assert!(matches!(
+            QueryType::from_sql("INSERT INTO users VALUES (1)"),
+            QueryType::Insert
+        ));
+        assert!(matches!(
+            QueryType::from_sql("insert into users values (1)"),
+            QueryType::Insert
+        ));
     }
 }
 

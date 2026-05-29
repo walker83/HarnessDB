@@ -6,16 +6,16 @@
 // CRITICAL: Server returns ALL values as Bytes (strings).
 // Always use get_i64(), get_f64(), get_string(), is_null().
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 const MYSQL_PORT: u16 = 29970;
 
@@ -39,14 +39,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -79,7 +86,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -111,7 +120,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     fn new_db_name() -> String {
@@ -135,7 +147,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -145,7 +158,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -155,7 +169,14 @@ impl TestContext {
 
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -171,7 +192,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -183,8 +205,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -212,7 +241,8 @@ fn is_null(row: &Row, idx: usize) -> bool {
 
 /// Create a sales table for aggregate testing
 fn create_sales_table(ctx: &TestContext) {
-    ctx.exec("CREATE TABLE sales (
+    ctx.exec(
+        "CREATE TABLE sales (
         id INT,
         product VARCHAR(50),
         category VARCHAR(50),
@@ -220,28 +250,33 @@ fn create_sales_table(ctx: &TestContext) {
         quantity INT,
         region VARCHAR(50),
         sale_date VARCHAR(20)
-    )");
+    )",
+    );
 }
 
 /// Create a simple numbers table
 fn create_numbers_table(ctx: &TestContext) {
-    ctx.exec("CREATE TABLE numbers (
+    ctx.exec(
+        "CREATE TABLE numbers (
         id INT,
         val INT,
         grp VARCHAR(10)
-    )");
+    )",
+    );
 }
 
 /// Create an employees table
 fn create_employees_table(ctx: &TestContext) {
-    ctx.exec("CREATE TABLE employees (
+    ctx.exec(
+        "CREATE TABLE employees (
         id INT,
         name VARCHAR(50),
         department VARCHAR(50),
         salary DOUBLE,
         bonus DOUBLE,
         age INT
-    )");
+    )",
+    );
 }
 
 // ============================================================================
@@ -254,12 +289,14 @@ fn test_count_basic() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.5, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 3, 'West', '2024-01-02'),
         (3, 'Widget', 'B', 15.0, 1, 'East', '2024-01-03'),
         (4, 'Doohickey', 'A', 100.0, 5, 'North', '2024-01-04'),
-        (5, 'Gadget', 'B', 25.0, 2, 'West', '2024-01-05')");
+        (5, 'Gadget', 'B', 25.0, 2, 'West', '2024-01-05')",
+    );
 
     // COUNT(*) basic
     let rows = ctx.query("SELECT COUNT(*) FROM sales");
@@ -282,22 +319,26 @@ fn test_count_basic() {
     assert_eq!(get_i64(&rows[0], 0), 0, "COUNT(*) WHERE no match");
 
     // COUNT with GROUP BY
-    let rows = ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category ORDER BY category");
+    let rows =
+        ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category ORDER BY category");
     assert_eq!(rows.len(), 2, "COUNT GROUP BY rows");
     assert_eq!(get_i64(&rows[0], 1), 3, "COUNT GROUP BY category A");
     assert_eq!(get_i64(&rows[1], 1), 2, "COUNT GROUP BY category B");
 
     // COUNT with HAVING
-    let rows = ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) > 2");
+    let rows =
+        ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) > 2");
     assert_eq!(rows.len(), 1, "COUNT HAVING rows");
     assert_eq!(get_string(&rows[0], 0), "A", "COUNT HAVING category");
 
     // COUNT(*) with ORDER BY
-    let rows = ctx.query("SELECT category, COUNT(*) AS cnt FROM sales GROUP BY category ORDER BY cnt DESC");
+    let rows = ctx
+        .query("SELECT category, COUNT(*) AS cnt FROM sales GROUP BY category ORDER BY cnt DESC");
     assert_eq!(get_i64(&rows[0], 1), 3, "COUNT ORDER BY desc");
 
     // Multiple COUNT in one query
-    let rows = ctx.query("SELECT COUNT(*), COUNT(DISTINCT product), COUNT(DISTINCT category) FROM sales");
+    let rows =
+        ctx.query("SELECT COUNT(*), COUNT(DISTINCT product), COUNT(DISTINCT category) FROM sales");
     assert_eq!(get_i64(&rows[0], 0), 5, "Multiple COUNT #1");
     assert_eq!(get_i64(&rows[0], 1), 3, "Multiple COUNT #2");
     assert_eq!(get_i64(&rows[0], 2), 2, "Multiple COUNT #3");
@@ -311,10 +352,12 @@ fn test_count_excludes_nulls() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, NULL, 'B', NULL, 3, 'West', '2024-01-02'),
-        (3, 'Gadget', 'A', NULL, 1, 'North', '2024-01-03')");
+        (3, 'Gadget', 'A', NULL, 1, 'North', '2024-01-03')",
+    );
 
     // COUNT excludes NULLs for specific columns
     let rows = ctx.query("SELECT COUNT(*), COUNT(product), COUNT(amount) FROM sales");
@@ -350,10 +393,12 @@ fn test_sum_basic() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 3, 'West', '2024-01-02'),
-        (3, 'Doohickey', 'B', 30.0, 5, 'North', '2024-01-03')");
+        (3, 'Doohickey', 'B', 30.0, 5, 'North', '2024-01-03')",
+    );
 
     // SUM basic
     let rows = ctx.query("SELECT SUM(amount) FROM sales");
@@ -368,7 +413,8 @@ fn test_sum_basic() {
     assert_eq!(get_f64(&rows[0], 0) as i64, 30, "SUM WHERE category='A'");
 
     // SUM with GROUP BY
-    let rows = ctx.query("SELECT category, SUM(amount) FROM sales GROUP BY category ORDER BY category");
+    let rows =
+        ctx.query("SELECT category, SUM(amount) FROM sales GROUP BY category ORDER BY category");
     assert_eq!(rows.len(), 2, "SUM GROUP BY rows");
     assert_eq!(get_f64(&rows[0], 1) as i64, 30, "SUM GROUP BY A");
     assert_eq!(get_f64(&rows[1], 1) as i64, 30, "SUM GROUP BY B");
@@ -390,12 +436,14 @@ fn test_sum_negative_and_mixed() {
     let db = ctx.create_and_use_db();
     create_numbers_table(&ctx);
 
-    ctx.exec("INSERT INTO numbers VALUES
+    ctx.exec(
+        "INSERT INTO numbers VALUES
         (1, -10, 'neg'),
         (2, -20, 'neg'),
         (3, 15, 'pos'),
         (4, 25, 'pos'),
-        (5, -5, 'neg')");
+        (5, -5, 'neg')",
+    );
 
     // SUM of negative numbers
     let rows = ctx.query("SELECT SUM(val) FROM numbers WHERE grp = 'neg'");
@@ -421,7 +469,10 @@ fn test_sum_negative_and_mixed() {
     // SUM on filtered empty result — may return NULL or 0
     let rows = ctx.query("SELECT SUM(val) FROM numbers WHERE grp = 'none'");
     // DataFusion returns SUM on empty set as NULL
-    assert!(is_null(&rows[0], 0) || get_i64(&rows[0], 0) == 0, "SUM on empty set is NULL or 0");
+    assert!(
+        is_null(&rows[0], 0) || get_i64(&rows[0], 0) == 0,
+        "SUM on empty set is NULL or 0"
+    );
 
     ctx.drop_db(&db);
 }
@@ -436,10 +487,12 @@ fn test_avg_basic() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 4, 'West', '2024-01-02'),
-        (3, 'Doohickey', 'B', 30.0, 6, 'North', '2024-01-03')");
+        (3, 'Doohickey', 'B', 30.0, 6, 'North', '2024-01-03')",
+    );
 
     // AVG basic
     let rows = ctx.query("SELECT AVG(amount) FROM sales");
@@ -454,7 +507,8 @@ fn test_avg_basic() {
     assert_eq!(get_f64(&rows[0], 0), 15.0, "AVG WHERE category='A'");
 
     // AVG with GROUP BY
-    let rows = ctx.query("SELECT category, AVG(amount) FROM sales GROUP BY category ORDER BY category");
+    let rows =
+        ctx.query("SELECT category, AVG(amount) FROM sales GROUP BY category ORDER BY category");
     assert_eq!(get_f64(&rows[0], 1), 15.0, "AVG GROUP BY A");
     assert_eq!(get_f64(&rows[1], 1), 30.0, "AVG GROUP BY B");
 
@@ -476,10 +530,12 @@ fn test_avg_with_nulls() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', NULL, 4, 'West', '2024-01-02'),
-        (3, 'Doohickey', 'B', 30.0, 6, 'North', '2024-01-03')");
+        (3, 'Doohickey', 'B', 30.0, 6, 'North', '2024-01-03')",
+    );
 
     // AVG excludes NULLs — avg of 10 and 30 = 20
     let rows = ctx.query("SELECT AVG(amount) FROM sales");
@@ -503,11 +559,13 @@ fn test_min_max_int_double() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.5, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 3, 'West', '2024-01-02'),
         (3, 'Doohickey', 'B', 15.0, 1, 'North', '2024-01-03'),
-        (4, 'Widget', 'B', 100.0, 5, 'South', '2024-01-04')");
+        (4, 'Widget', 'B', 100.0, 5, 'South', '2024-01-04')",
+    );
 
     // MIN on INT column
     let rows = ctx.query("SELECT MIN(quantity) FROM sales");
@@ -549,19 +607,31 @@ fn test_min_max_varchar_and_group_by() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'B', 20.0, 3, 'West', '2024-01-02'),
         (3, 'Doohickey', 'A', 30.0, 1, 'North', '2024-01-03'),
-        (4, 'Apple', 'B', 40.0, 4, 'South', '2024-01-04')");
+        (4, 'Apple', 'B', 40.0, 4, 'South', '2024-01-04')",
+    );
 
     // MIN/MAX on VARCHAR (alphabetical)
     let rows = ctx.query("SELECT MIN(product), MAX(product) FROM sales");
-    assert_eq!(get_string(&rows[0], 0), "Apple", "MIN(product) alphabetical");
-    assert_eq!(get_string(&rows[0], 1), "Widget", "MAX(product) alphabetical");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Apple",
+        "MIN(product) alphabetical"
+    );
+    assert_eq!(
+        get_string(&rows[0], 1),
+        "Widget",
+        "MAX(product) alphabetical"
+    );
 
     // MIN/MAX with GROUP BY
-    let rows = ctx.query("SELECT category, MIN(amount), MAX(amount) FROM sales GROUP BY category ORDER BY category");
+    let rows = ctx.query(
+        "SELECT category, MIN(amount), MAX(amount) FROM sales GROUP BY category ORDER BY category",
+    );
     assert_eq!(get_f64(&rows[0], 1), 10.0, "MIN amount group A");
     assert_eq!(get_f64(&rows[0], 2), 30.0, "MAX amount group A");
     assert_eq!(get_f64(&rows[1], 1), 20.0, "MIN amount group B");
@@ -576,7 +646,10 @@ fn test_min_max_varchar_and_group_by() {
     ctx.exec("INSERT INTO sales VALUES (5, NULL, 'A', NULL, NULL, 'East', '2024-01-05')");
     let rows = ctx.query("SELECT MIN(product), MAX(product) FROM sales");
     // NULLs are excluded from MIN/MAX of non-null values
-    assert!(!is_null(&rows[0], 0), "MIN(product) not null despite NULL row");
+    assert!(
+        !is_null(&rows[0], 0),
+        "MIN(product) not null despite NULL row"
+    );
     assert_eq!(get_string(&rows[0], 0), "Apple", "MIN(product) with nulls");
 
     ctx.drop_db(&db);
@@ -592,15 +665,18 @@ fn test_group_by_basic() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 3, 'West', '2024-01-02'),
         (3, 'Widget', 'B', 30.0, 5, 'East', '2024-01-03'),
         (4, 'Gadget', 'B', 40.0, 1, 'West', '2024-01-04'),
-        (5, 'Doohickey', 'A', 50.0, 4, 'North', '2024-01-05')");
+        (5, 'Doohickey', 'A', 50.0, 4, 'North', '2024-01-05')",
+    );
 
     // GROUP BY single column
-    let rows = ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category ORDER BY category");
+    let rows =
+        ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category ORDER BY category");
     assert_eq!(rows.len(), 2, "GROUP BY single column rows");
     assert_eq!(get_i64(&rows[0], 1), 3, "GROUP BY A count");
     assert_eq!(get_i64(&rows[1], 1), 2, "GROUP BY B count");
@@ -617,7 +693,9 @@ fn test_group_by_basic() {
     assert_eq!(get_i64(&rows[1], 1), 2, "GB WHERE B");
 
     // GROUP BY with ORDER BY
-    let rows = ctx.query("SELECT category, SUM(amount) AS total FROM sales GROUP BY category ORDER BY total DESC");
+    let rows = ctx.query(
+        "SELECT category, SUM(amount) AS total FROM sales GROUP BY category ORDER BY total DESC",
+    );
     assert_eq!(get_string(&rows[0], 0), "A", "GB ORDER BY A first");
 
     // GROUP BY with LIMIT
@@ -626,12 +704,14 @@ fn test_group_by_basic() {
     assert_eq!(get_string(&rows[0], 0), "A", "GB LIMIT category");
 
     // GROUP BY with aliases
-    let rows = ctx.query("SELECT category AS cat, COUNT(*) AS cnt FROM sales GROUP BY cat ORDER BY cat");
+    let rows =
+        ctx.query("SELECT category AS cat, COUNT(*) AS cnt FROM sales GROUP BY cat ORDER BY cat");
     assert_eq!(get_string(&rows[0], 0), "A", "GB alias");
     assert_eq!(get_i64(&rows[0], 1), 3, "GB alias count");
 
     // GROUP BY on VARCHAR column
-    let rows = ctx.query("SELECT product, SUM(amount) FROM sales GROUP BY product ORDER BY product");
+    let rows =
+        ctx.query("SELECT product, SUM(amount) FROM sales GROUP BY product ORDER BY product");
     assert_eq!(rows.len(), 3, "GB VARCHAR rows");
     assert_eq!(get_string(&rows[0], 0), "Doohickey", "GB VARCHAR product");
 
@@ -652,17 +732,21 @@ fn test_having_clause() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 3, 'West', '2024-01-02'),
         (3, 'Widget', 'B', 5.0, 1, 'East', '2024-01-03'),
         (4, 'Gadget', 'A', 100.0, 10, 'West', '2024-01-04'),
         (5, 'Doohickey', 'B', 30.0, 4, 'North', '2024-01-05'),
-        (6, 'Widget', 'A', 50.0, 6, 'South', '2024-01-06')");
+        (6, 'Widget', 'A', 50.0, 6, 'South', '2024-01-06')",
+    );
 
     // HAVING with COUNT — DataFusion HAVING with comparison operators may not filter rows
     // Accept actual server behavior
-    let _ = ctx.query_ignore_error("SELECT category, COUNT(*) AS cnt FROM sales GROUP BY category HAVING COUNT(*) >= 3");
+    let _ = ctx.query_ignore_error(
+        "SELECT category, COUNT(*) AS cnt FROM sales GROUP BY category HAVING COUNT(*) >= 3",
+    );
 
     // HAVING with SUM
     let rows = ctx.query("SELECT product, SUM(amount) AS total FROM sales GROUP BY product HAVING SUM(amount) > 30 ORDER BY total");
@@ -676,16 +760,33 @@ fn test_having_clause() {
     // HAVING with multiple conditions
     let rows = ctx.query("SELECT product, SUM(amount) AS total FROM sales GROUP BY product HAVING SUM(amount) > 30 AND COUNT(*) >= 2 ORDER BY total");
     assert_eq!(rows.len(), 2, "HAVING multi cond");
-    assert_eq!(get_string(&rows[0], 0), "Widget", "HAVING multi product 1 (sum=65)");
-    assert_eq!(get_string(&rows[1], 0), "Gadget", "HAVING multi product 2 (sum=120)");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Widget",
+        "HAVING multi product 1 (sum=65)"
+    );
+    assert_eq!(
+        get_string(&rows[1], 0),
+        "Gadget",
+        "HAVING multi product 2 (sum=120)"
+    );
 
     // HAVING vs WHERE (WHERE filters before GROUP BY, HAVING after)
     // WHERE should filter out rows before aggregation
     let rows_where = ctx.query("SELECT category, COUNT(*) FROM sales WHERE amount > 15 GROUP BY category ORDER BY category");
-    let rows_having = ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) > 2");
+    let rows_having =
+        ctx.query("SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) > 2");
     assert_eq!(rows_where.len(), 2, "WHERE before GROUP BY total rows");
-    assert_eq!(get_i64(&rows_where[0], 1), 3, "WHERE before GROUP BY A (amount>15: Gadget 20+100, Widget 50)");
-    assert_eq!(get_i64(&rows_where[1], 1), 1, "WHERE before GROUP BY B (amount>15: Doohickey 30)");
+    assert_eq!(
+        get_i64(&rows_where[0], 1),
+        3,
+        "WHERE before GROUP BY A (amount>15: Gadget 20+100, Widget 50)"
+    );
+    assert_eq!(
+        get_i64(&rows_where[1], 1),
+        1,
+        "WHERE before GROUP BY B (amount>15: Doohickey 30)"
+    );
     assert_eq!(rows_having.len(), 1, "HAVING after GROUP BY");
 
     // HAVING with complex expression
@@ -693,14 +794,24 @@ fn test_having_clause() {
     assert_eq!(rows.len(), 1, "HAVING complex expr");
 
     // HAVING on VARCHAR group
-    let rows = ctx.query("SELECT product, COUNT(*) FROM sales GROUP BY product HAVING COUNT(*) = 1 ORDER BY product");
+    let rows = ctx.query(
+        "SELECT product, COUNT(*) FROM sales GROUP BY product HAVING COUNT(*) = 1 ORDER BY product",
+    );
     assert_eq!(rows.len(), 1, "HAVING VARCHAR group");
-    assert_eq!(get_string(&rows[0], 0), "Doohickey", "HAVING VARCHAR product");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Doohickey",
+        "HAVING VARCHAR product"
+    );
 
     // HAVING with MIN
     let rows = ctx.query("SELECT category, MIN(amount) AS min_amt FROM sales GROUP BY category HAVING MIN(amount) > 5");
     assert_eq!(rows.len(), 1, "HAVING MIN rows");
-    assert_eq!(get_string(&rows[0], 0), "A", "HAVING MIN category (A min=10, B min=5 not > 5)");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "A",
+        "HAVING MIN category (A min=10, B min=5 not > 5)"
+    );
 
     // HAVING with MAX
     let rows = ctx.query("SELECT category, MAX(amount) AS max_amt FROM sales GROUP BY category HAVING MAX(amount) < 60");
@@ -720,10 +831,12 @@ fn test_group_concat() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.0, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 3, 'West', '2024-01-02'),
-        (3, 'Doohickey', 'B', 30.0, 1, 'North', '2024-01-03')");
+        (3, 'Doohickey', 'B', 30.0, 1, 'North', '2024-01-03')",
+    );
 
     // GROUP_CONCAT â DataFusion may not support this natively
     // Try GROUP_CONCAT first, then array_agg as fallback
@@ -748,12 +861,17 @@ fn test_group_concat() {
         }
     }
     // GROUP_CONCAT with GROUP BY
-    let result = ctx.query_ignore_error("SELECT category, GROUP_CONCAT(product) FROM sales GROUP BY category ORDER BY category");
+    let result = ctx.query_ignore_error(
+        "SELECT category, GROUP_CONCAT(product) FROM sales GROUP BY category ORDER BY category",
+    );
     if let Ok(rows) = result {
         // Server may or may not support GROUP_CONCAT — check if we got meaningful results
         if rows.len() == 2 {
             let cat_a = get_string(&rows[0], 1);
-            assert!(cat_a.contains("Widget") || cat_a.contains("Gadget"), "GROUP_CONCAT group A");
+            assert!(
+                cat_a.contains("Widget") || cat_a.contains("Gadget"),
+                "GROUP_CONCAT group A"
+            );
         }
         // If rows.len() != 2, GROUP_CONCAT is not properly supported — pass silently
     }
@@ -785,15 +903,18 @@ fn test_multiple_aggregates() {
     let db = ctx.create_and_use_db();
     create_sales_table(&ctx);
 
-    ctx.exec("INSERT INTO sales VALUES
+    ctx.exec(
+        "INSERT INTO sales VALUES
         (1, 'Widget', 'A', 10.5, 2, 'East', '2024-01-01'),
         (2, 'Gadget', 'A', 20.0, 3, 'West', '2024-01-02'),
         (3, 'Widget', 'B', 15.0, 1, 'East', '2024-01-03'),
         (4, 'Gadget', 'B', 100.0, 5, 'West', '2024-01-04'),
-        (5, 'Doohickey', 'A', 50.0, 4, 'North', '2024-01-05')");
+        (5, 'Doohickey', 'A', 50.0, 4, 'North', '2024-01-05')",
+    );
 
     // SELECT COUNT(*), SUM(col), AVG(col), MIN(col), MAX(col) in one query
-    let rows = ctx.query("SELECT COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales");
+    let rows =
+        ctx.query("SELECT COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales");
     assert_eq!(get_i64(&rows[0], 0), 5, "Multi agg COUNT");
     assert_eq!(get_f64(&rows[0], 1), 195.5, "Multi agg SUM");
     assert_eq!(get_f64(&rows[0], 2), 39.1, "Multi agg AVG");
@@ -806,7 +927,11 @@ fn test_multiple_aggregates() {
     assert_eq!(get_string(&rows[0], 0), "Doohickey", "Multi agg GB product");
     assert_eq!(get_i64(&rows[0], 1), 1, "Multi agg GB COUNT");
     assert_eq!(get_f64(&rows[0], 2), 50.0, "Multi agg GB SUM");
-    assert_eq!(get_f64(&rows[1], 2) / 2.0, get_f64(&rows[1], 2) / 2.0, "Multi agg GB sanity"); // just check not panic
+    assert_eq!(
+        get_f64(&rows[1], 2) / 2.0,
+        get_f64(&rows[1], 2) / 2.0,
+        "Multi agg GB sanity"
+    ); // just check not panic
 
     // multiple aggregates with GROUP BY category
     let rows = ctx.query("SELECT category, COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales GROUP BY category ORDER BY category");
@@ -820,7 +945,8 @@ fn test_multiple_aggregates() {
     assert_eq!(get_i64(&rows[0], 1), 2, "Multi agg WHERE cat A count");
 
     // Multiple COUNT variants
-    let rows = ctx.query("SELECT COUNT(*), COUNT(DISTINCT product), COUNT(DISTINCT category) FROM sales");
+    let rows =
+        ctx.query("SELECT COUNT(*), COUNT(DISTINCT product), COUNT(DISTINCT category) FROM sales");
     assert_eq!(get_i64(&rows[0], 0), 5, "Multi COUNT *");
     assert_eq!(get_i64(&rows[0], 1), 3, "Multi COUNT DISTINCT product");
     assert_eq!(get_i64(&rows[0], 2), 2, "Multi COUNT DISTINCT category");
@@ -839,7 +965,9 @@ fn test_edge_cases() {
     create_sales_table(&ctx);
 
     // Edge: empty table aggregates — DataFusion may panic on empty-table multi-aggregate
-    let empty_result = ctx.query_ignore_error("SELECT COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales");
+    let empty_result = ctx.query_ignore_error(
+        "SELECT COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales",
+    );
     if let Ok(rows) = empty_result {
         // Check that we got actual data, not an error message string
         let first_val = get_string(&rows[0], 0);
@@ -857,7 +985,8 @@ fn test_edge_cases() {
 
     // Edge: single row
     ctx.exec("INSERT INTO sales VALUES (1, 'Only', 'X', 42.0, 7, 'Center', '2024-06-15')");
-    let rows = ctx.query("SELECT COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales");
+    let rows =
+        ctx.query("SELECT COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales");
     assert_eq!(get_i64(&rows[0], 0), 1, "Single row COUNT");
     assert_eq!(get_f64(&rows[0], 1), 42.0, "Single row SUM");
     assert_eq!(get_f64(&rows[0], 2), 42.0, "Single row AVG");
@@ -880,7 +1009,8 @@ fn test_edge_cases() {
     assert_eq!(get_i64(&rows[0], 0), 7000000, "Large SUM");
 
     // Edge: GROUP BY with no rows matching WHERE
-    let rows = ctx.query("SELECT category, COUNT(*) FROM sales WHERE category = 'Z' GROUP BY category");
+    let rows =
+        ctx.query("SELECT category, COUNT(*) FROM sales WHERE category = 'Z' GROUP BY category");
     assert_eq!(rows.len(), 0, "GROUP BY no matching rows");
 
     ctx.drop_db(&db);
@@ -896,14 +1026,16 @@ fn test_employees_aggregates() {
     let db = ctx.create_and_use_db();
     create_employees_table(&ctx);
 
-    ctx.exec("INSERT INTO employees VALUES
+    ctx.exec(
+        "INSERT INTO employees VALUES
         (1, 'Alice', 'Engineering', 120000.0, 10000.0, 30),
         (2, 'Bob', 'Engineering', 110000.0, 8000.0, 28),
         (3, 'Charlie', 'Sales', 90000.0, 15000.0, 35),
         (4, 'Diana', 'Sales', 95000.0, 12000.0, 32),
         (5, 'Eve', 'Engineering', 130000.0, 20000.0, 40),
         (6, 'Frank', 'HR', 75000.0, 5000.0, 45),
-        (7, 'Grace', 'HR', 80000.0, 6000.0, 38)");
+        (7, 'Grace', 'HR', 80000.0, 6000.0, 38)",
+    );
 
     // Department aggregates
     let rows = ctx.query("SELECT department, COUNT(*), SUM(salary), AVG(salary), MIN(salary), MAX(salary) FROM employees GROUP BY department ORDER BY department");
@@ -928,11 +1060,19 @@ fn test_employees_aggregates() {
     // HAVING with complex filter
     let rows = ctx.query("SELECT department, AVG(salary) AS avg_sal FROM employees GROUP BY department HAVING AVG(salary) > 100000 ORDER BY avg_sal DESC");
     assert_eq!(rows.len(), 1, "HAVING AVG salary > 100k");
-    assert_eq!(get_string(&rows[0], 0), "Engineering", "Engineering > 100k avg");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Engineering",
+        "Engineering > 100k avg"
+    );
 
     // AVG of INT with decimal precision
     let rows = ctx.query("SELECT AVG(age) FROM employees");
-    assert_eq!(get_f64(&rows[0], 0), 35.42857142857143, "AVG(age) precision");
+    assert_eq!(
+        get_f64(&rows[0], 0),
+        35.42857142857143,
+        "AVG(age) precision"
+    );
 
     // Multiple aggregates with WHERE
     let rows = ctx.query("SELECT department, COUNT(*), SUM(salary), AVG(bonus) FROM employees WHERE age < 35 GROUP BY department ORDER BY department");
@@ -951,12 +1091,14 @@ fn test_aggregates_with_numbers_table() {
     let db = ctx.create_and_use_db();
     create_numbers_table(&ctx);
 
-    ctx.exec("INSERT INTO numbers VALUES
+    ctx.exec(
+        "INSERT INTO numbers VALUES
         (1, 100, 'a'),
         (2, 200, 'a'),
         (3, 300, 'b'),
         (4, 400, 'b'),
-        (5, 500, 'c')");
+        (5, 500, 'c')",
+    );
 
     // Multiple aggregates across groups
     let rows = ctx.query("SELECT grp, COUNT(*), SUM(val), AVG(val), MIN(val), MAX(val) FROM numbers GROUP BY grp ORDER BY grp");
@@ -975,14 +1117,17 @@ fn test_aggregates_with_numbers_table() {
     assert_eq!(get_i64(&rows[2], 2), 500, "grp c sum");
 
     // GROUP BY with ORDER BY and LIMIT
-    let rows = ctx.query("SELECT grp, SUM(val) AS total FROM numbers GROUP BY grp ORDER BY total DESC LIMIT 2");
+    let rows = ctx.query(
+        "SELECT grp, SUM(val) AS total FROM numbers GROUP BY grp ORDER BY total DESC LIMIT 2",
+    );
     assert_eq!(rows.len(), 2, "ORDER BY LIMIT rows");
     assert_eq!(get_string(&rows[0], 0), "b", "Top group (sum=700)");
     assert_eq!(get_string(&rows[1], 0), "c", "Second group (sum=500)");
 
     // HAVING vs WHERE
     let rows_where = ctx.query("SELECT grp, COUNT(*) FROM numbers WHERE val < 450 GROUP BY grp");
-    let rows_having = ctx.query("SELECT grp, COUNT(*) FROM numbers GROUP BY grp HAVING COUNT(*) > 1");
+    let rows_having =
+        ctx.query("SELECT grp, COUNT(*) FROM numbers GROUP BY grp HAVING COUNT(*) > 1");
     assert_eq!(rows_where.len(), 2, "WHERE < 450 groups");
     assert_eq!(rows_having.len(), 2, "HAVING count>1 groups");
 

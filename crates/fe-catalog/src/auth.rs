@@ -148,7 +148,10 @@ impl AuthManager {
             self.auth_cache.remove(&key);
             Ok(())
         } else {
-            Err(DrorisError::Internal(format!("User '{}' not found", username)))
+            Err(DrorisError::Internal(format!(
+                "User '{}' not found",
+                username
+            )))
         }
     }
 
@@ -159,7 +162,10 @@ impl AuthManager {
             self.auth_cache.remove(&key);
             Ok(())
         } else {
-            Err(DrorisError::Internal(format!("User '{}' not found", username)))
+            Err(DrorisError::Internal(format!(
+                "User '{}' not found",
+                username
+            )))
         }
     }
 
@@ -171,11 +177,15 @@ impl AuthManager {
         let runtime = tokio::runtime::Runtime::new()?;
         runtime.block_on(async {
             let users: Vec<UserAuth> = self.list_users();
-            let json = serde_json::to_string(&users)
+            let json =
+                serde_json::to_string(&users).map_err(|e| DrorisError::Internal(e.to_string()))?;
+            tokio::fs::create_dir_all(path)
+                .await
                 .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            tokio::fs::create_dir_all(path).await.map_err(|e| DrorisError::Internal(e.to_string()))?;
             let file_path = format!("{}/users.json", path);
-            tokio::fs::write(&file_path, json).await.map_err(|e| DrorisError::Internal(e.to_string()))?;
+            tokio::fs::write(&file_path, json)
+                .await
+                .map_err(|e| DrorisError::Internal(e.to_string()))?;
             Ok(())
         })
     }

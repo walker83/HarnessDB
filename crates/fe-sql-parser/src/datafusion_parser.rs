@@ -13,7 +13,10 @@ use thiserror::Error;
 pub fn is_dml_sql(sql: &str) -> bool {
     let upper = sql.trim().to_uppercase();
     let first_word = upper.split_whitespace().next().unwrap_or("");
-    matches!(first_word, "SELECT" | "WITH" | "INSERT" | "UPDATE" | "DELETE" | "VALUES")
+    matches!(
+        first_word,
+        "SELECT" | "WITH" | "INSERT" | "UPDATE" | "DELETE" | "VALUES"
+    )
 }
 
 #[derive(Debug, Error)]
@@ -29,25 +32,29 @@ pub enum DataFusionParseError {
 }
 
 pub fn try_parse_dml_with_datafusion(sql: &str) -> Result<LogicalPlan, DataFusionParseError> {
-    let mut parser = DFParser::new(sql)
-        .map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;
-    let statements = parser.parse_statements()
+    let mut parser =
+        DFParser::new(sql).map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;
+    let statements = parser
+        .parse_statements()
         .map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;
 
     if statements.is_empty() {
-        return Err(DataFusionParseError::SyntaxError("Empty SQL statement".to_string()));
+        return Err(DataFusionParseError::SyntaxError(
+            "Empty SQL statement".to_string(),
+        ));
     }
 
-    let stmt = statements.into_iter().next()
+    let stmt = statements
+        .into_iter()
+        .next()
         .ok_or_else(|| DataFusionParseError::SyntaxError("No statement found".to_string()))?;
     let context_provider = EmptyContextProvider::new();
     let planner = SqlToRel::new(&context_provider);
 
     match stmt {
-        DFStatement::Statement(s) => {
-            planner.sql_statement_to_plan(*s)
-                .map_err(DataFusionParseError::DataFusion)
-        }
+        DFStatement::Statement(s) => planner
+            .sql_statement_to_plan(*s)
+            .map_err(DataFusionParseError::DataFusion),
         _ => Err(DataFusionParseError::Unsupported(format!("{:?}", stmt))),
     }
 }
@@ -134,17 +141,15 @@ mod tests {
 
     #[test]
     fn test_select_with_cte() {
-        let result = try_parse_dml_with_datafusion(
-            "WITH cte AS (SELECT 1 AS id) SELECT * FROM cte"
-        );
+        let result =
+            try_parse_dml_with_datafusion("WITH cte AS (SELECT 1 AS id) SELECT * FROM cte");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_select_subquery() {
-        let result = try_parse_dml_with_datafusion(
-            "SELECT * FROM (SELECT 1 AS id) AS sub WHERE id > 0"
-        );
+        let result =
+            try_parse_dml_with_datafusion("SELECT * FROM (SELECT 1 AS id) AS sub WHERE id > 0");
         assert!(result.is_ok());
     }
 

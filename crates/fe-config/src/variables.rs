@@ -37,38 +37,235 @@ pub struct VarDef {
 
 /// All defined system variables
 pub static SYSTEM_VARIABLE_DEFS: &[VarDef] = &[
-    VarDef { name: "version", default_value: "5.7.42", scope: VarScope::Global, kind: VarKind::String, description: "Server version string" },
-    VarDef { name: "version_comment", default_value: "RorisDB", scope: VarScope::Global, kind: VarKind::String, description: "Server version comment" },
-    VarDef { name: "version_compile_os", default_value: "Linux", scope: VarScope::Global, kind: VarKind::String, description: "Compile OS" },
-    VarDef { name: "version_compile_machine", default_value: "x86_64", scope: VarScope::Global, kind: VarKind::String, description: "Compile machine type" },
-    VarDef { name: "max_connections", default_value: "100", scope: VarScope::Global, kind: VarKind::Int, description: "Maximum number of simultaneous connections" },
-    VarDef { name: "query_timeout", default_value: "300", scope: VarScope::Both, kind: VarKind::Int, description: "Query timeout in seconds" },
-    VarDef { name: "max_allowed_packet", default_value: "4194304", scope: VarScope::Both, kind: VarKind::Int, description: "Maximum packet size in bytes" },
-    VarDef { name: "storage_compression", default_value: "zstd", scope: VarScope::Global, kind: VarKind::Enum(&["zstd", "snappy", "uncompressed"]), description: "Default storage compression algorithm" },
-    VarDef { name: "enable_audit_log", default_value: "true", scope: VarScope::Global, kind: VarKind::Bool, description: "Enable audit logging" },
-    VarDef { name: "slow_query_threshold", default_value: "1000", scope: VarScope::Both, kind: VarKind::Int, description: "Slow query threshold in milliseconds" },
-    VarDef { name: "default_storage_backend", default_value: "parquet", scope: VarScope::Global, kind: VarKind::String, description: "Default storage engine" },
-    VarDef { name: "wait_timeout", default_value: "28800", scope: VarScope::Both, kind: VarKind::Int, description: "Connection idle timeout in seconds" },
-    VarDef { name: "interactive_timeout", default_value: "28800", scope: VarScope::Both, kind: VarKind::Int, description: "Interactive connection timeout in seconds" },
-    VarDef { name: "autocommit", default_value: "1", scope: VarScope::Both, kind: VarKind::Bool, description: "Auto-commit mode (1=on, 0=off)" },
-    VarDef { name: "character_set_client", default_value: "utf8mb4", scope: VarScope::Session, kind: VarKind::String, description: "Client character set" },
-    VarDef { name: "character_set_connection", default_value: "utf8mb4", scope: VarScope::Session, kind: VarKind::String, description: "Connection character set" },
-    VarDef { name: "character_set_results", default_value: "utf8mb4", scope: VarScope::Session, kind: VarKind::String, description: "Results character set" },
-    VarDef { name: "character_set_server", default_value: "utf8mb4", scope: VarScope::Global, kind: VarKind::String, description: "Server character set" },
-    VarDef { name: "collation_connection", default_value: "utf8mb4_general_ci", scope: VarScope::Session, kind: VarKind::String, description: "Connection collation" },
-    VarDef { name: "collation_server", default_value: "utf8mb4_general_ci", scope: VarScope::Global, kind: VarKind::String, description: "Server collation" },
-    VarDef { name: "sql_mode", default_value: "", scope: VarScope::Both, kind: VarKind::String, description: "SQL mode" },
-    VarDef { name: "time_zone", default_value: "SYSTEM", scope: VarScope::Both, kind: VarKind::String, description: "Server time zone" },
-    VarDef { name: "net_buffer_length", default_value: "16384", scope: VarScope::Both, kind: VarKind::Int, description: "Network buffer length" },
-    VarDef { name: "audit_log_slow_only", default_value: "false", scope: VarScope::Global, kind: VarKind::Bool, description: "Log only slow queries to audit log" },
-    VarDef { name: "http_port", default_value: "8080", scope: VarScope::Global, kind: VarKind::Int, description: "HTTP port for SQL editor web UI" },
-    VarDef { name: "tx_isolation", default_value: "REPEATABLE-READ", scope: VarScope::Both, kind: VarKind::Enum(&["READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"]), description: "Transaction isolation level" },
-    VarDef { name: "tx_read_only", default_value: "0", scope: VarScope::Both, kind: VarKind::Bool, description: "Transaction read-only mode" },
-    VarDef { name: "profiling", default_value: "0", scope: VarScope::Both, kind: VarKind::Bool, description: "Query profiling" },
-    VarDef { name: "lower_case_table_names", default_value: "0", scope: VarScope::Global, kind: VarKind::Int, description: "Lowercase table names (0=case sensitive, 1=lowercase)" },
-    VarDef { name: "init_connect", default_value: "", scope: VarScope::Global, kind: VarKind::String, description: "SQL executed on each client connect" },
-    VarDef { name: "max_concurrent_queries", default_value: "50", scope: VarScope::Global, kind: VarKind::Int, description: "Maximum number of concurrent query executions" },
-    VarDef { name: "max_dml_rows", default_value: "10000000", scope: VarScope::Global, kind: VarKind::Int, description: "Maximum rows for UPDATE/DELETE operations (prevents OOM on large tables)" },
+    VarDef {
+        name: "version",
+        default_value: "5.7.42",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "Server version string",
+    },
+    VarDef {
+        name: "version_comment",
+        default_value: "RorisDB",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "Server version comment",
+    },
+    VarDef {
+        name: "version_compile_os",
+        default_value: "Linux",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "Compile OS",
+    },
+    VarDef {
+        name: "version_compile_machine",
+        default_value: "x86_64",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "Compile machine type",
+    },
+    VarDef {
+        name: "max_connections",
+        default_value: "100",
+        scope: VarScope::Global,
+        kind: VarKind::Int,
+        description: "Maximum number of simultaneous connections",
+    },
+    VarDef {
+        name: "query_timeout",
+        default_value: "300",
+        scope: VarScope::Both,
+        kind: VarKind::Int,
+        description: "Query timeout in seconds",
+    },
+    VarDef {
+        name: "max_allowed_packet",
+        default_value: "4194304",
+        scope: VarScope::Both,
+        kind: VarKind::Int,
+        description: "Maximum packet size in bytes",
+    },
+    VarDef {
+        name: "storage_compression",
+        default_value: "zstd",
+        scope: VarScope::Global,
+        kind: VarKind::Enum(&["zstd", "snappy", "uncompressed"]),
+        description: "Default storage compression algorithm",
+    },
+    VarDef {
+        name: "enable_audit_log",
+        default_value: "true",
+        scope: VarScope::Global,
+        kind: VarKind::Bool,
+        description: "Enable audit logging",
+    },
+    VarDef {
+        name: "slow_query_threshold",
+        default_value: "1000",
+        scope: VarScope::Both,
+        kind: VarKind::Int,
+        description: "Slow query threshold in milliseconds",
+    },
+    VarDef {
+        name: "default_storage_backend",
+        default_value: "parquet",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "Default storage engine",
+    },
+    VarDef {
+        name: "wait_timeout",
+        default_value: "28800",
+        scope: VarScope::Both,
+        kind: VarKind::Int,
+        description: "Connection idle timeout in seconds",
+    },
+    VarDef {
+        name: "interactive_timeout",
+        default_value: "28800",
+        scope: VarScope::Both,
+        kind: VarKind::Int,
+        description: "Interactive connection timeout in seconds",
+    },
+    VarDef {
+        name: "autocommit",
+        default_value: "1",
+        scope: VarScope::Both,
+        kind: VarKind::Bool,
+        description: "Auto-commit mode (1=on, 0=off)",
+    },
+    VarDef {
+        name: "character_set_client",
+        default_value: "utf8mb4",
+        scope: VarScope::Session,
+        kind: VarKind::String,
+        description: "Client character set",
+    },
+    VarDef {
+        name: "character_set_connection",
+        default_value: "utf8mb4",
+        scope: VarScope::Session,
+        kind: VarKind::String,
+        description: "Connection character set",
+    },
+    VarDef {
+        name: "character_set_results",
+        default_value: "utf8mb4",
+        scope: VarScope::Session,
+        kind: VarKind::String,
+        description: "Results character set",
+    },
+    VarDef {
+        name: "character_set_server",
+        default_value: "utf8mb4",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "Server character set",
+    },
+    VarDef {
+        name: "collation_connection",
+        default_value: "utf8mb4_general_ci",
+        scope: VarScope::Session,
+        kind: VarKind::String,
+        description: "Connection collation",
+    },
+    VarDef {
+        name: "collation_server",
+        default_value: "utf8mb4_general_ci",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "Server collation",
+    },
+    VarDef {
+        name: "sql_mode",
+        default_value: "",
+        scope: VarScope::Both,
+        kind: VarKind::String,
+        description: "SQL mode",
+    },
+    VarDef {
+        name: "time_zone",
+        default_value: "SYSTEM",
+        scope: VarScope::Both,
+        kind: VarKind::String,
+        description: "Server time zone",
+    },
+    VarDef {
+        name: "net_buffer_length",
+        default_value: "16384",
+        scope: VarScope::Both,
+        kind: VarKind::Int,
+        description: "Network buffer length",
+    },
+    VarDef {
+        name: "audit_log_slow_only",
+        default_value: "false",
+        scope: VarScope::Global,
+        kind: VarKind::Bool,
+        description: "Log only slow queries to audit log",
+    },
+    VarDef {
+        name: "http_port",
+        default_value: "8080",
+        scope: VarScope::Global,
+        kind: VarKind::Int,
+        description: "HTTP port for SQL editor web UI",
+    },
+    VarDef {
+        name: "tx_isolation",
+        default_value: "REPEATABLE-READ",
+        scope: VarScope::Both,
+        kind: VarKind::Enum(&[
+            "READ-UNCOMMITTED",
+            "READ-COMMITTED",
+            "REPEATABLE-READ",
+            "SERIALIZABLE",
+        ]),
+        description: "Transaction isolation level",
+    },
+    VarDef {
+        name: "tx_read_only",
+        default_value: "0",
+        scope: VarScope::Both,
+        kind: VarKind::Bool,
+        description: "Transaction read-only mode",
+    },
+    VarDef {
+        name: "profiling",
+        default_value: "0",
+        scope: VarScope::Both,
+        kind: VarKind::Bool,
+        description: "Query profiling",
+    },
+    VarDef {
+        name: "lower_case_table_names",
+        default_value: "0",
+        scope: VarScope::Global,
+        kind: VarKind::Int,
+        description: "Lowercase table names (0=case sensitive, 1=lowercase)",
+    },
+    VarDef {
+        name: "init_connect",
+        default_value: "",
+        scope: VarScope::Global,
+        kind: VarKind::String,
+        description: "SQL executed on each client connect",
+    },
+    VarDef {
+        name: "max_concurrent_queries",
+        default_value: "50",
+        scope: VarScope::Global,
+        kind: VarKind::Int,
+        description: "Maximum number of concurrent query executions",
+    },
+    VarDef {
+        name: "max_dml_rows",
+        default_value: "10000000",
+        scope: VarScope::Global,
+        kind: VarKind::Int,
+        description: "Maximum rows for UPDATE/DELETE operations (prevents OOM on large tables)",
+    },
 ];
 
 /// Global system variables storage
@@ -95,7 +292,9 @@ impl GlobalVariables {
     pub fn set(&self, name: &str, value: &str) -> Result<(), String> {
         let name_lower = name.to_lowercase();
         // Find variable definition for validation
-        let def = SYSTEM_VARIABLE_DEFS.iter().find(|d| d.name.to_lowercase() == name_lower);
+        let def = SYSTEM_VARIABLE_DEFS
+            .iter()
+            .find(|d| d.name.to_lowercase() == name_lower);
         if let Some(def) = def {
             // Validate value based on kind
             self.validate_value(def, value)?;
@@ -112,7 +311,10 @@ impl GlobalVariables {
             VarKind::Bool => {
                 let v = value.to_lowercase();
                 if !["0", "1", "true", "false", "on", "off"].contains(&v.as_str()) {
-                    return Err(format!("Variable '{}' requires a boolean value (0/1, true/false, on/off)", def.name));
+                    return Err(format!(
+                        "Variable '{}' requires a boolean value (0/1, true/false, on/off)",
+                        def.name
+                    ));
                 }
             }
             VarKind::Int => {
@@ -188,7 +390,9 @@ impl SessionVariables {
 
     pub fn set(&self, name: &str, value: &str) -> Result<(), String> {
         let name_lower = name.to_lowercase();
-        let def = SYSTEM_VARIABLE_DEFS.iter().find(|d| d.name.to_lowercase() == name_lower);
+        let def = SYSTEM_VARIABLE_DEFS
+            .iter()
+            .find(|d| d.name.to_lowercase() == name_lower);
         if let Some(def) = def {
             // Check scope - session can only set Session or Both scope vars
             if def.scope == VarScope::Global {
@@ -249,7 +453,9 @@ impl SystemVariableManager {
     /// Set a global variable
     pub fn set_global(&self, name: &str, value: &str) -> Result<(), String> {
         let name_lower = name.to_lowercase();
-        let def = SYSTEM_VARIABLE_DEFS.iter().find(|d| d.name.to_lowercase() == name_lower);
+        let def = SYSTEM_VARIABLE_DEFS
+            .iter()
+            .find(|d| d.name.to_lowercase() == name_lower);
         if let Some(def) = def {
             if def.scope == VarScope::Session {
                 return Err(format!(
@@ -262,7 +468,12 @@ impl SystemVariableManager {
     }
 
     /// Set a session variable
-    pub fn set_session(&self, name: &str, value: &str, session: &SessionVariables) -> Result<(), String> {
+    pub fn set_session(
+        &self,
+        name: &str,
+        value: &str,
+        session: &SessionVariables,
+    ) -> Result<(), String> {
         session.set(name, value)
     }
 
@@ -378,7 +589,10 @@ mod tests {
 
         // Session can override session-scoped vars
         session.set("sql_mode", "STRICT_TRANS_TABLES").unwrap();
-        assert_eq!(session.get("sql_mode"), Some("STRICT_TRANS_TABLES".to_string()));
+        assert_eq!(
+            session.get("sql_mode"),
+            Some("STRICT_TRANS_TABLES".to_string())
+        );
 
         // Global unchanged
         assert_eq!(globals.get("sql_mode"), Some("".to_string()));
@@ -434,12 +648,18 @@ mod tests {
         let session = mgr.create_session();
 
         // Get from global
-        assert_eq!(mgr.get("version", Some(&session)), Some("5.7.42".to_string()));
+        assert_eq!(
+            mgr.get("version", Some(&session)),
+            Some("5.7.42".to_string())
+        );
         assert_eq!(mgr.get("version", None), Some("5.7.42".to_string()));
 
         // Set global
         mgr.set_global("max_connections", "500").unwrap();
-        assert_eq!(mgr.get("max_connections", Some(&session)), Some("500".to_string()));
+        assert_eq!(
+            mgr.get("max_connections", Some(&session)),
+            Some("500".to_string())
+        );
 
         // Set session
         mgr.set_session("sql_mode", "STRICT", &session).unwrap();

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
+use ::types::DataType;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::kernels::cmp;
 use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
 use fe_sql_parser::ast::{BinaryOp, Expr, LiteralValue, UnaryOp};
-use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::QueryResult;
-use ::types::DataType;
+use mysql_protocol::server::{ColumnDef, ColumnType};
 
 /// Like safe_downcast! but for void functions — returns early on failure.
 macro_rules! safe_downcast_void {
@@ -57,7 +57,7 @@ pub(crate) fn parse_data_type(s: &str) -> DataType {
     // Handle parameterized types: VARCHAR(n), CHAR(n), DECIMAL(p,s)
     if let Some(paren_pos) = upper.find('(') {
         let base = upper[..paren_pos].trim();
-        let params = upper[paren_pos+1..].trim_end_matches(')').trim();
+        let params = upper[paren_pos + 1..].trim_end_matches(')').trim();
 
         match base {
             "VARCHAR" | "CHARACTER" => {
@@ -70,8 +70,14 @@ pub(crate) fn parse_data_type(s: &str) -> DataType {
             }
             "DECIMAL" | "NUMERIC" | "NUMBER" => {
                 let parts: Vec<&str> = params.split(',').collect();
-                let precision = parts.first().and_then(|p| p.trim().parse::<u8>().ok()).unwrap_or(10);
-                let scale = parts.get(1).and_then(|p| p.trim().parse::<u8>().ok()).unwrap_or(0);
+                let precision = parts
+                    .first()
+                    .and_then(|p| p.trim().parse::<u8>().ok())
+                    .unwrap_or(10);
+                let scale = parts
+                    .get(1)
+                    .and_then(|p| p.trim().parse::<u8>().ok())
+                    .unwrap_or(0);
                 return DataType::Decimal(::types::DecimalType { precision, scale });
             }
             _ => {}
@@ -95,12 +101,17 @@ pub(crate) fn parse_data_type(s: &str) -> DataType {
         "FLOAT64" | "DOUBLE" | "DOUBLE PRECISION" => DataType::Float64,
         "STRING" | "TEXT" | "LONGTEXT" | "MEDIUMTEXT" | "TINYTEXT" => DataType::String,
         "VARCHAR" | "CHARACTER VARYING" => DataType::Varchar(255), // default length
-        "CHAR" | "CHARACTER" => DataType::Char(1), // default length
+        "CHAR" | "CHARACTER" => DataType::Char(1),                 // default length
         "DATE" => DataType::Date,
         "DATETIME" | "TIMESTAMP" => DataType::DateTime,
-        "BINARY" | "VARBINARY" | "BLOB" | "LONGBLOB" | "MEDIUMBLOB" | "TINYBLOB" => DataType::Binary,
+        "BINARY" | "VARBINARY" | "BLOB" | "LONGBLOB" | "MEDIUMBLOB" | "TINYBLOB" => {
+            DataType::Binary
+        }
         "JSON" | "JSONB" => DataType::Json,
-        "DECIMAL" | "NUMERIC" | "NUMBER" => DataType::Decimal(::types::DecimalType { precision: 10, scale: 0 }),
+        "DECIMAL" | "NUMERIC" | "NUMBER" => DataType::Decimal(::types::DecimalType {
+            precision: 10,
+            scale: 0,
+        }),
         _ => DataType::String, // fallback
     }
 }
@@ -122,7 +133,8 @@ pub(crate) fn like_match(pattern: &str, text: &str) -> bool {
             } else if p[i - 1] == '_' {
                 dp[i][j] = dp[i - 1][j - 1];
             } else {
-                dp[i][j] = dp[i - 1][j - 1] && p[i - 1].to_ascii_lowercase() == t[j - 1].to_ascii_lowercase();
+                dp[i][j] = dp[i - 1][j - 1]
+                    && p[i - 1].to_ascii_lowercase() == t[j - 1].to_ascii_lowercase();
             }
         }
     }
@@ -135,19 +147,32 @@ pub(crate) fn record_batches_to_query_result_with_df_schema(
 ) -> QueryResult {
     let schema = df_schema.as_arrow();
 
-    let columns: Vec<ColumnDef> = schema.fields().iter().map(|f| {
-        let col_type = match f.data_type() {
-            ADT::Int8 | ADT::Int16 | ADT::Int32 | ADT::Int64 |
-            ADT::UInt8 | ADT::UInt16 | ADT::UInt32 | ADT::UInt64 => ColumnType::Int,
-            ADT::Float32 => ColumnType::Float,
-            ADT::Float64 => ColumnType::Double,
-            ADT::Boolean => ColumnType::Int,
-            ADT::Date32 | ADT::Date64 => ColumnType::Date,
-            ADT::Timestamp(_, _) => ColumnType::DateTime,
-            _ => ColumnType::String,
-        };
-        ColumnDef { name: f.name().clone(), col_type }
-    }).collect();
+    let columns: Vec<ColumnDef> = schema
+        .fields()
+        .iter()
+        .map(|f| {
+            let col_type = match f.data_type() {
+                ADT::Int8
+                | ADT::Int16
+                | ADT::Int32
+                | ADT::Int64
+                | ADT::UInt8
+                | ADT::UInt16
+                | ADT::UInt32
+                | ADT::UInt64 => ColumnType::Int,
+                ADT::Float32 => ColumnType::Float,
+                ADT::Float64 => ColumnType::Double,
+                ADT::Boolean => ColumnType::Int,
+                ADT::Date32 | ADT::Date64 => ColumnType::Date,
+                ADT::Timestamp(_, _) => ColumnType::DateTime,
+                _ => ColumnType::String,
+            };
+            ColumnDef {
+                name: f.name().clone(),
+                col_type,
+            }
+        })
+        .collect();
 
     if columns.is_empty() {
         return QueryResult::new(Vec::new());
@@ -159,9 +184,11 @@ pub(crate) fn record_batches_to_query_result_with_df_schema(
             continue;
         }
         for row_idx in 0..batch.num_rows() {
-            let row: Vec<Option<String>> = batch.columns().iter().map(|col| {
-                arrow_value_to_string(col, row_idx)
-            }).collect();
+            let row: Vec<Option<String>> = batch
+                .columns()
+                .iter()
+                .map(|col| arrow_value_to_string(col, row_idx))
+                .collect();
             string_rows.push(row);
         }
     }
@@ -169,7 +196,10 @@ pub(crate) fn record_batches_to_query_result_with_df_schema(
     QueryResult::with_rows(columns, string_rows)
 }
 
-pub(crate) fn arrow_value_to_string(col: &datafusion::arrow::array::ArrayRef, idx: usize) -> Option<String> {
+pub(crate) fn arrow_value_to_string(
+    col: &datafusion::arrow::array::ArrayRef,
+    idx: usize,
+) -> Option<String> {
     // NullArray (data type Null) has no validity bitmap; all elements are null
     if matches!(col.data_type(), ADT::Null) || col.is_null(idx) {
         return None;
@@ -309,79 +339,143 @@ pub(crate) fn update_column_in_batch(
     let new_col: ArrayRef = match col.data_type() {
         ADT::Int32 => {
             let arr = safe_downcast_result!(col, Int32Array);
-            let val = val_str.parse::<i32>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(Int32Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<i32>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int32Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Int64 => {
             let arr = safe_downcast_result!(col, Int64Array);
-            let val = val_str.parse::<i64>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(Int64Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<i64>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int64Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Float32 => {
             let arr = safe_downcast_result!(col, Float32Array);
-            let val = val_str.parse::<f32>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(Float32Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<f32>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Float32Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Float64 => {
             let arr = safe_downcast_result!(col, Float64Array);
-            let val = val_str.parse::<f64>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(Float64Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<f64>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Float64Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Utf8 => {
             let arr = safe_downcast_result!(col, StringArray);
-            Arc::new(StringArray::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val_str) } else { Some(arr.value(i)) })
-            ))
+            Arc::new(StringArray::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val_str)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Int8 => {
             let arr = safe_downcast_result!(col, Int8Array);
-            let val = val_str.parse::<i8>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(Int8Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<i8>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int8Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Int16 => {
             let arr = safe_downcast_result!(col, Int16Array);
-            let val = val_str.parse::<i16>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(Int16Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<i16>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(Int16Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::UInt8 => {
             let arr = safe_downcast_result!(col, UInt8Array);
-            let val = val_str.parse::<u8>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(UInt8Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<u8>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt8Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::UInt16 => {
             let arr = safe_downcast_result!(col, UInt16Array);
-            let val = val_str.parse::<u16>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(UInt16Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<u16>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt16Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::UInt32 => {
             let arr = safe_downcast_result!(col, UInt32Array);
-            let val = val_str.parse::<u32>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(UInt32Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<u32>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt32Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::UInt64 => {
             let arr = safe_downcast_result!(col, UInt64Array);
-            let val = val_str.parse::<u64>().map_err(|e| format!("Parse error: {}", e))?;
-            Arc::new(UInt64Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = val_str
+                .parse::<u64>()
+                .map_err(|e| format!("Parse error: {}", e))?;
+            Arc::new(UInt64Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Boolean => {
             let arr = safe_downcast_result!(col, BooleanArray);
@@ -389,68 +483,111 @@ pub(crate) fn update_column_in_batch(
                 "true" | "1" | "yes" => true,
                 _ => false,
             };
-            Arc::new(BooleanArray::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            Arc::new(BooleanArray::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Date32 => {
             let arr = safe_downcast_result!(col, Date32Array);
-            let val = parse_date_to_days(val_str).ok_or_else(|| format!("Invalid date: {}", val_str))?;
-            Arc::new(Date32Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val =
+                parse_date_to_days(val_str).ok_or_else(|| format!("Invalid date: {}", val_str))?;
+            Arc::new(Date32Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Timestamp(TimeUnit::Second, _) => {
             let arr = safe_downcast_result!(col, TimestampSecondArray);
-            let val = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
-            Arc::new(TimestampSecondArray::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            let val = parse_datetime_to_seconds(val_str)
+                .ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            Arc::new(TimestampSecondArray::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            })))
         }
         ADT::Timestamp(TimeUnit::Millisecond, _) => {
             let arr = safe_downcast_result!(col, TimestampMillisecondArray);
-            let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            let seconds = parse_datetime_to_seconds(val_str)
+                .ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
             let val = seconds * 1000;
-            Arc::new(TimestampMillisecondArray::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            Arc::new(TimestampMillisecondArray::from_iter((0..arr.len()).map(
+                |i| {
+                    if update_mask[i] {
+                        Some(val)
+                    } else {
+                        Some(arr.value(i))
+                    }
+                },
+            )))
         }
         ADT::Timestamp(TimeUnit::Microsecond, _) => {
             let arr = safe_downcast_result!(col, TimestampMicrosecondArray);
-            let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            let seconds = parse_datetime_to_seconds(val_str)
+                .ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
             let val = seconds * 1_000_000;
-            Arc::new(TimestampMicrosecondArray::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            Arc::new(TimestampMicrosecondArray::from_iter((0..arr.len()).map(
+                |i| {
+                    if update_mask[i] {
+                        Some(val)
+                    } else {
+                        Some(arr.value(i))
+                    }
+                },
+            )))
         }
         ADT::Timestamp(TimeUnit::Nanosecond, _) => {
             let arr = safe_downcast_result!(col, TimestampNanosecondArray);
-            let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
+            let seconds = parse_datetime_to_seconds(val_str)
+                .ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
             let val = seconds * 1_000_000_000;
-            Arc::new(TimestampNanosecondArray::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ))
+            Arc::new(TimestampNanosecondArray::from_iter((0..arr.len()).map(
+                |i| {
+                    if update_mask[i] {
+                        Some(val)
+                    } else {
+                        Some(arr.value(i))
+                    }
+                },
+            )))
         }
         ADT::Decimal128(precision, scale) => {
             let arr = safe_downcast_result!(col, Decimal128Array);
             let scale_factor = 10i128.pow(*scale as u32);
             let val_f: f64 = val_str.parse().map_err(|e| format!("Parse error: {}", e))?;
             let val = (val_f * scale_factor as f64) as i128;
-            let new_arr = Decimal128Array::from_iter(
-                (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
-            ).with_precision_and_scale(*precision, *scale)
-             .map_err(|e| format!("Decimal precision/scale error: {}", e))?;
+            let new_arr = Decimal128Array::from_iter((0..arr.len()).map(|i| {
+                if update_mask[i] {
+                    Some(val)
+                } else {
+                    Some(arr.value(i))
+                }
+            }))
+            .with_precision_and_scale(*precision, *scale)
+            .map_err(|e| format!("Decimal precision/scale error: {}", e))?;
             Arc::new(new_arr)
         }
-        _ => return Err(format!("Unsupported column type for UPDATE: {}", col.data_type())),
+        _ => {
+            return Err(format!(
+                "Unsupported column type for UPDATE: {}",
+                col.data_type()
+            ));
+        }
     };
 
     let mut new_columns: Vec<ArrayRef> = batch.columns().iter().cloned().collect();
     new_columns[col_idx] = new_col;
-    *batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-        batch.schema(),
-        new_columns,
-    ).map_err(|e| format!("Failed to create new batch: {}", e))?;
+    *batch = datafusion::arrow::record_batch::RecordBatch::try_new(batch.schema(), new_columns)
+        .map_err(|e| format!("Failed to create new batch: {}", e))?;
 
     Ok(())
 }
@@ -476,8 +613,13 @@ pub(crate) fn merge_columns(
 
     // Cast new_col to match old_col's data type if they differ
     let new_col_typed = if new_col.data_type() != old_col.data_type() {
-        cast(new_col, old_col.data_type())
-            .map_err(|e| format!("Failed to cast SET result to column type {:?}: {}", old_col.data_type(), e))?
+        cast(new_col, old_col.data_type()).map_err(|e| {
+            format!(
+                "Failed to cast SET result to column type {:?}: {}",
+                old_col.data_type(),
+                e
+            )
+        })?
     } else {
         new_col.clone()
     };
@@ -494,50 +636,79 @@ pub(crate) fn merge_columns(
 }
 
 #[allow(dead_code)]
-pub(crate) fn build_arrow_array(col_type: &DataType, values: &[Option<String>]) -> datafusion::arrow::array::ArrayRef {
+pub(crate) fn build_arrow_array(
+    col_type: &DataType,
+    values: &[Option<String>],
+) -> datafusion::arrow::array::ArrayRef {
     match col_type {
         DataType::Int8 => {
-            let arr: Int8Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i8>().ok())).collect();
+            let arr: Int8Array = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| s.parse::<i8>().ok()))
+                .collect();
             Arc::new(arr)
         }
         DataType::Int16 => {
-            let arr: Int16Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i16>().ok())).collect();
+            let arr: Int16Array = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| s.parse::<i16>().ok()))
+                .collect();
             Arc::new(arr)
         }
         DataType::Int32 => {
-            let arr: Int32Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i32>().ok())).collect();
+            let arr: Int32Array = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| s.parse::<i32>().ok()))
+                .collect();
             Arc::new(arr)
         }
         DataType::Int64 => {
-            let arr: Int64Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<i64>().ok())).collect();
+            let arr: Int64Array = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| s.parse::<i64>().ok()))
+                .collect();
             Arc::new(arr)
         }
         DataType::Float32 => {
-            let arr: Float32Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<f32>().ok())).collect();
+            let arr: Float32Array = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| s.parse::<f32>().ok()))
+                .collect();
             Arc::new(arr)
         }
         DataType::Float64 => {
-            let arr: Float64Array = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<f64>().ok())).collect();
+            let arr: Float64Array = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| s.parse::<f64>().ok()))
+                .collect();
             Arc::new(arr)
         }
         DataType::Boolean => {
-            let arr: BooleanArray = values.iter().map(|v| v.as_ref().and_then(|s| s.parse::<bool>().ok())).collect();
+            let arr: BooleanArray = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| s.parse::<bool>().ok()))
+                .collect();
             Arc::new(arr)
         }
         DataType::Date => {
-            let arr: Date32Array = values.iter().map(|v| {
-                v.as_ref().and_then(|s| parse_date_to_days(s))
-            }).collect();
+            let arr: Date32Array = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| parse_date_to_days(s)))
+                .collect();
             Arc::new(arr)
         }
         DataType::DateTime => {
-            let arr: TimestampSecondArray = values.iter().map(|v| {
-                v.as_ref().and_then(|s| parse_datetime_to_seconds(s))
-            }).collect();
+            let arr: TimestampSecondArray = values
+                .iter()
+                .map(|v| v.as_ref().and_then(|s| parse_datetime_to_seconds(s)))
+                .collect();
             Arc::new(arr)
         }
         _ => {
-            let arr: StringArray = values.iter().map(|v| v.as_ref().map(|s| s.as_str())).collect();
+            let arr: StringArray = values
+                .iter()
+                .map(|v| v.as_ref().map(|s| s.as_str()))
+                .collect();
             Arc::new(arr)
         }
     }
@@ -553,71 +724,107 @@ pub(crate) fn build_arrow_array_from_exprs(
 
     match arrow_type {
         ADT::Int8 => {
-            let arr: Int8Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i8),
-                Expr::Literal(LiteralValue::Null) => None,
-                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i8)),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i8)),
+            let arr: Int8Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i8),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr,
+                    } => match expr.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i8)),
+                        Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i8)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            }).collect();
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Int16 => {
-            let arr: Int16Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i16),
-                Expr::Literal(LiteralValue::Null) => None,
-                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i16)),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i16)),
+            let arr: Int16Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i16),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr,
+                    } => match expr.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i16)),
+                        Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i16)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            }).collect();
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Int32 => {
-            let arr: Int32Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
-                Expr::Literal(LiteralValue::Null) => None,
-                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i32)),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i32)),
+            let arr: Int32Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr,
+                    } => match expr.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i32)),
+                        Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i32)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            }).collect();
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Int64 => {
-            let arr: Int64Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
-                Expr::Literal(LiteralValue::Null) => None,
-                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(-*n),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i64)),
+            let arr: Int64Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr,
+                    } => match expr.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => Some(-*n),
+                        Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i64)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            }).collect();
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Decimal128(precision, scale) => {
             // Build from Int64/Float64 literals, scaling by 10^scale for correct decimal representation
             let scale_factor = 10i128.pow(*scale as u32);
-            let arr: Decimal128Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(*n) * scale_factor),
-                Expr::Literal(LiteralValue::Float64(f)) => Some((*f * scale_factor as f64) as i128),
-                Expr::Literal(LiteralValue::Null) => None,
-                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(i128::from(*n) * scale_factor)),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-((*f * scale_factor as f64) as i128)),
+            let arr: Decimal128Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(i128::from(*n) * scale_factor),
+                    Expr::Literal(LiteralValue::Float64(f)) => {
+                        Some((*f * scale_factor as f64) as i128)
+                    }
+                    Expr::Literal(LiteralValue::Null) => None,
+                    Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr,
+                    } => match expr.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => {
+                            Some(-(i128::from(*n) * scale_factor))
+                        }
+                        Expr::Literal(LiteralValue::Float64(f)) => {
+                            Some(-((*f * scale_factor as f64) as i128))
+                        }
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            }).collect();
+                })
+                .collect();
             let arr = match arr.clone().with_precision_and_scale(*precision, *scale) {
                 Ok(a) => a,
                 Err(_) => arr,
@@ -625,92 +832,123 @@ pub(crate) fn build_arrow_array_from_exprs(
             Arc::new(arr)
         }
         ADT::Float32 => {
-            let arr: Float32Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Float64(f)) => Some(*f as f32),
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f32),
-                Expr::Literal(LiteralValue::Null) => None,
-                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as f32)),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as f32)),
+            let arr: Float32Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(*f as f32),
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f32),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr,
+                    } => match expr.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as f32)),
+                        Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as f32)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            }).collect();
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Float64 => {
-            let arr: Float64Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Float64(f)) => Some(*f),
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f64),
-                Expr::Literal(LiteralValue::Null) => None,
-                Expr::UnaryOp { op: UnaryOp::Negate, expr } => match expr.as_ref() {
-                    Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as f64)),
-                    Expr::Literal(LiteralValue::Float64(f)) => Some(-*f),
+            let arr: Float64Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(*f),
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n as f64),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr,
+                    } => match expr.as_ref() {
+                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as f64)),
+                        Expr::Literal(LiteralValue::Float64(f)) => Some(-*f),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            }).collect();
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Boolean => {
-            let arr: BooleanArray = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Boolean(b)) => Some(*b),
-                Expr::Literal(LiteralValue::Null) => None,
-                _ => None,
-            }).collect();
+            let arr: BooleanArray = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Boolean(b)) => Some(*b),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    _ => None,
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Date32 => {
-            let arr: Date32Array = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Date(s)) => parse_date_to_days(s),
-                Expr::Literal(LiteralValue::String(s)) => parse_date_to_days(s),
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
-                Expr::Literal(LiteralValue::Null) => None,
-                _ => None,
-            }).collect();
+            let arr: Date32Array = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Date(s)) => parse_date_to_days(s),
+                    Expr::Literal(LiteralValue::String(s)) => parse_date_to_days(s),
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    _ => None,
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Timestamp(TimeUnit::Second, _) => {
-            let arr: TimestampSecondArray = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::Date(s)) => parse_datetime_to_seconds(s),
-                Expr::Literal(LiteralValue::String(s)) => parse_datetime_to_seconds(s),
-                Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
-                Expr::Literal(LiteralValue::Null) => None,
-                _ => None,
-            }).collect();
+            let arr: TimestampSecondArray = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::Date(s)) => parse_datetime_to_seconds(s),
+                    Expr::Literal(LiteralValue::String(s)) => parse_datetime_to_seconds(s),
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    _ => None,
+                })
+                .collect();
             Arc::new(arr)
         }
         ADT::Utf8 => {
-            let arr: StringArray = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::String(s)) => Some(s.clone()),
-                Expr::Literal(LiteralValue::Int64(n)) => Some(n.to_string()),
-                Expr::Literal(LiteralValue::Float64(f)) => Some(f.to_string()),
-                Expr::Literal(LiteralValue::Boolean(b)) => Some(b.to_string()),
-                Expr::Literal(LiteralValue::Date(d)) => Some(d.clone()),
-                Expr::Literal(LiteralValue::Null) => None,
-                _ => None,
-            }).collect();
+            let arr: StringArray = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::String(s)) => Some(s.clone()),
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(n.to_string()),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(f.to_string()),
+                    Expr::Literal(LiteralValue::Boolean(b)) => Some(b.to_string()),
+                    Expr::Literal(LiteralValue::Date(d)) => Some(d.clone()),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    _ => None,
+                })
+                .collect();
             Arc::new(arr)
         }
         _ => {
             // Fallback: build a StringArray for unsupported types
-            let arr: StringArray = exprs.iter().map(|e| match e {
-                Expr::Literal(LiteralValue::String(s)) => Some(s.clone()),
-                Expr::Literal(LiteralValue::Int64(n)) => Some(n.to_string()),
-                Expr::Literal(LiteralValue::Float64(f)) => Some(f.to_string()),
-                Expr::Literal(LiteralValue::Boolean(b)) => Some(b.to_string()),
-                Expr::Literal(LiteralValue::Date(d)) => Some(d.clone()),
-                Expr::Literal(LiteralValue::Null) => None,
-                _ => None,
-            }).collect();
+            let arr: StringArray = exprs
+                .iter()
+                .map(|e| match e {
+                    Expr::Literal(LiteralValue::String(s)) => Some(s.clone()),
+                    Expr::Literal(LiteralValue::Int64(n)) => Some(n.to_string()),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(f.to_string()),
+                    Expr::Literal(LiteralValue::Boolean(b)) => Some(b.to_string()),
+                    Expr::Literal(LiteralValue::Date(d)) => Some(d.clone()),
+                    Expr::Literal(LiteralValue::Null) => None,
+                    _ => None,
+                })
+                .collect();
             Arc::new(arr)
         }
     }
 }
 
 pub(crate) fn parse_date_to_days(s: &str) -> Option<i32> {
-    let s = s.trim().trim_start_matches("'").trim_end_matches("'")
-              .trim_start_matches("\"").trim_end_matches("\"");
+    let s = s
+        .trim()
+        .trim_start_matches("'")
+        .trim_end_matches("'")
+        .trim_start_matches("\"")
+        .trim_end_matches("\"");
 
     use chrono::NaiveDate;
 
@@ -728,8 +966,12 @@ pub(crate) fn parse_date_to_days(s: &str) -> Option<i32> {
 }
 
 pub(crate) fn parse_datetime_to_seconds(s: &str) -> Option<i64> {
-    let s = s.trim().trim_start_matches("'").trim_end_matches("'")
-              .trim_start_matches("\"").trim_end_matches("\"");
+    let s = s
+        .trim()
+        .trim_start_matches("'")
+        .trim_end_matches("'")
+        .trim_start_matches("\"")
+        .trim_end_matches("\"");
 
     use chrono::NaiveDateTime;
 
@@ -759,12 +1001,20 @@ pub(crate) fn evaluate_where_filter(
                 BinaryOp::And => {
                     let left_mask = evaluate_where_filter(batch, left)?;
                     let right_mask = evaluate_where_filter(batch, right)?;
-                    Ok(left_mask.iter().zip(right_mask.iter()).map(|(l, r)| *l && *r).collect())
+                    Ok(left_mask
+                        .iter()
+                        .zip(right_mask.iter())
+                        .map(|(l, r)| *l && *r)
+                        .collect())
                 }
                 BinaryOp::Or => {
                     let left_mask = evaluate_where_filter(batch, left)?;
                     let right_mask = evaluate_where_filter(batch, right)?;
-                    Ok(left_mask.iter().zip(right_mask.iter()).map(|(l, r)| *l || *r).collect())
+                    Ok(left_mask
+                        .iter()
+                        .zip(right_mask.iter())
+                        .map(|(l, r)| *l || *r)
+                        .collect())
                 }
                 // Comparison ops: column vs literal
                 _ => {
@@ -791,7 +1041,7 @@ pub(crate) fn evaluate_where_filter(
                 }
             }
         }
-        _ => Ok(vec![false; num_rows])
+        _ => Ok(vec![false; num_rows]),
     }
 }
 
@@ -1010,7 +1260,10 @@ mod tests {
         assert_eq!(literal_to_string(&LiteralValue::Null), "NULL");
         assert_eq!(literal_to_string(&LiteralValue::Int64(42)), "42");
         assert_eq!(literal_to_string(&LiteralValue::Float64(3.14)), "3.14");
-        assert_eq!(literal_to_string(&LiteralValue::String("hello".into())), "hello");
+        assert_eq!(
+            literal_to_string(&LiteralValue::String("hello".into())),
+            "hello"
+        );
         assert_eq!(literal_to_string(&LiteralValue::Boolean(true)), "true");
     }
 }

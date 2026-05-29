@@ -104,12 +104,14 @@ impl JwtClaims {
 pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> Result<String, AuthError> {
     let header = base64_encode(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
     let payload = base64_encode(
-        serde_json::to_vec(claims).map_err(|e| AuthError::Failed(e.to_string()))?.as_slice(),
+        serde_json::to_vec(claims)
+            .map_err(|e| AuthError::Failed(e.to_string()))?
+            .as_slice(),
     );
 
     let signature = {
-        let mut mac =
-            HmacSha256::new_from_slice(secret.as_bytes()).map_err(|e| AuthError::Failed(e.to_string()))?;
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+            .map_err(|e| AuthError::Failed(e.to_string()))?;
         mac.update(format!("{}.{}", header, payload).as_bytes());
         hex::encode(mac.finalize().into_bytes())
     };
@@ -124,8 +126,8 @@ pub fn validate_jwt_token(token: &str, secret: &str) -> Result<JwtClaims, AuthEr
     }
 
     let signature = {
-        let mut mac =
-            HmacSha256::new_from_slice(secret.as_bytes()).map_err(|e| AuthError::Failed(e.to_string()))?;
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+            .map_err(|e| AuthError::Failed(e.to_string()))?;
         mac.update(format!("{}.{}", parts[0], parts[1]).as_bytes());
         hex::encode(mac.finalize().into_bytes())
     };

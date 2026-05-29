@@ -42,7 +42,10 @@ impl RepositoryManager {
                 Ok(content) => match serde_json::from_str(&content) {
                     Ok(store) => store,
                     Err(e) => {
-                        tracing::warn!("Corrupted repositories.json: {}. Starting with empty repository list.", e);
+                        tracing::warn!(
+                            "Corrupted repositories.json: {}. Starting with empty repository list.",
+                            e
+                        );
                         RepositoryStore::default()
                     }
                 },
@@ -61,8 +64,7 @@ impl RepositoryManager {
         }
         let json = serde_json::to_string_pretty(&self.store)
             .map_err(|e| format!("Failed to serialize repositories: {}", e))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write repositories: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write repositories: {}", e))?;
         Ok(())
     }
 
@@ -109,7 +111,8 @@ impl RepositoryManager {
 
     /// Get repository path
     pub fn get_repo_path(&self, name: &str) -> Result<PathBuf, String> {
-        self.store.repositories
+        self.store
+            .repositories
             .get(name)
             .map(|r| PathBuf::from(&r.path))
             .ok_or_else(|| format!("Repository '{}' not found", name))
@@ -117,7 +120,8 @@ impl RepositoryManager {
 
     /// Get all repository details for SHOW
     pub fn list_repository_details(&self) -> Vec<(&str, &str, &str)> {
-        self.store.repositories
+        self.store
+            .repositories
             .values()
             .map(|r| (r.name.as_str(), r.path.as_str(), r.created_at.as_str()))
             .collect()

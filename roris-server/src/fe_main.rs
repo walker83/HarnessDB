@@ -1,38 +1,39 @@
-mod handler_struct;
-mod query_executor;
+mod connection_tracker;
 mod ddl_handler;
 mod dml_handler;
-mod utils;
-mod connection_tracker;
+mod handler_struct;
 mod metrics;
+mod query_executor;
+mod utils;
 mod web;
 
 use anyhow::Result;
 use clap::Parser;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
-use fe_common::edit_log::EditLog;
+use datafusion::prelude::{SessionConfig, SessionContext};
+use fe_backup::BackupManager;
 use fe_catalog::CatalogManager;
-use fe_monitor::MonitoringManager;
-use fe_monitor::audit_log::{AuditLogger, AuditLogConfig, AuditLogEntry, QueryType, QueryStatus};
+use fe_common::edit_log::EditLog;
 use fe_config::RorisConfig;
 use fe_config::SystemVariableManager;
-use fe_backup::BackupManager;
-use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
+use fe_datafusion::{register_doris_udfs, register_misc_udfs};
+use fe_monitor::MonitoringManager;
+use fe_monitor::audit_log::{AuditLogConfig, AuditLogEntry, AuditLogger, QueryStatus, QueryType};
+use fe_sql_parser::{is_dml_sql, parse_sql};
+use fe_storage::{InformationSchemaProvider, ParquetCatalogProvider};
+use maxcompute_protocol::{McServerConfig, McServerState, start_mc_server};
 use mysql_protocol::auth::default_credentials;
 use mysql_protocol::server::{ColumnDef, ColumnType};
-use maxcompute_protocol::{start_mc_server, McServerConfig, McServerState};
+use mysql_protocol::{MysqlServer, QueryHandler, QueryResult, ServerConfig, auth::AuthPluginType};
 use pg_protocol::{PgServer, PgServerConfig};
-use fe_sql_parser::{parse_sql, is_dml_sql};
-use fe_storage::{ParquetCatalogProvider, InformationSchemaProvider};
-use fe_datafusion::{register_doris_udfs, register_misc_udfs};
-use datafusion::prelude::{SessionConfig, SessionContext};
 
-use handler_struct::RorisQueryHandler;
 use connection_tracker::ConnectionTracker;
+use handler_struct::RorisQueryHandler;
 use utils::record_batches_to_query_result_with_df_schema;
 use web::{WebState, start_web_server};
 
@@ -91,7 +92,8 @@ impl QueryHandler for RorisQueryHandler {
                     let rt = self.tokio_runtime.clone();
                     move || {
                         rt.block_on(async {
-                            let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog, storage));
+                            let df_catalog =
+                                Arc::new(ParquetCatalogProvider::new(catalog, storage));
                             let df_config = SessionConfig::new()
                                 .with_default_catalog_and_schema("roris", &current_db)
                                 .with_create_default_catalog_and_schema(false)
@@ -116,7 +118,10 @@ impl QueryHandler for RorisQueryHandler {
                     Err(e) => {
                         tracing::error!("DataFusion error: {}", e);
                         QueryResult::with_rows(
-                            vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                            vec![ColumnDef {
+                                name: "Error".to_string(),
+                                col_type: ColumnType::String,
+                            }],
                             vec![vec![Some(format!("ERROR: {}", e))]],
                         )
                     }
@@ -132,15 +137,25 @@ impl QueryHandler for RorisQueryHandler {
         // Audit logging (fire and forget)
         let has_error = result.columns.iter().any(|c| c.name == "Error");
         let query_type = QueryType::from_sql(trimmed);
-        let status = if has_error { QueryStatus::Failed } else { QueryStatus::Success };
+        let status = if has_error {
+            QueryStatus::Failed
+        } else {
+            QueryStatus::Success
+        };
         let error_msg = if has_error {
-            result.rows.first().and_then(|r| r.first()).and_then(|v| v.clone())
+            result
+                .rows
+                .first()
+                .and_then(|r| r.first())
+                .and_then(|v| v.clone())
         } else {
             None
         };
 
         // Check slow query
-        let slow_threshold = self.sys_vars.get("slow_query_threshold", None)
+        let slow_threshold = self
+            .sys_vars
+            .get("slow_query_threshold", None)
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(1000);
         let is_slow = duration_ms >= slow_threshold;
@@ -149,19 +164,18 @@ impl QueryHandler for RorisQueryHandler {
         }
 
         // Record Prometheus metrics
-        crate::metrics::record_query(
-            trimmed,
-            duration_ms as f64,
-            is_slow,
-            has_error,
-        );
+        crate::metrics::record_query(trimmed, duration_ms as f64, is_slow, has_error);
 
-        let audit_enabled = self.sys_vars.get("enable_audit_log", None)
+        let audit_enabled = self
+            .sys_vars
+            .get("enable_audit_log", None)
             .map(|v| v == "true" || v == "1")
             .unwrap_or(true);
 
         if audit_enabled {
-            let slow_only = self.sys_vars.get("audit_log_slow_only", None)
+            let slow_only = self
+                .sys_vars
+                .get("audit_log_slow_only", None)
                 .map(|v| v == "true" || v == "1")
                 .unwrap_or(false);
 
@@ -227,7 +241,10 @@ impl RorisQueryHandler {
                         Err(e) => {
                             tracing::error!("Query error: {}", e);
                             return QueryResult::with_rows(
-                                vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                                vec![ColumnDef {
+                                    name: "Error".to_string(),
+                                    col_type: ColumnType::String,
+                                }],
                                 vec![vec![Some(format!("ERROR: {}", e))]],
                             );
                         }
@@ -238,7 +255,10 @@ impl RorisQueryHandler {
             Err(e) => {
                 tracing::error!("Parse error: {}", e);
                 QueryResult::with_rows(
-                    vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                    vec![ColumnDef {
+                        name: "Error".to_string(),
+                        col_type: ColumnType::String,
+                    }],
                     vec![vec![Some(format!("PARSE ERROR: {}", e))]],
                 )
             }
@@ -260,26 +280,49 @@ async fn main() -> Result<()> {
         Some(args.data_dir.clone()),
         Some(args.meta_dir.clone()),
     );
-    tracing::info!("Config loaded: mysql_port={}, maxcompute_port={}, hologres_port={}, data_dir={}, http_port={}",
-        config.server.mysql_port, args.maxcompute_port, args.hologres_port,
-        config.storage.data_dir, config.server.http_port);
+    tracing::info!(
+        "Config loaded: mysql_port={}, maxcompute_port={}, hologres_port={}, data_dir={}, http_port={}",
+        config.server.mysql_port,
+        args.maxcompute_port,
+        args.hologres_port,
+        config.storage.data_dir,
+        config.server.http_port
+    );
 
     // Initialize system variables
     let sys_vars = Arc::new(SystemVariableManager::new());
     // Apply config values to system variables
-    let _ = sys_vars.set_global("max_connections", &config.server.max_connections.to_string());
+    let _ = sys_vars.set_global(
+        "max_connections",
+        &config.server.max_connections.to_string(),
+    );
     let _ = sys_vars.set_global("wait_timeout", &config.server.wait_timeout.to_string());
     let _ = sys_vars.set_global("http_port", &config.server.http_port.to_string());
     let _ = sys_vars.set_global("storage_compression", &config.storage.compression);
-    let _ = sys_vars.set_global("enable_audit_log", &config.logging.enable_audit_log.to_string());
-    let _ = sys_vars.set_global("slow_query_threshold", &config.logging.slow_query_threshold_ms.to_string());
-    let _ = sys_vars.set_global("audit_log_slow_only", &config.logging.audit_log_slow_only.to_string());
+    let _ = sys_vars.set_global(
+        "enable_audit_log",
+        &config.logging.enable_audit_log.to_string(),
+    );
+    let _ = sys_vars.set_global(
+        "slow_query_threshold",
+        &config.logging.slow_query_threshold_ms.to_string(),
+    );
+    let _ = sys_vars.set_global(
+        "audit_log_slow_only",
+        &config.logging.audit_log_slow_only.to_string(),
+    );
     let _ = sys_vars.set_global("query_timeout", &config.query.query_timeout.to_string());
-    let _ = sys_vars.set_global("max_allowed_packet", &config.query.max_allowed_packet.to_string());
+    let _ = sys_vars.set_global(
+        "max_allowed_packet",
+        &config.query.max_allowed_packet.to_string(),
+    );
     let _ = sys_vars.set_global("sql_mode", &config.query.sql_mode);
     let _ = sys_vars.set_global("time_zone", &config.query.time_zone);
     let _ = sys_vars.set_global("max_dml_rows", &config.query.max_dml_rows.to_string());
-    let _ = sys_vars.set_global("max_concurrent_queries", &config.query.max_concurrent_queries.to_string());
+    let _ = sys_vars.set_global(
+        "max_concurrent_queries",
+        &config.query.max_concurrent_queries.to_string(),
+    );
 
     let catalog = Arc::new(CatalogManager::with_path(&args.meta_dir));
     {
@@ -291,7 +334,10 @@ async fn main() -> Result<()> {
     {
         let mut log = edit_log.write().await;
         log.replay().await?;
-        tracing::info!("Edit log replayed, last_applied_index: {}", log.last_applied_index());
+        tracing::info!(
+            "Edit log replayed, last_applied_index: {}",
+            log.last_applied_index()
+        );
     }
 
     {
@@ -343,16 +389,25 @@ async fn main() -> Result<()> {
     };
     let mysql_server = MysqlServer::new(mysql_config, query_handler.clone());
 
-    tracing::info!("RorisDB starting MySQL server on port {} (may fail silently if port is in use)", config.server.mysql_port);
-    tokio::spawn(async move {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+    tracing::info!(
+        "RorisDB starting MySQL server on port {} (may fail silently if port is in use)",
+        config.server.mysql_port
+    );
+    handles.push(tokio::spawn(async move {
         match mysql_server.run().await {
             Ok(()) => tracing::info!("MySQL server stopped"),
             Err(e) => tracing::error!("MySQL server failed: {}", e),
         }
-    });
+    }));
 
     // Start MaxCompute protocol server (HTTP/REST)
-    tracing::info!("RorisDB starting MaxCompute server on port {} (may fail silently if port is in use)", args.maxcompute_port);
+    tracing::info!(
+        "RorisDB starting MaxCompute server on port {} (may fail silently if port is in use)",
+        args.maxcompute_port
+    );
     let mc_config = McServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.maxcompute_port,
@@ -362,14 +417,17 @@ async fn main() -> Result<()> {
         region: None,
     };
     let mc_handler = query_handler.clone();
-    tokio::spawn(async move {
+    handles.push(tokio::spawn(async move {
         if let Err(e) = start_mc_server(mc_handler, mc_config).await {
             tracing::error!("MaxCompute server failed: {}", e);
         }
-    });
+    }));
 
     // Start Hologres protocol server (PostgreSQL wire protocol)
-    tracing::info!("RorisDB starting Hologres server on port {} (may fail silently if port is in use)", args.hologres_port);
+    tracing::info!(
+        "RorisDB starting Hologres server on port {} (may fail silently if port is in use)",
+        args.hologres_port
+    );
     let pg_config = PgServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.hologres_port,
@@ -379,17 +437,21 @@ async fn main() -> Result<()> {
         accept_any_password: false,
     };
     let pg_server = PgServer::new(pg_config, query_handler.clone());
-    tokio::spawn(async move {
+    handles.push(tokio::spawn(async move {
         if let Err(e) = pg_server.run().await {
             tracing::error!("Hologres (PG) server failed: {}", e);
         }
-    });
+    }));
 
     let edit_log_clone = edit_log.clone();
-    tokio::spawn(async move {
+    let shutdown_for_edit = shutdown.clone();
+    handles.push(tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(10));
         loop {
             ticker.tick().await;
+            if shutdown_for_edit.load(Ordering::Relaxed) {
+                break;
+            }
             let mut log = edit_log_clone.write().await;
             if let Err(e) = log.flush().await {
                 tracing::error!("EditLog flush failed: {}", e);
@@ -397,22 +459,30 @@ async fn main() -> Result<()> {
                 tracing::debug!("EditLog flushed");
             }
         }
-    });
+    }));
 
-    tracing::info!("RorisDB servers started: MySQL={}, MaxCompute={}, Hologres={}",
-        config.server.mysql_port, args.maxcompute_port, args.hologres_port);
+    tracing::info!(
+        "RorisDB servers started: MySQL={}, MaxCompute={}, Hologres={}",
+        config.server.mysql_port,
+        args.maxcompute_port,
+        args.hologres_port
+    );
 
     // Initialize Prometheus server info metric
     crate::metrics::RORIS_SERVER_INFO.set(1.0);
 
     // Periodic memory usage collection (every 15 seconds)
-    tokio::spawn(async {
+    let shutdown_for_mem = shutdown.clone();
+    handles.push(tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(15));
         loop {
             ticker.tick().await;
+            if shutdown_for_mem.load(Ordering::Relaxed) {
+                break;
+            }
             crate::metrics::update_process_memory();
         }
-    });
+    }));
 
     // Start Web SQL Editor if enabled
     if config.server.http_port > 0 {
@@ -421,27 +491,51 @@ async fn main() -> Result<()> {
             connection_tracker.clone(),
         ));
         let http_port = config.server.http_port;
-        tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             if let Err(e) = start_web_server(web_state, http_port).await {
                 tracing::error!("Web server failed: {}", e);
             }
-        });
-        tracing::info!("SQL Editor available at http://127.0.0.1:{}", config.server.http_port);
+        }));
+        tracing::info!(
+            "SQL Editor available at http://127.0.0.1:{}",
+            config.server.http_port
+        );
     }
 
     let catalog_clone = catalog.clone();
-    tokio::spawn(async move {
+    let shutdown_for_catalog = shutdown.clone();
+    handles.push(tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(30));
         loop {
             ticker.tick().await;
+            if shutdown_for_catalog.load(Ordering::Relaxed) {
+                // One final save before exiting
+                let _ = catalog_clone.save();
+                break;
+            }
             if let Err(e) = catalog_clone.save() {
                 tracing::error!("Catalog save failed: {}", e);
             }
         }
-    });
+    }));
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("Roris FE shutting down...");
+    shutdown.store(true, Ordering::SeqCst);
+
+    // Wait for all tasks with timeout
+    if tokio::time::timeout(Duration::from_secs(10), async {
+        for handle in handles {
+            let _ = handle.await;
+        }
+    })
+    .await
+    .is_ok()
+    {
+        tracing::info!("All tasks shut down gracefully");
+    } else {
+        tracing::warn!("Some tasks did not shut down within 10s timeout");
+    }
 
     audit_logger.flush().await;
     tracing::info!("Audit logs flushed");

@@ -1,4 +1,4 @@
-use fe_sql_parser::{parse_sql, Statement};
+use fe_sql_parser::{Statement, parse_sql};
 
 #[test]
 fn test_dml_compatibility() {
@@ -16,23 +16,39 @@ fn test_dml_compatibility() {
 
     // INSERT ... SET with multiple columns
     let result2 = parse_sql("INSERT INTO t SET a = 1, b = 2, c = 3");
-    assert!(result2.is_ok(), "INSERT ... SET multiple cols failed: {:?}", result2);
+    assert!(
+        result2.is_ok(),
+        "INSERT ... SET multiple cols failed: {:?}",
+        result2
+    );
 
     // INSERT ... SET with expressions (tests comma handling inside function calls)
     let result3 = parse_sql("INSERT INTO t SET id = 1 + 1, name = CONCAT('a', 'b')");
-    assert!(result3.is_ok(), "INSERT ... SET with expressions failed: {:?}", result3);
+    assert!(
+        result3.is_ok(),
+        "INSERT ... SET with expressions failed: {:?}",
+        result3
+    );
 }
 
 #[test]
 fn test_batch_3_export_statements() {
-    assert!(parse_sql("EXPORT TABLE test_db.test_table TO '/tmp/export' PROPERTIES (\"format\"=\"csv\")").is_ok());
+    assert!(
+        parse_sql(
+            "EXPORT TABLE test_db.test_table TO '/tmp/export' PROPERTIES (\"format\"=\"csv\")"
+        )
+        .is_ok()
+    );
     assert!(parse_sql("CANCEL EXPORT export_123").is_ok());
     assert!(parse_sql("SHOW EXPORT").is_ok());
 }
 
 #[test]
 fn test_batch_4_udf_statements() {
-    assert!(parse_sql("CREATE FUNCTION my_udf(INT, INT) RETURNS INT PROPERTIES (\"type\"=\"UDF\")").is_ok());
+    assert!(
+        parse_sql("CREATE FUNCTION my_udf(INT, INT) RETURNS INT PROPERTIES (\"type\"=\"UDF\")")
+            .is_ok()
+    );
     assert!(parse_sql("DROP FUNCTION my_udf(INT, INT)").is_ok());
     assert!(parse_sql("DROP FUNCTION IF EXISTS my_udf").is_ok());
     assert!(parse_sql("SHOW FUNCTIONS").is_ok());
@@ -61,7 +77,9 @@ fn test_batch_4_statistics_statements() {
 
 #[test]
 fn test_batch_4_job_statements() {
-    assert!(parse_sql("CREATE JOB my_job ON SCHEDULE CRON('0 0 * * *') EXECUTE 'SELECT 1'").is_ok());
+    assert!(
+        parse_sql("CREATE JOB my_job ON SCHEDULE CRON('0 0 * * *') EXECUTE 'SELECT 1'").is_ok()
+    );
     assert!(parse_sql("DROP JOB my_job").is_ok());
     assert!(parse_sql("DROP JOB IF EXISTS my_job").is_ok());
     assert!(parse_sql("PAUSE JOB my_job").is_ok());
@@ -94,9 +112,14 @@ fn test_batch_4_data_governance_statements() {
     assert!(parse_sql("DROP SQL_BLOCK_RULE IF EXISTS rule1").is_ok());
     assert!(parse_sql("SHOW SQL_BLOCK_RULE").is_ok());
     assert!(parse_sql("SHOW SQL_BLOCK_RULE FOR rule1").is_ok());
-    
-    assert!(parse_sql("CREATE ROW POLICY policy1 ON test_db.test_table AS PERMIT USING 'id > 0'").is_ok());
-    assert!(parse_sql("CREATE ROW POLICY policy1 ON test_table AS RESTRICT USING 'id < 100'").is_ok());
+
+    assert!(
+        parse_sql("CREATE ROW POLICY policy1 ON test_db.test_table AS PERMIT USING 'id > 0'")
+            .is_ok()
+    );
+    assert!(
+        parse_sql("CREATE ROW POLICY policy1 ON test_table AS RESTRICT USING 'id < 100'").is_ok()
+    );
     assert!(parse_sql("DROP ROW POLICY policy1 ON test_db.test_table").is_ok());
     assert!(parse_sql("DROP ROW POLICY IF EXISTS policy1 ON test_table").is_ok());
     assert!(parse_sql("SHOW ROW POLICY").is_ok());
@@ -173,14 +196,17 @@ fn test_insert_overwrite_partition_details() {
 
 #[test]
 fn test_insert_overwrite_partition_debug() {
-    use fe_sql_parser::{parse_sql, Statement};
+    use fe_sql_parser::{Statement, parse_sql};
     let sql = "INSERT OVERWRITE insert_test_overwrite_part PARTITION(p202401) VALUES (4, '2024-01-20', 'OverwritePart1', 400)";
     match parse_sql(sql) {
         Ok(stmts) => {
             println!("Parsed statements: {:#?}", stmts);
             for stmt in stmts {
                 if let Statement::Insert(insert) = stmt {
-                    println!("is_overwrite: {}, columns: {:?}, values: {:?}", insert.is_overwrite, insert.columns, insert.values);
+                    println!(
+                        "is_overwrite: {}, columns: {:?}, values: {:?}",
+                        insert.is_overwrite, insert.columns, insert.values
+                    );
                 }
             }
         }
@@ -201,9 +227,15 @@ fn test_values_function_in_upsert() {
                 if let Statement::Insert(insert) = stmt {
                     println!("  table: {}", insert.table);
                     println!("  columns: {:?}", insert.columns);
-                    println!("  on_duplicate_key_update count: {}", insert.on_duplicate_key_update.len());
+                    println!(
+                        "  on_duplicate_key_update count: {}",
+                        insert.on_duplicate_key_update.len()
+                    );
                     for (i, update) in insert.on_duplicate_key_update.iter().enumerate() {
-                        println!("  update[{}]: column={}, value={:?}", i, update.column, update.value);
+                        println!(
+                            "  update[{}]: column={}, value={:?}",
+                            i, update.column, update.value
+                        );
                     }
                 }
             }

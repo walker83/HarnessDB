@@ -1,15 +1,11 @@
 use bytes::BytesMut;
-use mysql_protocol::packet::{
-    HandshakeV10, PacketBuilder, Column,
-    column_type,
-    read_packet_header, write_packet_header,
-    make_ok_packet, make_err_packet, make_eof_packet,
-    make_general_err, make_stmt_prepare_ok,
-    scalar_to_column_type, data_type_to_column_type,
-    encode_text_row, scalar_to_text_bytes,
-};
-use mysql_protocol::server::{QueryHandler, QueryResult, ColumnDef, ColumnType, ServerConfig};
 use mysql_protocol::charset;
+use mysql_protocol::packet::{
+    Column, HandshakeV10, PacketBuilder, column_type, data_type_to_column_type, encode_text_row,
+    make_eof_packet, make_err_packet, make_general_err, make_ok_packet, make_stmt_prepare_ok,
+    read_packet_header, scalar_to_column_type, scalar_to_text_bytes, write_packet_header,
+};
+use mysql_protocol::server::{ColumnDef, ColumnType, QueryHandler, QueryResult, ServerConfig};
 use types::{DataType, ScalarValue};
 
 // ===========================================================================
@@ -23,7 +19,7 @@ fn test_packet_header_write_and_read() {
 
     let result = read_packet_header(&buf).unwrap();
     assert_eq!(result.0, 100); // length
-    assert_eq!(result.1, 1);   // sequence id
+    assert_eq!(result.1, 1); // sequence id
 }
 
 #[test]
@@ -75,9 +71,8 @@ fn test_packet_builder_lenenc_str() {
 #[test]
 fn test_handshake_v10_encode() {
     let salt: [u8; 20] = [
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-        0x11, 0x12, 0x13, 0x14,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13, 0x14,
     ];
     let handshake = HandshakeV10::new(42, salt);
     let packet = handshake.encode(0);
@@ -184,11 +179,7 @@ fn test_stmt_prepare_ok() {
 
 #[test]
 fn test_encode_text_row() {
-    let row = vec![
-        Some(b"hello".to_vec()),
-        Some(b"123".to_vec()),
-        None,
-    ];
+    let row = vec![Some(b"hello".to_vec()), Some(b"123".to_vec()), None];
 
     let packet = encode_text_row(0, &row);
     let (_, seq_id) = read_packet_header(&packet).unwrap();
@@ -201,24 +192,63 @@ fn test_encode_text_row() {
 
 #[test]
 fn test_scalar_to_column_type_mapping() {
-    assert_eq!(scalar_to_column_type(&ScalarValue::Int64(0)), column_type::LONGLONG);
-    assert_eq!(scalar_to_column_type(&ScalarValue::Int32(0)), column_type::LONG);
-    assert_eq!(scalar_to_column_type(&ScalarValue::Float64(0.0)), column_type::DOUBLE);
-    assert_eq!(scalar_to_column_type(&ScalarValue::Float32(0.0)), column_type::FLOAT);
-    assert_eq!(scalar_to_column_type(&ScalarValue::Boolean(true)), column_type::TINY);
-    assert_eq!(scalar_to_column_type(&ScalarValue::String("".into())), column_type::VAR_STRING);
-    assert_eq!(scalar_to_column_type(&ScalarValue::Date(0)), column_type::DATE);
-    assert_eq!(scalar_to_column_type(&ScalarValue::DateTime(0)), column_type::DATETIME);
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::Int64(0)),
+        column_type::LONGLONG
+    );
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::Int32(0)),
+        column_type::LONG
+    );
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::Float64(0.0)),
+        column_type::DOUBLE
+    );
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::Float32(0.0)),
+        column_type::FLOAT
+    );
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::Boolean(true)),
+        column_type::TINY
+    );
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::String("".into())),
+        column_type::VAR_STRING
+    );
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::Date(0)),
+        column_type::DATE
+    );
+    assert_eq!(
+        scalar_to_column_type(&ScalarValue::DateTime(0)),
+        column_type::DATETIME
+    );
     assert_eq!(scalar_to_column_type(&ScalarValue::Null), column_type::NULL);
 }
 
 #[test]
 fn test_data_type_to_column_type_mapping() {
-    assert_eq!(data_type_to_column_type(&DataType::Int64), column_type::LONGLONG);
-    assert_eq!(data_type_to_column_type(&DataType::Int32), column_type::LONG);
-    assert_eq!(data_type_to_column_type(&DataType::Float64), column_type::DOUBLE);
-    assert_eq!(data_type_to_column_type(&DataType::String), column_type::VAR_STRING);
-    assert_eq!(data_type_to_column_type(&DataType::Boolean), column_type::TINY);
+    assert_eq!(
+        data_type_to_column_type(&DataType::Int64),
+        column_type::LONGLONG
+    );
+    assert_eq!(
+        data_type_to_column_type(&DataType::Int32),
+        column_type::LONG
+    );
+    assert_eq!(
+        data_type_to_column_type(&DataType::Float64),
+        column_type::DOUBLE
+    );
+    assert_eq!(
+        data_type_to_column_type(&DataType::String),
+        column_type::VAR_STRING
+    );
+    assert_eq!(
+        data_type_to_column_type(&DataType::Boolean),
+        column_type::TINY
+    );
     assert_eq!(data_type_to_column_type(&DataType::Date), column_type::DATE);
 }
 
@@ -228,9 +258,18 @@ fn test_data_type_to_column_type_mapping() {
 
 #[test]
 fn test_scalar_to_text_bytes() {
-    assert_eq!(scalar_to_text_bytes(&ScalarValue::Int64(42)), Some(b"42".to_vec()));
-    assert_eq!(scalar_to_text_bytes(&ScalarValue::Boolean(true)), Some(b"1".to_vec()));
-    assert_eq!(scalar_to_text_bytes(&ScalarValue::Boolean(false)), Some(b"0".to_vec()));
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::Int64(42)),
+        Some(b"42".to_vec())
+    );
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::Boolean(true)),
+        Some(b"1".to_vec())
+    );
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::Boolean(false)),
+        Some(b"0".to_vec())
+    );
     assert_eq!(scalar_to_text_bytes(&ScalarValue::Null), None);
     assert_eq!(
         scalar_to_text_bytes(&ScalarValue::String("hello".into())),
@@ -259,8 +298,14 @@ fn test_charset_name_mapping() {
 
 #[test]
 fn test_collation_name_mapping() {
-    assert_eq!(charset::collation_name(charset::CHARSET_UTF8MB4), "utf8mb4_general_ci");
-    assert_eq!(charset::collation_name(charset::CHARSET_UTF8), "utf8_general_ci");
+    assert_eq!(
+        charset::collation_name(charset::CHARSET_UTF8MB4),
+        "utf8mb4_general_ci"
+    );
+    assert_eq!(
+        charset::collation_name(charset::CHARSET_UTF8),
+        "utf8_general_ci"
+    );
 }
 
 #[test]
@@ -276,12 +321,10 @@ fn test_max_bytes_per_char() {
 
 #[test]
 fn test_query_result_new() {
-    let columns = vec![
-        ColumnDef {
-            name: "id".into(),
-            col_type: ColumnType::Int,
-        },
-    ];
+    let columns = vec![ColumnDef {
+        name: "id".into(),
+        col_type: ColumnType::Int,
+    }];
     let result = QueryResult::new(columns);
     assert!(result.rows.is_empty());
     assert_eq!(result.columns.len(), 1);
@@ -289,16 +332,11 @@ fn test_query_result_new() {
 
 #[test]
 fn test_query_result_with_rows() {
-    let columns = vec![
-        ColumnDef {
-            name: "name".into(),
-            col_type: ColumnType::String,
-        },
-    ];
-    let rows = vec![
-        vec![Some("Alice".into())],
-        vec![Some("Bob".into())],
-    ];
+    let columns = vec![ColumnDef {
+        name: "name".into(),
+        col_type: ColumnType::String,
+    }];
+    let rows = vec![vec![Some("Alice".into())], vec![Some("Bob".into())]];
     let result = QueryResult::with_rows(columns, rows);
     assert_eq!(result.rows.len(), 2);
 }

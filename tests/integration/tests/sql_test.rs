@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use fe_catalog::table::TableColumn;
 use fe_catalog::CatalogManager;
+use fe_catalog::table::TableColumn;
 
 use integration_tests::common;
 
@@ -341,10 +341,11 @@ fn test_inner_join_block() {
                 let dept_name = dept_name_col.scalar_at(j);
                 if let types::ScalarValue::String(ref dn) = dept_name
                     && dept == dn
-                        && let types::ScalarValue::String(ref name) = emp_name_col.scalar_at(i) {
-                            result_names.push(name.clone());
-                            result_depts.push(dn.clone());
-                        }
+                    && let types::ScalarValue::String(ref name) = emp_name_col.scalar_at(i)
+                {
+                    result_names.push(name.clone());
+                    result_depts.push(dn.clone());
+                }
             }
         }
     }
@@ -375,10 +376,11 @@ fn test_left_join_block() {
             for j in 0..departments.num_rows() {
                 let dept_name = dept_name_col.scalar_at(j);
                 if let types::ScalarValue::String(ref dn) = dept_name
-                    && dept == dn {
-                        matched = true;
-                        join_count += 1;
-                    }
+                    && dept == dn
+                {
+                    matched = true;
+                    join_count += 1;
+                }
             }
         }
 
@@ -525,25 +527,20 @@ fn test_parse_simple_select() {
 
 #[test]
 fn test_parse_select_with_where() {
-    let result = fe_sql_parser::parse_sql(
-        "SELECT id, name FROM employees WHERE salary > 80000",
-    );
+    let result = fe_sql_parser::parse_sql("SELECT id, name FROM employees WHERE salary > 80000");
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_select_with_group_by() {
-    let result = fe_sql_parser::parse_sql(
-        "SELECT department, COUNT(*) FROM employees GROUP BY department",
-    );
+    let result =
+        fe_sql_parser::parse_sql("SELECT department, COUNT(*) FROM employees GROUP BY department");
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_select_with_order_by_limit() {
-    let result = fe_sql_parser::parse_sql(
-        "SELECT * FROM employees ORDER BY salary DESC LIMIT 10",
-    );
+    let result = fe_sql_parser::parse_sql("SELECT * FROM employees ORDER BY salary DESC LIMIT 10");
     assert!(result.is_ok());
 }
 
@@ -571,7 +568,6 @@ fn test_parse_aggregate_functions() {
     assert!(result.is_ok());
 }
 
-
 #[test]
 fn test_parse_create_repository_local() {
     let result = fe_sql_parser::parse_sql("CREATE REPOSITORY local_repo");
@@ -581,7 +577,10 @@ fn test_parse_create_repository_local() {
     match &stmts[0] {
         fe_sql_parser::ast::Statement::CreateRepository(stmt) => {
             assert_eq!(stmt.name, "local_repo");
-            assert!(matches!(stmt.repo_type, fe_sql_parser::ast::RepositoryType::Local));
+            assert!(matches!(
+                stmt.repo_type,
+                fe_sql_parser::ast::RepositoryType::Local
+            ));
         }
         _ => panic!("Expected CreateRepository statement"),
     }
@@ -597,7 +596,10 @@ fn test_parse_create_repository_with_properties() {
     match &stmts[0] {
         fe_sql_parser::ast::Statement::CreateRepository(stmt) => {
             assert_eq!(stmt.name, "s3_repo");
-            assert!(matches!(stmt.repo_type, fe_sql_parser::ast::RepositoryType::S3));
+            assert!(matches!(
+                stmt.repo_type,
+                fe_sql_parser::ast::RepositoryType::S3
+            ));
             assert!(!stmt.properties.is_empty());
         }
         _ => panic!("Expected CreateRepository statement"),
@@ -674,7 +676,8 @@ fn test_parse_backup_database_with_name() {
 
 #[test]
 fn test_parse_restore_database() {
-    let result = fe_sql_parser::parse_sql("RESTORE DATABASE mydb FROM my_repo BACKUP backup_20240101");
+    let result =
+        fe_sql_parser::parse_sql("RESTORE DATABASE mydb FROM my_repo BACKUP backup_20240101");
     assert!(result.is_ok());
     let stmts = result.unwrap();
     match &stmts[0] {
@@ -747,18 +750,31 @@ fn test_parse_refresh_materialized_view_fast() {
 
 #[test]
 fn test_catalog_materialized_view_crud() {
-    use fe_catalog::materialized_view::{MaterializedView, MaterializedViewColumn, RefreshStrategy};
+    use fe_catalog::materialized_view::{
+        MaterializedView, MaterializedViewColumn, RefreshStrategy,
+    };
 
     let catalog = Arc::new(CatalogManager::new());
     catalog.create_database("test_db").unwrap();
 
-    let mv = MaterializedView::new(1, "mv1".to_string(), "test_db".to_string(), "SELECT department, COUNT(*) FROM employees GROUP BY department".to_string())
-        .with_base_tables(vec![("test_db".to_string(), "employees".to_string())])
-        .with_refresh(RefreshStrategy::Manual)
-        .with_schema(vec![
-            MaterializedViewColumn { name: "department".to_string(), data_type: "String".to_string() },
-            MaterializedViewColumn { name: "count".to_string(), data_type: "Int64".to_string() },
-        ]);
+    let mv = MaterializedView::new(
+        1,
+        "mv1".to_string(),
+        "test_db".to_string(),
+        "SELECT department, COUNT(*) FROM employees GROUP BY department".to_string(),
+    )
+    .with_base_tables(vec![("test_db".to_string(), "employees".to_string())])
+    .with_refresh(RefreshStrategy::Manual)
+    .with_schema(vec![
+        MaterializedViewColumn {
+            name: "department".to_string(),
+            data_type: "String".to_string(),
+        },
+        MaterializedViewColumn {
+            name: "count".to_string(),
+            data_type: "Int64".to_string(),
+        },
+    ]);
 
     catalog.create_materialized_view(mv).unwrap();
 
@@ -766,7 +782,10 @@ fn test_catalog_materialized_view_crud() {
     assert!(retrieved.is_some());
     let mv = retrieved.unwrap();
     assert_eq!(mv.name, "mv1");
-    assert_eq!(mv.base_tables, vec![("test_db".to_string(), "employees".to_string())]);
+    assert_eq!(
+        mv.base_tables,
+        vec![("test_db".to_string(), "employees".to_string())]
+    );
 
     let mvs_in_db = catalog.list_materialized_views("test_db");
     assert_eq!(mvs_in_db.len(), 1);

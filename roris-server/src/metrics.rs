@@ -5,7 +5,7 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    register_counter_vec, register_gauge, register_histogram_vec, CounterVec, Gauge, HistogramVec,
+    CounterVec, Gauge, HistogramVec, register_counter_vec, register_gauge, register_histogram_vec,
 };
 
 lazy_static! {
@@ -88,9 +88,7 @@ pub fn record_query(sql: &str, duration_ms: f64, is_slow: bool, has_error: bool)
         .with_label_values(&[query_type])
         .observe(duration_ms);
 
-    QUERIES_TOTAL
-        .with_label_values(&[query_type, status])
-        .inc();
+    QUERIES_TOTAL.with_label_values(&[query_type, status]).inc();
 
     if is_slow {
         SLOW_QUERIES_TOTAL.with_label_values(&[query_type]).inc();

@@ -2,13 +2,13 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
+use arrow_arith::boolean;
 use arrow_array::BooleanArray;
 use arrow_array::Float64Array;
 use arrow_array::Int32Array;
 use arrow_array::Int64Array;
 use arrow_array::RecordBatch;
 use arrow_array::StringArray;
-use arrow_arith::boolean;
 use arrow_ord::cmp;
 use arrow_schema::Schema as ArrowSchema;
 use arrow_select::filter::filter_record_batch;
@@ -106,11 +106,7 @@ impl TableProvider for ParquetTableProvider {
 
         // 4. Return DataSourceExec backed by MemorySourceConfig
         //    (projection already baked into the data, so pass None for projection)
-        let exec = MemorySourceConfig::try_new_exec(
-            &[vec![filtered_rb]],
-            projected_schema,
-            None,
-        )?;
+        let exec = MemorySourceConfig::try_new_exec(&[vec![filtered_rb]], projected_schema, None)?;
         Ok(exec)
     }
 }
@@ -122,42 +118,46 @@ impl TableProvider for ParquetTableProvider {
 fn scalar_to_array(value: &ScalarValue, size: usize) -> Option<arrow_array::ArrayRef> {
     match value {
         ScalarValue::Null => None,
-        ScalarValue::Boolean(Some(v)) => {
-            Some(Arc::new(BooleanArray::from(vec![*v; size])))
-        }
+        ScalarValue::Boolean(Some(v)) => Some(Arc::new(BooleanArray::from(vec![*v; size]))),
         ScalarValue::Int8(Some(v)) => Some(Arc::new(
-            std::iter::repeat(*v).take(size).collect::<arrow_array::Int8Array>(),
+            std::iter::repeat(*v)
+                .take(size)
+                .collect::<arrow_array::Int8Array>(),
         )),
         ScalarValue::Int16(Some(v)) => Some(Arc::new(
-            std::iter::repeat(*v).take(size).collect::<arrow_array::Int16Array>(),
+            std::iter::repeat(*v)
+                .take(size)
+                .collect::<arrow_array::Int16Array>(),
         )),
-        ScalarValue::Int32(Some(v)) => {
-            Some(Arc::new(Int32Array::from(vec![*v; size])))
-        }
-        ScalarValue::Int64(Some(v)) => {
-            Some(Arc::new(Int64Array::from(vec![*v; size])))
-        }
+        ScalarValue::Int32(Some(v)) => Some(Arc::new(Int32Array::from(vec![*v; size]))),
+        ScalarValue::Int64(Some(v)) => Some(Arc::new(Int64Array::from(vec![*v; size]))),
         ScalarValue::UInt8(Some(v)) => Some(Arc::new(
-            std::iter::repeat(*v).take(size).collect::<arrow_array::UInt8Array>(),
+            std::iter::repeat(*v)
+                .take(size)
+                .collect::<arrow_array::UInt8Array>(),
         )),
         ScalarValue::UInt16(Some(v)) => Some(Arc::new(
-            std::iter::repeat(*v).take(size).collect::<arrow_array::UInt16Array>(),
+            std::iter::repeat(*v)
+                .take(size)
+                .collect::<arrow_array::UInt16Array>(),
         )),
         ScalarValue::UInt32(Some(v)) => Some(Arc::new(
-            std::iter::repeat(*v).take(size).collect::<arrow_array::UInt32Array>(),
+            std::iter::repeat(*v)
+                .take(size)
+                .collect::<arrow_array::UInt32Array>(),
         )),
         ScalarValue::UInt64(Some(v)) => Some(Arc::new(
-            std::iter::repeat(*v).take(size).collect::<arrow_array::UInt64Array>(),
+            std::iter::repeat(*v)
+                .take(size)
+                .collect::<arrow_array::UInt64Array>(),
         )),
         ScalarValue::Float32(Some(v)) => Some(Arc::new(
-            std::iter::repeat(*v).take(size).collect::<arrow_array::Float32Array>(),
+            std::iter::repeat(*v)
+                .take(size)
+                .collect::<arrow_array::Float32Array>(),
         )),
-        ScalarValue::Float64(Some(v)) => {
-            Some(Arc::new(Float64Array::from(vec![*v; size])))
-        }
-        ScalarValue::Utf8(Some(v)) => Some(Arc::new(StringArray::from(
-            vec![v.as_str(); size],
-        ))),
+        ScalarValue::Float64(Some(v)) => Some(Arc::new(Float64Array::from(vec![*v; size]))),
+        ScalarValue::Utf8(Some(v)) => Some(Arc::new(StringArray::from(vec![v.as_str(); size]))),
         ScalarValue::LargeUtf8(Some(v)) => {
             let arr: arrow_array::LargeStringArray = vec![v.as_str(); size].into();
             Some(Arc::new(arr))
@@ -203,7 +203,12 @@ fn extract_filters(expr: &Expr, out: &mut Vec<(String, Operator, ScalarValue)>) 
         return true;
     }
     // Try to decompose AND expressions
-    if let Expr::BinaryExpr(BinaryExpr { left, op: Operator::And, right }) = expr {
+    if let Expr::BinaryExpr(BinaryExpr {
+        left,
+        op: Operator::And,
+        right,
+    }) = expr
+    {
         return extract_filters(left, out) && extract_filters(right, out);
     }
     false

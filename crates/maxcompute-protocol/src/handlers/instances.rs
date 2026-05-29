@@ -3,16 +3,16 @@
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::XmlResponse;
 use crate::server::McServerState;
 use crate::xml_models;
-use crate::XmlResponse;
 
 /// Check if a QueryResult indicates an error by looking at the first column name.
 ///
@@ -91,14 +91,13 @@ pub async fn submit_instance(
     // Execute in a blocking thread to avoid blocking the async worker
     let handler = state.handler.clone();
     let conn_id = state.next_conn_id();
-    let result = tokio::task::spawn_blocking(move || {
-        handler.handle_query(conn_id, &translated_sql)
-    })
-    .await
-    .unwrap_or_else(|join_err| {
-        error!("Blocking task join error: {}", join_err);
-        mysql_protocol::server::QueryResult::ok()
-    });
+    let result =
+        tokio::task::spawn_blocking(move || handler.handle_query(conn_id, &translated_sql))
+            .await
+            .unwrap_or_else(|join_err| {
+                error!("Blocking task join error: {}", join_err);
+                mysql_protocol::server::QueryResult::ok()
+            });
 
     // Check if the result is an error
     let is_error = is_error_result(&result);
@@ -152,7 +151,12 @@ pub async fn get_instance(
     Path((project, id)): Path<(String, String)>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    info!("GET /api/projects/{}/instances/{} params={:?}", project, id, params.keys().collect::<Vec<_>>());
+    info!(
+        "GET /api/projects/{}/instances/{} params={:?}",
+        project,
+        id,
+        params.keys().collect::<Vec<_>>()
+    );
 
     let instance = match state.instance_manager.get(&id) {
         Some(info) => info,
@@ -241,10 +245,7 @@ pub async fn stop_instance(
 }
 
 /// Build the task result XML response.
-fn build_result_response(
-    instance: &crate::handlers::InstanceInfo,
-    _now: &str,
-) -> Response {
+fn build_result_response(instance: &crate::handlers::InstanceInfo, _now: &str) -> Response {
     if instance.status == crate::handlers::InstanceStatus::Failed {
         let error_msg = instance
             .error
@@ -262,7 +263,8 @@ fn build_result_response(
       <Result><![CDATA[{}]]></Result>
     </Task>
   </Tasks>
-</Instance>"#, escape_cdata(error_msg)
+</Instance>"#,
+                escape_cdata(error_msg)
             )),
         )
             .into_response();
@@ -284,7 +286,7 @@ fn build_result_response(
     </Task>
   </Tasks>
 </Instance>"#
-                    .to_string(),
+                        .to_string(),
                 ),
             )
                 .into_response();
@@ -310,7 +312,7 @@ fn build_result_response(
     </Task>
   </Tasks>
 </Instance>"#
-                .to_string(),
+                    .to_string(),
             ),
         )
             .into_response();
@@ -365,7 +367,7 @@ fn build_result_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handlers::{InstanceInfo, InstanceStatus, InstanceManager};
+    use crate::handlers::{InstanceInfo, InstanceManager, InstanceStatus};
     use crate::server::{McServerConfig, McServerState, MockQueryHandler};
     use axum::extract::Query;
     use std::collections::HashMap;
@@ -390,18 +392,25 @@ mod tests {
             r#"<Instance><Job><Priority>9</Priority><Tasks><SQL><Name>AnonymousSQLTask</Name><Query>SELECT 1</Query></SQL></Tasks></Job></Instance>"#,
         );
 
-        let response = submit_instance(
-            State(state),
-            Path("test_project".to_string()),
-            body,
-        )
-        .await
-        .into_response();
+        let response = submit_instance(State(state), Path("test_project".to_string()), body)
+            .await
+            .into_response();
 
-        assert_eq!(response.status(), StatusCode::CREATED, "Submit should return 201");
-        let location = response.headers().get(header::LOCATION).and_then(|v| v.to_str().ok());
+        assert_eq!(
+            response.status(),
+            StatusCode::CREATED,
+            "Submit should return 201"
+        );
+        let location = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|v| v.to_str().ok());
         assert!(location.is_some(), "Should have Location header");
-        assert!(location.unwrap().starts_with("/api/projects/test_project/instances/"));
+        assert!(
+            location
+                .unwrap()
+                .starts_with("/api/projects/test_project/instances/")
+        );
     }
 
     #[tokio::test]
@@ -411,13 +420,9 @@ mod tests {
             r#"<Instance><Job><Tasks><SQL><Query>SELECT 1</Query></SQL></Tasks></Job></Instance>"#,
         );
 
-        let response = submit_instance(
-            State(state),
-            Path("nonexistent".to_string()),
-            body,
-        )
-        .await
-        .into_response();
+        let response = submit_instance(State(state), Path("nonexistent".to_string()), body)
+            .await
+            .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -429,13 +434,9 @@ mod tests {
             r#"<Instance><Job><Tasks><SQL><Name>AnonymousSQLTask</Name><Query></Query></SQL></Tasks></Job></Instance>"#,
         );
 
-        let response = submit_instance(
-            State(state),
-            Path("test_project".to_string()),
-            body,
-        )
-        .await
-        .into_response();
+        let response = submit_instance(State(state), Path("test_project".to_string()), body)
+            .await
+            .into_response();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
@@ -447,16 +448,18 @@ mod tests {
             r#"<Instance><Job><Priority>9</Priority><Tasks><SQL><Name>AnonymousSQLTask</Name><Query>SHOW TABLES</Query></SQL></Tasks></Job></Instance>"#,
         );
 
-        let response = submit_instance(
-            State(state.clone()),
-            Path("test_project".to_string()),
-            body,
-        )
-        .await
-        .into_response();
+        let response =
+            submit_instance(State(state.clone()), Path("test_project".to_string()), body)
+                .await
+                .into_response();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let location = response.headers().get(header::LOCATION).and_then(|v| v.to_str().ok()).unwrap().to_string();
+        let location = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap()
+            .to_string();
 
         // The instance should be immediately completed with Success
         let instance_id = location.rsplit('/').next().unwrap();
@@ -509,10 +512,18 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("<Instance>"), "Should contain Instance element");
-        assert!(body_str.contains("<Status>Success</Status>"), "Should contain status");
+        assert!(
+            body_str.contains("<Instance>"),
+            "Should contain Instance element"
+        );
+        assert!(
+            body_str.contains("<Status>Success</Status>"),
+            "Should contain status"
+        );
     }
 
     #[tokio::test]
@@ -549,10 +560,18 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("<Result>"), "Should contain Result element");
-        assert!(body_str.contains("<IsSelect>true</IsSelect>"), "Should indicate SELECT query");
+        assert!(
+            body_str.contains("<Result>"),
+            "Should contain Result element"
+        );
+        assert!(
+            body_str.contains("<IsSelect>true</IsSelect>"),
+            "Should indicate SELECT query"
+        );
     }
 
     #[tokio::test]
@@ -583,10 +602,16 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
         assert!(body_str.contains("<Task Name=\"AnonymousSQLTask\""));
-        assert!(body_str.contains("Status=\"Running\""), "TaskStatus XML should contain Status=Running: {}", body_str);
+        assert!(
+            body_str.contains("Status=\"Running\""),
+            "TaskStatus XML should contain Status=Running: {}",
+            body_str
+        );
     }
 
     #[tokio::test]
@@ -617,7 +642,9 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
         assert!(body_str.contains("<Status>Failed</Status>"));
     }
@@ -700,7 +727,9 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
         assert!(body_str.contains("<Status>Failed</Status>"));
         assert!(body_str.contains("Syntax error near"));
@@ -734,9 +763,14 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("<IsSelect>false</IsSelect>"), "DDL should have IsSelect=false");
+        assert!(
+            body_str.contains("<IsSelect>false</IsSelect>"),
+            "DDL should have IsSelect=false"
+        );
     }
 
     #[tokio::test]
@@ -767,9 +801,14 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("<Result><![CDATA[]]></Result>"), "No-result instance should have empty CDATA");
+        assert!(
+            body_str.contains("<Result><![CDATA[]]></Result>"),
+            "No-result instance should have empty CDATA"
+        );
     }
 
     // ======================================================================

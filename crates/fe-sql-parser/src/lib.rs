@@ -1,12 +1,12 @@
 pub mod ast;
-pub mod parser;
-pub mod error;
 pub mod datafusion_parser;
+pub mod error;
+pub mod parser;
 
 pub use ast::Statement;
-pub use parser::parse_sql;
+pub use datafusion_parser::{DataFusionParseError, is_dml_sql, try_parse_dml_with_datafusion};
 pub use error::ParseError;
-pub use datafusion_parser::{is_dml_sql, try_parse_dml_with_datafusion, DataFusionParseError};
+pub use parser::parse_sql;
 
 #[cfg(test)]
 mod tests {

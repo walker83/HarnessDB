@@ -17,8 +17,8 @@
 //! This crate defines its own data types that mirror those in fe-catalog and be-storage
 //! to avoid cyclic dependencies. Types can be converted between crates when needed.
 
-mod meta_store;
 mod catalog_store;
+mod meta_store;
 
-pub use meta_store::{MetaStore, RocksStoreError, Result};
-pub use catalog_store::{CatalogStore, Database, Table, TableColumn, KeysType};
+pub use catalog_store::{CatalogStore, Database, KeysType, Table, TableColumn};
+pub use meta_store::{MetaStore, Result, RocksStoreError};

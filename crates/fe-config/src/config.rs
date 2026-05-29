@@ -114,25 +114,63 @@ fn default_jwt_secret() -> String {
 }
 
 // Default value functions
-fn default_mysql_port() -> u16 { 9030 }
-fn default_bind_addr() -> String { "127.0.0.1".to_string() }
-fn default_max_connections() -> u32 { 100 }
-fn default_wait_timeout() -> u32 { 28800 }
-fn default_http_port() -> u16 { 8080 }
-fn default_meta_dir() -> String { "data/fe/doris-meta".to_string() }
-fn default_data_dir() -> String { "data/fe/storage".to_string() }
-fn default_compression() -> String { "zstd".to_string() }
-fn default_page_size() -> u32 { 4096 }
-fn default_query_timeout() -> u32 { 300 }
-fn default_max_allowed_packet() -> u64 { 4194304 }
-fn default_time_zone() -> String { "SYSTEM".to_string() }
-fn default_max_concurrent_queries() -> u32 { 50 }
-fn default_max_dml_rows() -> u64 { 10_000_000 }
-fn default_true() -> bool { true }
-fn default_slow_query_threshold() -> u64 { 1000 }
-fn default_audit_log_dir() -> String { "data/fe/audit".to_string() }
-fn default_audit_log_max_size_mb() -> u64 { 100 }
-fn default_audit_log_max_files() -> u32 { 10 }
+fn default_mysql_port() -> u16 {
+    9030
+}
+fn default_bind_addr() -> String {
+    "127.0.0.1".to_string()
+}
+fn default_max_connections() -> u32 {
+    100
+}
+fn default_wait_timeout() -> u32 {
+    28800
+}
+fn default_http_port() -> u16 {
+    8080
+}
+fn default_meta_dir() -> String {
+    "data/fe/doris-meta".to_string()
+}
+fn default_data_dir() -> String {
+    "data/fe/storage".to_string()
+}
+fn default_compression() -> String {
+    "zstd".to_string()
+}
+fn default_page_size() -> u32 {
+    4096
+}
+fn default_query_timeout() -> u32 {
+    300
+}
+fn default_max_allowed_packet() -> u64 {
+    4194304
+}
+fn default_time_zone() -> String {
+    "SYSTEM".to_string()
+}
+fn default_max_concurrent_queries() -> u32 {
+    50
+}
+fn default_max_dml_rows() -> u64 {
+    10_000_000
+}
+fn default_true() -> bool {
+    true
+}
+fn default_slow_query_threshold() -> u64 {
+    1000
+}
+fn default_audit_log_dir() -> String {
+    "data/fe/audit".to_string()
+}
+fn default_audit_log_max_size_mb() -> u64 {
+    100
+}
+fn default_audit_log_max_files() -> u32 {
+    10
+}
 
 impl Default for RorisConfig {
     fn default() -> Self {
@@ -207,10 +245,20 @@ impl Default for SecurityConfig {
 impl RorisConfig {
     /// Load configuration from a TOML file
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| format!("Failed to read config file '{}': {}", path.as_ref().display(), e))?;
-        toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse config file '{}': {}", path.as_ref().display(), e))
+        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
+            format!(
+                "Failed to read config file '{}': {}",
+                path.as_ref().display(),
+                e
+            )
+        })?;
+        toml::from_str(&content).map_err(|e| {
+            format!(
+                "Failed to parse config file '{}': {}",
+                path.as_ref().display(),
+                e
+            )
+        })
     }
 
     /// Load configuration from a file, or return default if file doesn't exist
@@ -218,7 +266,11 @@ impl RorisConfig {
         match Self::load(&path) {
             Ok(config) => config,
             Err(e) => {
-                tracing::warn!("Failed to parse config file {}: {}. Using defaults.", path.as_ref().display(), e);
+                tracing::warn!(
+                    "Failed to parse config file {}: {}. Using defaults.",
+                    path.as_ref().display(),
+                    e
+                );
                 Self::default()
             }
         }
@@ -281,6 +333,7 @@ audit_log_slow_only = false
 
 [security]
 auth_enabled = false
-"#.to_string()
+"#
+        .to_string()
     }
 }

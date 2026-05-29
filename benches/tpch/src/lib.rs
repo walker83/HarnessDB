@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::RecordBatch;
-use arrow_schema::{Schema as ArrowSchema, Field};
-use fe_catalog::table::{TableColumn, Table};
+use arrow_schema::{Field, Schema as ArrowSchema};
 use fe_catalog::CatalogManager;
-use fe_storage::{ParquetCatalogProvider, ParquetStorage};
+use fe_catalog::table::{Table, TableColumn};
 use fe_datafusion::block_convert;
+use fe_storage::{ParquetCatalogProvider, ParquetStorage};
 use types::Block;
 
 use data_gen::TpchData;
@@ -56,7 +56,11 @@ impl TpchBenchmark {
         catalog.create_database("tpch").unwrap();
         Self::setup_tables(&data, &catalog, &storage);
 
-        Self { data, catalog, storage }
+        Self {
+            data,
+            catalog,
+            storage,
+        }
     }
 
     fn setup_tables(data: &TpchData, catalog: &Arc<CatalogManager>, storage: &Arc<ParquetStorage>) {
@@ -76,9 +80,18 @@ impl TpchBenchmark {
             let _ = catalog.create_table("tpch", table);
 
             // Build Arrow schema and write to Parquet
-            let arrow_fields: Vec<Field> = block.schema().fields().iter().map(|f| {
-                Field::new(&f.name, fe_datafusion::types::to_arrow_data_type(&f.data_type), f.nullable)
-            }).collect();
+            let arrow_fields: Vec<Field> = block
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| {
+                    Field::new(
+                        &f.name,
+                        fe_datafusion::types::to_arrow_data_type(&f.data_type),
+                        f.nullable,
+                    )
+                })
+                .collect();
             let arrow_schema = Arc::new(ArrowSchema::new(arrow_fields));
 
             let batch = block_convert::block_to_record_batch(block).unwrap();
@@ -104,10 +117,8 @@ impl TpchBenchmark {
     pub fn datafusion_ctx(&self) -> SessionContext {
         use datafusion::common::config::ConfigOptions;
 
-        let catalog_provider = ParquetCatalogProvider::new(
-            self.catalog.clone(),
-            self.storage.clone(),
-        );
+        let catalog_provider =
+            ParquetCatalogProvider::new(self.catalog.clone(), self.storage.clone());
 
         let mut config = ConfigOptions::new();
         config.catalog.default_catalog = "tpch".to_string();
@@ -146,19 +157,19 @@ impl TpchBenchmark {
                 runtime.block_on(async {
                     let ctx = self.datafusion_ctx();
                     match ctx.sql(sql).await {
-                        Ok(df) => {
-                            match df.collect().await {
-                                Ok(batches) => {
-                                    let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-                                    Ok(rows)
-                                }
-                                Err(e) => Err(format!("Execution error: {}", e)),
+                        Ok(df) => match df.collect().await {
+                            Ok(batches) => {
+                                let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                                Ok(rows)
                             }
-                        }
+                            Err(e) => Err(format!("Execution error: {}", e)),
+                        },
                         Err(e) => Err(format!("SQL error: {}", e)),
                     }
                 })
-            }).join().unwrap()
+            })
+            .join()
+            .unwrap()
         });
 
         let elapsed = start.elapsed().as_micros() as u64;

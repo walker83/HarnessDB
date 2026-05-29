@@ -4,16 +4,16 @@ use std::sync::Arc;
 use arrow_array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
 use arrow_schema::{DataType as ArrowDataType, Schema as ArrowSchema, SchemaRef};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::error::Result as DFResult;
 use datafusion::logical_expr::TableType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_datasource::memory::MemorySourceConfig;
-use dashmap::DashMap;
 
+use crate::ParquetStorage;
 use fe_catalog::CatalogManager;
 use fe_datafusion::types::to_arrow_data_type;
-use crate::ParquetStorage;
 
 /// Custom information_schema provider that returns MySQL-compatible metadata
 pub struct InformationSchemaProvider {
@@ -27,13 +27,37 @@ impl InformationSchemaProvider {
         let tables = DashMap::new();
 
         // Register information_schema tables
-        tables.insert("tables".to_string(), Arc::new(InformationSchemaTables::new(catalog.clone(), storage.clone())) as Arc<dyn TableProvider>);
-        tables.insert("columns".to_string(), Arc::new(InformationSchemaColumns::new(catalog.clone())) as Arc<dyn TableProvider>);
-        tables.insert("schemata".to_string(), Arc::new(InformationSchemaSchemata::new(catalog.clone())) as Arc<dyn TableProvider>);
-        tables.insert("table_constraints".to_string(), Arc::new(InformationSchemaTableConstraints::new(catalog.clone())) as Arc<dyn TableProvider>);
-        tables.insert("key_column_usage".to_string(), Arc::new(InformationSchemaKeyColumnUsage::new(catalog.clone())) as Arc<dyn TableProvider>);
+        tables.insert(
+            "tables".to_string(),
+            Arc::new(InformationSchemaTables::new(
+                catalog.clone(),
+                storage.clone(),
+            )) as Arc<dyn TableProvider>,
+        );
+        tables.insert(
+            "columns".to_string(),
+            Arc::new(InformationSchemaColumns::new(catalog.clone())) as Arc<dyn TableProvider>,
+        );
+        tables.insert(
+            "schemata".to_string(),
+            Arc::new(InformationSchemaSchemata::new(catalog.clone())) as Arc<dyn TableProvider>,
+        );
+        tables.insert(
+            "table_constraints".to_string(),
+            Arc::new(InformationSchemaTableConstraints::new(catalog.clone()))
+                as Arc<dyn TableProvider>,
+        );
+        tables.insert(
+            "key_column_usage".to_string(),
+            Arc::new(InformationSchemaKeyColumnUsage::new(catalog.clone()))
+                as Arc<dyn TableProvider>,
+        );
 
-        Self { catalog, storage, tables }
+        Self {
+            catalog,
+            storage,
+            tables,
+        }
     }
 }
 
@@ -82,7 +106,11 @@ impl InformationSchemaTables {
             arrow_schema::Field::new("table_collation", ArrowDataType::Utf8, true),
             arrow_schema::Field::new("table_comment", ArrowDataType::Utf8, true),
         ]));
-        Self { schema, catalog, storage }
+        Self {
+            schema,
+            catalog,
+            storage,
+        }
     }
 }
 
@@ -125,10 +153,17 @@ impl TableProvider for InformationSchemaTables {
 
         for db_name in self.catalog.list_databases() {
             if let Some(db) = self.catalog.get_database(&db_name) {
-                let table_names: Vec<String> = db.table_names().into_iter().map(|s| s.to_string()).collect();
+                let table_names: Vec<String> = db
+                    .table_names()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
                 for tbl_name in table_names {
                     // Read row count from Parquet footer metadata (no data scan)
-                    let parquet_path = self.storage.table_dir(&db_name, &tbl_name).join("data.parquet");
+                    let parquet_path = self
+                        .storage
+                        .table_dir(&db_name, &tbl_name)
+                        .join("data.parquet");
                     let row_count = if parquet_path.exists() {
                         std::fs::File::open(&parquet_path).ok()
                             .and_then(|f| {
@@ -281,7 +316,11 @@ impl TableProvider for InformationSchemaColumns {
 
         for db_name in self.catalog.list_databases() {
             if let Some(db) = self.catalog.get_database(&db_name) {
-                let table_names: Vec<String> = db.table_names().into_iter().map(|s| s.to_string()).collect();
+                let table_names: Vec<String> = db
+                    .table_names()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
                 for tbl_name in table_names {
                     if let Some(table) = self.catalog.get_table(&db_name, &tbl_name) {
                         for (idx, col) in table.columns.iter().enumerate() {
@@ -294,11 +333,13 @@ impl TableProvider for InformationSchemaColumns {
                             column_name.push(Some(col.name.clone()));
                             ordinal_position.push(Some((idx + 1) as u64)); // MySQL starts at 1
                             column_default.push(None);
-                            is_nullable.push(Some(if col.nullable { "YES" } else { "NO" }.to_string()));
+                            is_nullable
+                                .push(Some(if col.nullable { "YES" } else { "NO" }.to_string()));
                             data_type.push(Some(mysql_type.clone()));
 
                             // Character max length for string types
-                            if matches!(arrow_type, ArrowDataType::Utf8 | ArrowDataType::LargeUtf8) {
+                            if matches!(arrow_type, ArrowDataType::Utf8 | ArrowDataType::LargeUtf8)
+                            {
                                 character_maximum_length.push(Some(65535u64));
                             } else {
                                 character_maximum_length.push(None);
@@ -461,7 +502,10 @@ impl InformationSchemaTableConstraints {
             arrow_schema::Field::new("table_name", ArrowDataType::Utf8, false),
             arrow_schema::Field::new("constraint_type", ArrowDataType::Utf8, false),
         ]));
-        Self { schema, _catalog: catalog }
+        Self {
+            schema,
+            _catalog: catalog,
+        }
     }
 }
 
@@ -525,7 +569,10 @@ impl InformationSchemaKeyColumnUsage {
             arrow_schema::Field::new("referenced_table_name", ArrowDataType::Utf8, true),
             arrow_schema::Field::new("referenced_column_name", ArrowDataType::Utf8, true),
         ]));
-        Self { schema, _catalog: catalog }
+        Self {
+            schema,
+            _catalog: catalog,
+        }
     }
 }
 

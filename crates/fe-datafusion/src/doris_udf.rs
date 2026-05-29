@@ -5,7 +5,6 @@
 //! - String functions: concat_ws, substring_index
 //! - Aggregate functions: bitmap_count
 
-use std::sync::Arc;
 use arrow_array::{Array, ListArray};
 use arrow_buffer::OffsetBuffer;
 use arrow_schema::{DataType, Field};
@@ -18,6 +17,7 @@ use datafusion::logical_expr::{
     Volatility,
 };
 use datafusion::scalar::ScalarValue;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Time Functions
@@ -74,13 +74,12 @@ pub fn create_date_trunc_udf() -> ScalarUDF {
                         "date_trunc: precision must be StringArray".to_string(),
                     )
                 })?;
-            let dates = args[1].as_any().downcast_ref::<Date32Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "date_trunc: dates must be Date32Array".to_string(),
-                    )
-                },
-            )?;
+            let dates = args[1]
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("date_trunc: dates must be Date32Array".to_string())
+                })?;
 
             let result: Vec<Option<i32>> = dates
                 .iter()
@@ -92,7 +91,7 @@ pub fn create_date_trunc_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -158,20 +157,17 @@ pub fn create_days_add_udf() -> ScalarUDF {
             use arrow_array::{Date32Array, Int64Array};
 
             let args = ColumnarValue::values_to_arrays(&args.args)?;
-            let dates = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "days_add: dates must be Date32Array".to_string(),
-                    )
-                },
-            )?;
+            let dates = args[0]
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("days_add: dates must be Date32Array".to_string())
+                })?;
             let days_to_add = args[1]
                 .as_any()
                 .downcast_ref::<Int64Array>()
                 .ok_or_else(|| {
-                    DataFusionError::Internal(
-                        "days_add: days must be Int64Array".to_string(),
-                    )
+                    DataFusionError::Internal("days_add: days must be Int64Array".to_string())
                 })?;
 
             let result: Vec<Option<i32>> = dates
@@ -188,7 +184,7 @@ pub fn create_days_add_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -238,20 +234,18 @@ pub fn create_months_add_udf() -> ScalarUDF {
             use arrow_array::{Date32Array, Int64Array};
 
             let args = ColumnarValue::values_to_arrays(&args.args)?;
-            let dates = args[0].as_any().downcast_ref::<Date32Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "months_add: dates must be Date32Array".to_string(),
-                    )
-                },
-            )?;
-            let months = args[1].as_any().downcast_ref::<Int64Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "months_add: months must be Int64Array".to_string(),
-                    )
-                },
-            )?;
+            let dates = args[0]
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("months_add: dates must be Date32Array".to_string())
+                })?;
+            let months = args[1]
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("months_add: months must be Int64Array".to_string())
+                })?;
 
             let result: Vec<Option<i32>> = dates
                 .iter()
@@ -263,7 +257,7 @@ pub fn create_months_add_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(Date32Array::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -358,13 +352,12 @@ pub fn create_hours_add_udf() -> ScalarUDF {
                         "hours_add: timestamps must be TimestampSecondArray".to_string(),
                     )
                 })?;
-            let hours = args[1].as_any().downcast_ref::<Int64Array>().ok_or_else(
-                || {
-                    DataFusionError::Internal(
-                        "hours_add: hours must be Int64Array".to_string(),
-                    )
-                },
-            )?;
+            let hours = args[1]
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal("hours_add: hours must be Int64Array".to_string())
+                })?;
 
             let result: Vec<Option<i64>> = timestamps
                 .iter()
@@ -453,15 +446,16 @@ pub fn create_concat_ws_udf() -> ScalarUDF {
                     let sep = sep_arr.value(i);
                     let mut parts = Vec::new();
                     for j in 1..args.len() {
-                        let str_arr = args[j]
-                            .as_any()
-                            .downcast_ref::<StringArray>()
-                            .ok_or_else(|| {
-                                DataFusionError::Internal(
-                                    "concat_ws: string arguments must be StringArray"
-                                        .to_string(),
-                                )
-                            })?;
+                        let str_arr =
+                            args[j]
+                                .as_any()
+                                .downcast_ref::<StringArray>()
+                                .ok_or_else(|| {
+                                    DataFusionError::Internal(
+                                        "concat_ws: string arguments must be StringArray"
+                                            .to_string(),
+                                    )
+                                })?;
                         if !str_arr.is_null(i) {
                             parts.push(str_arr.value(i));
                         }
@@ -471,7 +465,7 @@ pub fn create_concat_ws_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result?)) as Arc<dyn arrow_array::Array>,
+                Arc::new(StringArray::from(result?)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -574,7 +568,7 @@ pub fn create_substring_index_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -600,8 +594,15 @@ pub fn create_substring_udf() -> ScalarUDF {
             Self {
                 signature: Signature::one_of(
                     vec![
-                        datafusion::logical_expr::TypeSignature::Exact(vec![DataType::Utf8, DataType::Int64]),
-                        datafusion::logical_expr::TypeSignature::Exact(vec![DataType::Utf8, DataType::Int64, DataType::Int64]),
+                        datafusion::logical_expr::TypeSignature::Exact(vec![
+                            DataType::Utf8,
+                            DataType::Int64,
+                        ]),
+                        datafusion::logical_expr::TypeSignature::Exact(vec![
+                            DataType::Utf8,
+                            DataType::Int64,
+                            DataType::Int64,
+                        ]),
                     ],
                     Volatility::Immutable,
                 ),
@@ -705,7 +706,7 @@ pub fn create_substring_udf() -> ScalarUDF {
                 .collect();
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>,
+                Arc::new(StringArray::from(result)) as Arc<dyn arrow_array::Array>
             ))
         }
     }
@@ -719,9 +720,7 @@ pub fn create_substring_udf() -> ScalarUDF {
 
 /// bitmap_count - count distinct values using bitmap
 pub fn create_bitmap_count_udf() -> AggregateUDF {
-    use datafusion::logical_expr::{
-        Accumulator, AggregateUDFImpl, function::AccumulatorArgs,
-    };
+    use datafusion::logical_expr::{Accumulator, AggregateUDFImpl, function::AccumulatorArgs};
     use std::collections::HashSet;
 
     const MAX_BITMAP_DISTINCT: usize = 1_000_000;
@@ -761,7 +760,8 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
                         return Err(DataFusionError::Execution(format!(
                             "bitmap_count: distinct count {} exceeds limit of {}. \
                              Consider using a more selective query.",
-                            self.values.len(), self.max_distinct
+                            self.values.len(),
+                            self.max_distinct
                         )));
                     }
                 }
@@ -801,7 +801,8 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
                     if self.values.len() > self.max_distinct {
                         return Err(DataFusionError::Execution(format!(
                             "bitmap_count: distinct count {} exceeds limit of {}.",
-                            self.values.len(), self.max_distinct
+                            self.values.len(),
+                            self.max_distinct
                         )));
                     }
                 }
@@ -875,7 +876,10 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
 
         /// Tell DataFusion that the intermediate state is a list of values matching
         /// the input type, rather than a flat Int64.
-        fn state_fields(&self, args: StateFieldsArgs) -> datafusion::error::Result<Vec<Arc<Field>>> {
+        fn state_fields(
+            &self,
+            args: StateFieldsArgs,
+        ) -> datafusion::error::Result<Vec<Arc<Field>>> {
             let input_type = args
                 .input_fields
                 .first()

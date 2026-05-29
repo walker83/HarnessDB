@@ -2,15 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::prelude::{SessionConfig, SessionContext};
-use fe_catalog::CatalogManager;
-use fe_datafusion::{register_doris_udfs, register_misc_udfs};
-use fe_storage::{ParquetCatalogProvider, ParquetStorage};
-use fe_config::{RorisConfig, SystemVariableManager, SessionVariables};
-use fe_monitor::audit_log::AuditLogger;
 use fe_backup::BackupManager;
-use parking_lot::RwLock as PlRwLock;
-use mysql_protocol::auth::Credentials;
+use fe_catalog::CatalogManager;
+use fe_config::{RorisConfig, SessionVariables, SystemVariableManager};
+use fe_datafusion::{register_doris_udfs, register_misc_udfs};
+use fe_monitor::audit_log::AuditLogger;
+use fe_storage::{ParquetCatalogProvider, ParquetStorage};
 use mysql_protocol::QueryResult;
+use mysql_protocol::auth::Credentials;
+use parking_lot::RwLock as PlRwLock;
 
 use crate::connection_tracker::ConnectionTracker;
 
@@ -113,7 +113,10 @@ impl RorisQueryHandler {
                 .expect("Failed to open ParquetStorage — check data_dir permissions and path")
                 .with_max_rows(config.query.max_dml_rows),
         );
-        let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog.clone(), storage.clone()));
+        let df_catalog = Arc::new(ParquetCatalogProvider::new(
+            catalog.clone(),
+            storage.clone(),
+        ));
         let df_config = SessionConfig::new()
             .with_default_catalog_and_schema("roris", "information_schema")
             .with_create_default_catalog_and_schema(false)
@@ -158,7 +161,8 @@ impl RorisQueryHandler {
     /// Get session state for a connection, creating default if not exists
     pub(crate) fn get_session(&self, conn_id: u32) -> String {
         let sessions = self.sessions.read();
-        sessions.get(&conn_id)
+        sessions
+            .get(&conn_id)
             .map(|s| s.current_database.clone())
             .unwrap_or_else(|| "information_schema".to_string())
     }
@@ -206,7 +210,10 @@ impl RorisQueryHandler {
         T: Send + 'static,
     {
         // Try to acquire a query semaphore permit
-        let permit = self.query_semaphore.clone().try_acquire_owned()
+        let permit = self
+            .query_semaphore
+            .clone()
+            .try_acquire_owned()
             .map_err(|_| {
                 self.connection_tracker.record_rejected_query();
                 "Too many concurrent queries. Please reduce query load and retry.".to_string()
@@ -218,7 +225,9 @@ impl RorisQueryHandler {
         match std::thread::spawn(move || {
             let _permit = permit; // Hold permit for this thread's lifetime
             f()
-        }).join() {
+        })
+        .join()
+        {
             Ok(result) => result,
             Err(_) => {
                 tracing::error!("DataFusion query thread panicked");
@@ -265,14 +274,25 @@ impl RorisQueryHandler {
 
     pub(crate) fn find_view(&self, db: &str, name: &str) -> Option<ViewInfo> {
         let views = self.views.read();
-        views.iter().find(|v| v.database == db && v.name == name).cloned()
+        views
+            .iter()
+            .find(|v| v.database == db && v.name == name)
+            .cloned()
     }
 
-    pub(crate) fn update_df_table_schema(&self, db: &str, table: &str, arrow_schema: &datafusion::arrow::datatypes::Schema) -> QueryResult {
+    pub(crate) fn update_df_table_schema(
+        &self,
+        db: &str,
+        table: &str,
+        arrow_schema: &datafusion::arrow::datatypes::Schema,
+    ) -> QueryResult {
         let arrow_schema = Arc::new(arrow_schema.clone());
         if let Err(e) = self.storage.truncate(db, table, arrow_schema) {
             return QueryResult::with_rows(
-                vec![mysql_protocol::server::ColumnDef { name: "Error".to_string(), col_type: mysql_protocol::server::ColumnType::String }],
+                vec![mysql_protocol::server::ColumnDef {
+                    name: "Error".to_string(),
+                    col_type: mysql_protocol::server::ColumnType::String,
+                }],
                 vec![vec![Some(format!("Failed to update table schema: {}", e))]],
             );
         }

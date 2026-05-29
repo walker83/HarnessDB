@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use fe_catalog::table::TableColumn;
 use fe_catalog::{CatalogManager, Table};
 use types::{
-    vector::{Float64Vector, Int64Vector, StringVector},
     Block, DataType, Field, Schema, Vector,
+    vector::{Float64Vector, Int64Vector, StringVector},
 };
 
 /// Create a CatalogManager pre-loaded with a test database and sample tables.
@@ -73,7 +73,8 @@ pub fn create_test_catalog() -> Arc<CatalogManager> {
 
     // Departments table
     let departments = Table {
-        tablet_id: 0, id: 2,
+        tablet_id: 0,
+        id: 2,
         name: "departments".to_string(),
         database: "test_db".to_string(),
         columns: vec![
@@ -162,7 +163,9 @@ pub fn create_departments_block() -> Block {
     let columns = vec![
         Vector::Int64(Int64Vector::from_vec(vec![1, 2, 3])),
         Vector::String(StringVector::from_vec(vec![
-            "Engineering", "Marketing", "Sales",
+            "Engineering",
+            "Marketing",
+            "Sales",
         ])),
         Vector::Float64(Float64Vector::from_nullable_vec(vec![
             Some(500000.0),
@@ -184,65 +187,257 @@ pub fn create_ssb_catalog() -> Arc<CatalogManager> {
     catalog.create_database("ssb").unwrap();
 
     // date_dim
-    catalog.create_table("ssb", Table {
-        tablet_id: 0, id: 100, name: "date_dim".into(), database: "ssb".into(),
-        columns: vec![
-            TableColumn { name: "d_datekey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "d_date".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "d_year".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-        ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 100, data_size: 0, stats: None, view_definition: None,
-    }).unwrap();
+    catalog
+        .create_table(
+            "ssb",
+            Table {
+                tablet_id: 0,
+                id: 100,
+                name: "date_dim".into(),
+                database: "ssb".into(),
+                columns: vec![
+                    TableColumn {
+                        name: "d_datekey".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "d_date".into(),
+                        data_type: DataType::String,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "d_year".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                ],
+                keys_type: fe_catalog::table::KeysType::Duplicate,
+                unique_keys: vec![],
+                partition_info: None,
+                distribution_info: None,
+                replication_num: 1,
+                properties: HashMap::new(),
+                row_count: 100,
+                data_size: 0,
+                stats: None,
+                view_definition: None,
+            },
+        )
+        .unwrap();
 
     // supplier
-    catalog.create_table("ssb", Table {
-        tablet_id: 0, id: 101, name: "supplier".into(), database: "ssb".into(),
-        columns: vec![
-            TableColumn { name: "s_suppkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "s_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "s_nation".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-        ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 20, data_size: 0, stats: None, view_definition: None,
-    }).unwrap();
+    catalog
+        .create_table(
+            "ssb",
+            Table {
+                tablet_id: 0,
+                id: 101,
+                name: "supplier".into(),
+                database: "ssb".into(),
+                columns: vec![
+                    TableColumn {
+                        name: "s_suppkey".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "s_name".into(),
+                        data_type: DataType::String,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "s_nation".into(),
+                        data_type: DataType::String,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                ],
+                keys_type: fe_catalog::table::KeysType::Duplicate,
+                unique_keys: vec![],
+                partition_info: None,
+                distribution_info: None,
+                replication_num: 1,
+                properties: HashMap::new(),
+                row_count: 20,
+                data_size: 0,
+                stats: None,
+                view_definition: None,
+            },
+        )
+        .unwrap();
 
     // customer
-    catalog.create_table("ssb", Table {
-        tablet_id: 0, id: 102, name: "customer".into(), database: "ssb".into(),
-        columns: vec![
-            TableColumn { name: "c_custkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "c_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "c_nation".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-        ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 50, data_size: 0, stats: None, view_definition: None,
-    }).unwrap();
+    catalog
+        .create_table(
+            "ssb",
+            Table {
+                tablet_id: 0,
+                id: 102,
+                name: "customer".into(),
+                database: "ssb".into(),
+                columns: vec![
+                    TableColumn {
+                        name: "c_custkey".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "c_name".into(),
+                        data_type: DataType::String,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "c_nation".into(),
+                        data_type: DataType::String,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                ],
+                keys_type: fe_catalog::table::KeysType::Duplicate,
+                unique_keys: vec![],
+                partition_info: None,
+                distribution_info: None,
+                replication_num: 1,
+                properties: HashMap::new(),
+                row_count: 50,
+                data_size: 0,
+                stats: None,
+                view_definition: None,
+            },
+        )
+        .unwrap();
 
     // part
-    catalog.create_table("ssb", Table {
-        tablet_id: 0, id: 103, name: "part".into(), database: "ssb".into(),
-        columns: vec![
-            TableColumn { name: "p_partkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "p_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "p_category".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-        ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 30, data_size: 0, stats: None, view_definition: None,
-    }).unwrap();
+    catalog
+        .create_table(
+            "ssb",
+            Table {
+                tablet_id: 0,
+                id: 103,
+                name: "part".into(),
+                database: "ssb".into(),
+                columns: vec![
+                    TableColumn {
+                        name: "p_partkey".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "p_name".into(),
+                        data_type: DataType::String,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "p_category".into(),
+                        data_type: DataType::String,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                ],
+                keys_type: fe_catalog::table::KeysType::Duplicate,
+                unique_keys: vec![],
+                partition_info: None,
+                distribution_info: None,
+                replication_num: 1,
+                properties: HashMap::new(),
+                row_count: 30,
+                data_size: 0,
+                stats: None,
+                view_definition: None,
+            },
+        )
+        .unwrap();
 
     // lineorder (fact table)
-    catalog.create_table("ssb", Table {
-        tablet_id: 0, id: 104, name: "lineorder".into(), database: "ssb".into(),
-        columns: vec![
-            TableColumn { name: "lo_orderkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "lo_custkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "lo_suppkey".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "lo_revenue".into(), data_type: DataType::Float64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-        ],
-        keys_type: fe_catalog::table::KeysType::Duplicate, unique_keys: vec![], partition_info: None, distribution_info: None,
-        replication_num: 1, properties: HashMap::new(), row_count: 500, data_size: 0, stats: None, view_definition: None,
-    }).unwrap();
+    catalog
+        .create_table(
+            "ssb",
+            Table {
+                tablet_id: 0,
+                id: 104,
+                name: "lineorder".into(),
+                database: "ssb".into(),
+                columns: vec![
+                    TableColumn {
+                        name: "lo_orderkey".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "lo_custkey".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "lo_suppkey".into(),
+                        data_type: DataType::Int64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                    TableColumn {
+                        name: "lo_revenue".into(),
+                        data_type: DataType::Float64,
+                        nullable: false,
+                        default_value: None,
+                        agg_type: None,
+                        comment: String::new(),
+                    },
+                ],
+                keys_type: fe_catalog::table::KeysType::Duplicate,
+                unique_keys: vec![],
+                partition_info: None,
+                distribution_info: None,
+                replication_num: 1,
+                properties: HashMap::new(),
+                row_count: 500,
+                data_size: 0,
+                stats: None,
+                view_definition: None,
+            },
+        )
+        .unwrap();
 
     catalog
 }
@@ -257,7 +452,7 @@ pub fn create_lineorder_block() -> Block {
     ]);
     let orderkeys: Vec<i64> = (1..=20).collect();
     let custkeys: Vec<i64> = (1..=5).cycle().take(20).collect();
-    let suppkeys: Vec<i64> = vec![1,1,2,2,3,3,4,4,5,5,1,1,2,2,3,3,4,4,5,5];
+    let suppkeys: Vec<i64> = vec![1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
     let revenues: Vec<f64> = (1..=20).map(|i| i as f64 * 500.0).collect();
 
     let columns = vec![

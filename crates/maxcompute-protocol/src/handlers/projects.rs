@@ -12,8 +12,8 @@ use axum::{
 use std::sync::Arc;
 use tracing::info;
 
-use crate::server::McServerState;
 use crate::XmlResponse;
+use crate::server::McServerState;
 
 /// Retrieve project (database) information.
 ///

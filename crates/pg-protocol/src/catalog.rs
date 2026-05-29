@@ -124,8 +124,7 @@ pub fn handle_pg_catalog_query(
         return Some(handle_pg_tables(catalog, current_db));
     }
 
-    if upper.starts_with("SELECT * FROM pg_class") || upper.starts_with("SELECT * FROM PG_CLASS")
-    {
+    if upper.starts_with("SELECT * FROM pg_class") || upper.starts_with("SELECT * FROM PG_CLASS") {
         return Some(handle_pg_class(catalog, current_db));
     }
 
@@ -147,15 +146,11 @@ pub fn handle_pg_catalog_query(
         return Some(handle_pg_database(catalog, current_db));
     }
 
-    if upper.starts_with("SELECT * FROM pg_type")
-        || upper.starts_with("SELECT * FROM PG_TYPE")
-    {
+    if upper.starts_with("SELECT * FROM pg_type") || upper.starts_with("SELECT * FROM PG_TYPE") {
         return Some(handle_pg_type());
     }
 
-    if upper.starts_with("SELECT * FROM pg_index")
-        || upper.starts_with("SELECT * FROM PG_INDEX")
-    {
+    if upper.starts_with("SELECT * FROM pg_index") || upper.starts_with("SELECT * FROM PG_INDEX") {
         return Some(QueryResult::ok());
     }
 
@@ -165,9 +160,7 @@ pub fn handle_pg_catalog_query(
         return Some(QueryResult::ok());
     }
 
-    if upper.starts_with("SELECT * FROM pg_proc")
-        || upper.starts_with("SELECT * FROM PG_PROC")
-    {
+    if upper.starts_with("SELECT * FROM pg_proc") || upper.starts_with("SELECT * FROM PG_PROC") {
         return Some(QueryResult::ok());
     }
 
@@ -177,21 +170,15 @@ pub fn handle_pg_catalog_query(
         return Some(QueryResult::ok());
     }
 
-    if upper.starts_with("SELECT * FROM pg_enum")
-        || upper.starts_with("SELECT * FROM PG_ENUM")
-    {
+    if upper.starts_with("SELECT * FROM pg_enum") || upper.starts_with("SELECT * FROM PG_ENUM") {
         return Some(QueryResult::ok());
     }
 
-    if upper.starts_with("SELECT * FROM pg_range")
-        || upper.starts_with("SELECT * FROM PG_RANGE")
-    {
+    if upper.starts_with("SELECT * FROM pg_range") || upper.starts_with("SELECT * FROM PG_RANGE") {
         return Some(QueryResult::ok());
     }
 
-    if upper.starts_with("SELECT * FROM pg_cast")
-        || upper.starts_with("SELECT * FROM PG_CAST")
-    {
+    if upper.starts_with("SELECT * FROM pg_cast") || upper.starts_with("SELECT * FROM PG_CAST") {
         return Some(QueryResult::ok());
     }
 
@@ -201,9 +188,7 @@ pub fn handle_pg_catalog_query(
         return Some(QueryResult::ok());
     }
 
-    if upper.starts_with("SELECT * FROM pg_am")
-        || upper.starts_with("SELECT * FROM PG_AM")
-    {
+    if upper.starts_with("SELECT * FROM pg_am") || upper.starts_with("SELECT * FROM PG_AM") {
         return Some(handle_pg_am());
     }
 
@@ -213,9 +198,7 @@ pub fn handle_pg_catalog_query(
         return Some(QueryResult::ok());
     }
 
-    if upper.starts_with("SELECT * FROM pg_views")
-        || upper.starts_with("SELECT * FROM PG_VIEWS")
-    {
+    if upper.starts_with("SELECT * FROM pg_views") || upper.starts_with("SELECT * FROM PG_VIEWS") {
         return Some(QueryResult::ok());
     }
 
@@ -343,9 +326,7 @@ fn handle_show_variable(sql: &str) -> QueryResult {
         );
     }
 
-    if lower.contains("timezone")
-        || lower.contains("time zone")
-    {
+    if lower.contains("timezone") || lower.contains("time zone") {
         return QueryResult::with_rows(
             vec![ColumnDef {
                 name: "TimeZone".to_string(),
@@ -402,9 +383,7 @@ fn handle_version() -> QueryResult {
             name: "version".to_string(),
             col_type: ColumnType::String,
         }],
-        vec![vec![Some(
-            "PostgreSQL 15.0 (RorisDB 0.3.0)".to_string(),
-        )]],
+        vec![vec![Some("PostgreSQL 15.0 (RorisDB 0.3.0)".to_string())]],
     )
 }
 
@@ -781,11 +760,7 @@ fn handle_pg_attribute(catalog: &CatalogManager, current_db: &str) -> QueryResul
                 for (i, col) in table.columns.iter().enumerate() {
                     let type_oid = map_roris_type_to_pg_oid(&col.data_type);
                     let type_len = map_roris_type_to_len(&col.data_type);
-                    let not_null_str = if col.nullable {
-                        "false"
-                    } else {
-                        "true"
-                    };
+                    let not_null_str = if col.nullable { "false" } else { "true" };
 
                     rows.push(vec![
                         Some(rel_oid.to_string()),
@@ -828,9 +803,7 @@ fn handle_pg_database(catalog: &CatalogManager, _current_db: &str) -> QueryResul
     let mut rows = Vec::new();
 
     for db_name in databases {
-        rows.push(vec![
-            Some(db_name),
-        ]);
+        rows.push(vec![Some(db_name)]);
     }
 
     QueryResult::with_rows(
@@ -864,21 +837,96 @@ fn handle_pg_type() -> QueryResult {
             },
         ],
         vec![
-            vec![Some("16".to_string()), Some("bool".to_string()), Some("b".to_string()), Some("1".to_string())],
-            vec![Some("17".to_string()), Some("bytea".to_string()), Some("b".to_string()), Some("-1".to_string())],
-            vec![Some("19".to_string()), Some("name".to_string()), Some("b".to_string()), Some("64".to_string())],
-            vec![Some("20".to_string()), Some("int8".to_string()), Some("b".to_string()), Some("8".to_string())],
-            vec![Some("21".to_string()), Some("int2".to_string()), Some("b".to_string()), Some("2".to_string())],
-            vec![Some("23".to_string()), Some("int4".to_string()), Some("b".to_string()), Some("4".to_string())],
-            vec![Some("25".to_string()), Some("text".to_string()), Some("b".to_string()), Some("-1".to_string())],
-            vec![Some("26".to_string()), Some("oid".to_string()), Some("b".to_string()), Some("4".to_string())],
-            vec![Some("700".to_string()), Some("float4".to_string()), Some("b".to_string()), Some("4".to_string())],
-            vec![Some("701".to_string()), Some("float8".to_string()), Some("b".to_string()), Some("8".to_string())],
-            vec![Some("1042".to_string()), Some("bpchar".to_string()), Some("b".to_string()), Some("-1".to_string())],
-            vec![Some("1043".to_string()), Some("varchar".to_string()), Some("b".to_string()), Some("-1".to_string())],
-            vec![Some("1082".to_string()), Some("date".to_string()), Some("b".to_string()), Some("4".to_string())],
-            vec![Some("1114".to_string()), Some("timestamp".to_string()), Some("b".to_string()), Some("8".to_string())],
-            vec![Some("1700".to_string()), Some("numeric".to_string()), Some("b".to_string()), Some("-1".to_string())],
+            vec![
+                Some("16".to_string()),
+                Some("bool".to_string()),
+                Some("b".to_string()),
+                Some("1".to_string()),
+            ],
+            vec![
+                Some("17".to_string()),
+                Some("bytea".to_string()),
+                Some("b".to_string()),
+                Some("-1".to_string()),
+            ],
+            vec![
+                Some("19".to_string()),
+                Some("name".to_string()),
+                Some("b".to_string()),
+                Some("64".to_string()),
+            ],
+            vec![
+                Some("20".to_string()),
+                Some("int8".to_string()),
+                Some("b".to_string()),
+                Some("8".to_string()),
+            ],
+            vec![
+                Some("21".to_string()),
+                Some("int2".to_string()),
+                Some("b".to_string()),
+                Some("2".to_string()),
+            ],
+            vec![
+                Some("23".to_string()),
+                Some("int4".to_string()),
+                Some("b".to_string()),
+                Some("4".to_string()),
+            ],
+            vec![
+                Some("25".to_string()),
+                Some("text".to_string()),
+                Some("b".to_string()),
+                Some("-1".to_string()),
+            ],
+            vec![
+                Some("26".to_string()),
+                Some("oid".to_string()),
+                Some("b".to_string()),
+                Some("4".to_string()),
+            ],
+            vec![
+                Some("700".to_string()),
+                Some("float4".to_string()),
+                Some("b".to_string()),
+                Some("4".to_string()),
+            ],
+            vec![
+                Some("701".to_string()),
+                Some("float8".to_string()),
+                Some("b".to_string()),
+                Some("8".to_string()),
+            ],
+            vec![
+                Some("1042".to_string()),
+                Some("bpchar".to_string()),
+                Some("b".to_string()),
+                Some("-1".to_string()),
+            ],
+            vec![
+                Some("1043".to_string()),
+                Some("varchar".to_string()),
+                Some("b".to_string()),
+                Some("-1".to_string()),
+            ],
+            vec![
+                Some("1082".to_string()),
+                Some("date".to_string()),
+                Some("b".to_string()),
+                Some("4".to_string()),
+            ],
+            vec![
+                Some("1114".to_string()),
+                Some("timestamp".to_string()),
+                Some("b".to_string()),
+                Some("8".to_string()),
+            ],
+            vec![
+                Some("1700".to_string()),
+                Some("numeric".to_string()),
+                Some("b".to_string()),
+                Some("-1".to_string()),
+            ],
         ],
     )
 }
@@ -1102,14 +1150,12 @@ fn handle_pg_available_extensions() -> QueryResult {
                 col_type: ColumnType::String,
             },
         ],
-        vec![
-            vec![
-                Some("hologres".to_string()),
-                Some("0.1".to_string()),
-                Some("0.1".to_string()),
-                Some("Hologres compatibility layer for RorisDB".to_string()),
-            ],
-        ],
+        vec![vec![
+            Some("hologres".to_string()),
+            Some("0.1".to_string()),
+            Some("0.1".to_string()),
+            Some("Hologres compatibility layer for RorisDB".to_string()),
+        ]],
     )
 }
 
@@ -1375,25 +1421,25 @@ fn map_roris_type_to_pg_oid(data_type: &types::DataType) -> i32 {
     use types::DataType;
     match data_type {
         DataType::Null => 0,
-        DataType::Boolean => 16,      // bool
-        DataType::Int8 => 21,         // int2
-        DataType::Int16 => 21,        // int2
-        DataType::Int32 => 23,        // int4
-        DataType::Int64 => 20,        // int8
-        DataType::Int128 => 1700,     // numeric
-        DataType::Float32 => 700,     // float4
-        DataType::Float64 => 701,     // float8
-        DataType::Decimal(_) => 1700, // numeric
-        DataType::Date => 1082,       // date
-        DataType::DateTime => 1114,   // timestamp
-        DataType::Varchar(_) => 1043, // varchar
-        DataType::Char(_) => 1042,    // bpchar
-        DataType::String => 25,       // text
-        DataType::Binary => 17,       // bytea
-        DataType::Json => 25,         // text (PG doesn't have native JSON in protocol)
-        DataType::Array(_) => 1009,   // text[]
-        DataType::Map(_, _) => 25,    // text
-        DataType::Struct(_) => 25,    // text
+        DataType::Boolean => 16,          // bool
+        DataType::Int8 => 21,             // int2
+        DataType::Int16 => 21,            // int2
+        DataType::Int32 => 23,            // int4
+        DataType::Int64 => 20,            // int8
+        DataType::Int128 => 1700,         // numeric
+        DataType::Float32 => 700,         // float4
+        DataType::Float64 => 701,         // float8
+        DataType::Decimal(_) => 1700,     // numeric
+        DataType::Date => 1082,           // date
+        DataType::DateTime => 1114,       // timestamp
+        DataType::Varchar(_) => 1043,     // varchar
+        DataType::Char(_) => 1042,        // bpchar
+        DataType::String => 25,           // text
+        DataType::Binary => 17,           // bytea
+        DataType::Json => 25,             // text (PG doesn't have native JSON in protocol)
+        DataType::Array(_) => 1009,       // text[]
+        DataType::Map(_, _) => 25,        // text
+        DataType::Struct(_) => 25,        // text
         DataType::Float32Vector(_) => 25, // text
     }
 }
@@ -1498,10 +1544,7 @@ mod tests {
         let result = handle_postmaster_start_time("2025-01-01 00:00:00");
         assert_eq!(result.columns.len(), 1);
         assert_eq!(result.rows.len(), 1);
-        assert_eq!(
-            result.rows[0][0].as_deref(),
-            Some("2025-01-01 00:00:00")
-        );
+        assert_eq!(result.rows[0][0].as_deref(), Some("2025-01-01 00:00:00"));
         assert_eq!(
             result.columns[0].col_type,
             ColumnType::DateTime,
@@ -1516,7 +1559,12 @@ mod tests {
         let result = handle_pg_database(&catalog, "");
         assert!(!result.rows.is_empty());
         // information_schema should be present
-        assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("information_schema")));
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[0].as_deref() == Some("information_schema"))
+        );
     }
 
     #[test]
@@ -1618,7 +1666,12 @@ mod tests {
         catalog.create_table("testdb", table).unwrap();
 
         let result = handle_pg_tables(&catalog, "testdb");
-        assert!(result.rows.iter().any(|r| r[1].as_deref() == Some("mytable")));
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[1].as_deref() == Some("mytable"))
+        );
     }
 
     #[test]
@@ -1633,8 +1686,18 @@ mod tests {
     #[test]
     fn test_handle_pg_namespace() {
         let result = handle_pg_namespace();
-        assert!(result.rows.iter().any(|r| r[1].as_deref() == Some("public")));
-        assert!(result.rows.iter().any(|r| r[1].as_deref() == Some("pg_catalog")));
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[1].as_deref() == Some("public"))
+        );
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[1].as_deref() == Some("pg_catalog"))
+        );
     }
 
     #[test]
@@ -1646,15 +1709,35 @@ mod tests {
     #[test]
     fn test_handle_pg_settings() {
         let result = handle_pg_settings();
-        assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("server_version")));
-        assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("server_encoding")));
-        assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("max_connections")));
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[0].as_deref() == Some("server_version"))
+        );
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[0].as_deref() == Some("server_encoding"))
+        );
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[0].as_deref() == Some("max_connections"))
+        );
     }
 
     #[test]
     fn test_handle_pg_available_extensions() {
         let result = handle_pg_available_extensions();
-        assert!(result.rows.iter().any(|r| r[0].as_deref() == Some("hologres")));
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r[0].as_deref() == Some("hologres"))
+        );
     }
 
     #[test]
@@ -1765,30 +1848,86 @@ mod tests {
         assert_eq!(result.rows.len(), 4, "Should have 4 rows for 4 columns");
 
         // Check first column: id (Int32, not nullable)
-        assert_eq!(result.rows[0][0].as_deref(), Some("10000"), "attrelid should start at 10000");
+        assert_eq!(
+            result.rows[0][0].as_deref(),
+            Some("10000"),
+            "attrelid should start at 10000"
+        );
         assert_eq!(result.rows[0][1].as_deref(), Some("id"), "attname");
-        assert_eq!(result.rows[0][2].as_deref(), Some("23"), "atttypid for Int32 should be 23");
-        assert_eq!(result.rows[0][4].as_deref(), Some("4"), "attlen for Int32 should be 4");
-        assert_eq!(result.rows[0][5].as_deref(), Some("1"), "attnum should be 1");
-        assert_eq!(result.rows[0][12].as_deref(), Some("true"), "attnotnull should be true for non-nullable");
+        assert_eq!(
+            result.rows[0][2].as_deref(),
+            Some("23"),
+            "atttypid for Int32 should be 23"
+        );
+        assert_eq!(
+            result.rows[0][4].as_deref(),
+            Some("4"),
+            "attlen for Int32 should be 4"
+        );
+        assert_eq!(
+            result.rows[0][5].as_deref(),
+            Some("1"),
+            "attnum should be 1"
+        );
+        assert_eq!(
+            result.rows[0][12].as_deref(),
+            Some("true"),
+            "attnotnull should be true for non-nullable"
+        );
 
         // Check second column: name (String/text, nullable)
         assert_eq!(result.rows[1][1].as_deref(), Some("name"));
-        assert_eq!(result.rows[1][2].as_deref(), Some("25"), "atttypid for String should be 25");
-        assert_eq!(result.rows[1][4].as_deref(), Some("-1"), "attlen for String should be -1");
-        assert_eq!(result.rows[1][5].as_deref(), Some("2"), "attnum should be 2");
-        assert_eq!(result.rows[1][12].as_deref(), Some("false"), "attnotnull should be false for nullable");
+        assert_eq!(
+            result.rows[1][2].as_deref(),
+            Some("25"),
+            "atttypid for String should be 25"
+        );
+        assert_eq!(
+            result.rows[1][4].as_deref(),
+            Some("-1"),
+            "attlen for String should be -1"
+        );
+        assert_eq!(
+            result.rows[1][5].as_deref(),
+            Some("2"),
+            "attnum should be 2"
+        );
+        assert_eq!(
+            result.rows[1][12].as_deref(),
+            Some("false"),
+            "attnotnull should be false for nullable"
+        );
 
         // Check third column: salary (Float64, nullable)
         assert_eq!(result.rows[2][1].as_deref(), Some("salary"));
-        assert_eq!(result.rows[2][2].as_deref(), Some("701"), "atttypid for Float64 should be 701");
-        assert_eq!(result.rows[2][4].as_deref(), Some("8"), "attlen for Float64 should be 8");
+        assert_eq!(
+            result.rows[2][2].as_deref(),
+            Some("701"),
+            "atttypid for Float64 should be 701"
+        );
+        assert_eq!(
+            result.rows[2][4].as_deref(),
+            Some("8"),
+            "attlen for Float64 should be 8"
+        );
 
         // Check fourth column: active (Boolean, not nullable)
         assert_eq!(result.rows[3][1].as_deref(), Some("active"));
-        assert_eq!(result.rows[3][2].as_deref(), Some("16"), "atttypid for Boolean should be 16");
-        assert_eq!(result.rows[3][4].as_deref(), Some("1"), "attlen for Boolean should be 1");
-        assert_eq!(result.rows[3][12].as_deref(), Some("true"), "attnotnull should be true for non-nullable");
+        assert_eq!(
+            result.rows[3][2].as_deref(),
+            Some("16"),
+            "atttypid for Boolean should be 16"
+        );
+        assert_eq!(
+            result.rows[3][4].as_deref(),
+            Some("1"),
+            "attlen for Boolean should be 1"
+        );
+        assert_eq!(
+            result.rows[3][12].as_deref(),
+            Some("true"),
+            "attnotnull should be true for non-nullable"
+        );
     }
 
     #[test]
@@ -1909,7 +2048,10 @@ mod tests {
 
         let result = handle_information_schema_views(&catalog, "testdb");
         assert_eq!(result.columns.len(), 4);
-        assert!(result.rows.is_empty(), "Should be empty when no tables have view_definitions");
+        assert!(
+            result.rows.is_empty(),
+            "Should be empty when no tables have view_definitions"
+        );
     }
 
     #[test]
@@ -1998,13 +2140,8 @@ mod tests {
     #[test]
     fn test_pg_catalog_routing_current_database() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SELECT current_database()",
-            &catalog,
-            "mydb",
-            "admin",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT current_database()", &catalog, "mydb", "admin", "");
         assert!(result.is_some());
         assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("mydb"));
     }
@@ -2012,13 +2149,8 @@ mod tests {
     #[test]
     fn test_pg_catalog_routing_current_schema() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SELECT current_schema()",
-            &catalog,
-            "testdb",
-            "admin",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT current_schema()", &catalog, "testdb", "admin", "");
         assert!(result.is_some());
         assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("public"));
     }
@@ -2026,13 +2158,8 @@ mod tests {
     #[test]
     fn test_pg_catalog_routing_current_user() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SELECT current_user",
-            &catalog,
-            "testdb",
-            "myuser",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT current_user", &catalog, "testdb", "myuser", "");
         assert!(result.is_some());
         assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("myuser"));
     }
@@ -2040,13 +2167,8 @@ mod tests {
     #[test]
     fn test_pg_catalog_routing_current_user_func() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SELECT current_user()",
-            &catalog,
-            "testdb",
-            "myuser",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT current_user()", &catalog, "testdb", "myuser", "");
         assert!(result.is_some());
         assert_eq!(result.unwrap().rows[0][0].as_deref(), Some("myuser"));
     }
@@ -2069,13 +2191,8 @@ mod tests {
     #[test]
     fn test_pg_catalog_routing_set() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SET search_path = public",
-            &catalog,
-            "testdb",
-            "admin",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SET search_path = public", &catalog, "testdb", "admin", "");
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(r.columns.is_empty());
@@ -2084,13 +2201,7 @@ mod tests {
     #[test]
     fn test_pg_catalog_routing_show() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SHOW search_path",
-            &catalog,
-            "testdb",
-            "admin",
-            "",
-        );
+        let result = handle_pg_catalog_query("SHOW search_path", &catalog, "testdb", "admin", "");
         assert!(result.is_some());
         let r = result.unwrap();
         assert_eq!(r.rows[0][0].as_deref(), Some("public"));
@@ -2099,13 +2210,8 @@ mod tests {
     #[test]
     fn test_pg_catalog_routing_not_catalog() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SELECT * FROM real_table",
-            &catalog,
-            "testdb",
-            "admin",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT * FROM real_table", &catalog, "testdb", "admin", "");
         assert!(result.is_none());
     }
 
@@ -2132,13 +2238,8 @@ mod tests {
         };
         catalog.create_table("testdb", table).unwrap();
 
-        let result = handle_pg_catalog_query(
-            "SELECT * FROM pg_class",
-            &catalog,
-            "testdb",
-            "admin",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT * FROM pg_class", &catalog, "testdb", "admin", "");
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(r.rows.iter().any(|row| row[1].as_deref() == Some("orders")));
@@ -2153,16 +2254,14 @@ mod tests {
             tablet_id: 0,
             name: "items".to_string(),
             database: "testdb".to_string(),
-            columns: vec![
-                fe_catalog::table::TableColumn {
-                    name: "id".to_string(),
-                    data_type: types::DataType::Int32,
-                    nullable: false,
-                    default_value: None,
-                    agg_type: None,
-                    comment: String::new(),
-                },
-            ],
+            columns: vec![fe_catalog::table::TableColumn {
+                name: "id".to_string(),
+                data_type: types::DataType::Int32,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            }],
             keys_type: fe_catalog::table::KeysType::Duplicate,
             unique_keys: vec![],
             partition_info: None,
@@ -2206,26 +2305,16 @@ mod tests {
     fn test_pg_catalog_routing_pg_tables() {
         let catalog = CatalogManager::new();
         catalog.create_database("testdb").unwrap();
-        let result = handle_pg_catalog_query(
-            "SELECT * FROM pg_tables",
-            &catalog,
-            "testdb",
-            "admin",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT * FROM pg_tables", &catalog, "testdb", "admin", "");
         assert!(result.is_some());
     }
 
     #[test]
     fn test_pg_catalog_routing_pg_settings() {
         let catalog = CatalogManager::new();
-        let result = handle_pg_catalog_query(
-            "SELECT * FROM pg_settings",
-            &catalog,
-            "testdb",
-            "admin",
-            "",
-        );
+        let result =
+            handle_pg_catalog_query("SELECT * FROM pg_settings", &catalog, "testdb", "admin", "");
         assert!(result.is_some());
     }
 
@@ -2325,22 +2414,43 @@ mod tests {
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int32), 23);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Boolean), 16);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::String), 25);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Varchar(255)), 1043);
+        assert_eq!(
+            map_roris_type_to_pg_oid(&types::DataType::Varchar(255)),
+            1043
+        );
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Float64), 701);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Null), 0);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int8), 21);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int16), 21);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int64), 20);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Float32), 700);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Decimal(types::DecimalType { precision: 38, scale: 10 })), 1700);
+        assert_eq!(
+            map_roris_type_to_pg_oid(&types::DataType::Decimal(types::DecimalType {
+                precision: 38,
+                scale: 10
+            })),
+            1700
+        );
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Date), 1082);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::DateTime), 1114);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Char(10)), 1042);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Binary), 17);
         assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Json), 25);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Array(Box::new(types::DataType::String))), 1009);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Map(Box::new(types::DataType::String), Box::new(types::DataType::Int32))), 25);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Struct(vec![])), 25);
+        assert_eq!(
+            map_roris_type_to_pg_oid(&types::DataType::Array(Box::new(types::DataType::String))),
+            1009
+        );
+        assert_eq!(
+            map_roris_type_to_pg_oid(&types::DataType::Map(
+                Box::new(types::DataType::String),
+                Box::new(types::DataType::Int32)
+            )),
+            25
+        );
+        assert_eq!(
+            map_roris_type_to_pg_oid(&types::DataType::Struct(vec![])),
+            25
+        );
         assert_eq!(
             map_roris_type_to_pg_oid(&types::DataType::Float32Vector(128)),
             25
@@ -2363,27 +2473,60 @@ mod tests {
 
         // Variable-length types
         assert_eq!(map_roris_type_to_len(&types::DataType::Int128), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Decimal(types::DecimalType { precision: 38, scale: 10 })), -1);
+        assert_eq!(
+            map_roris_type_to_len(&types::DataType::Decimal(types::DecimalType {
+                precision: 38,
+                scale: 10
+            })),
+            -1
+        );
         assert_eq!(map_roris_type_to_len(&types::DataType::Varchar(255)), -1);
         assert_eq!(map_roris_type_to_len(&types::DataType::Char(10)), -1);
         assert_eq!(map_roris_type_to_len(&types::DataType::String), -1);
         assert_eq!(map_roris_type_to_len(&types::DataType::Binary), -1);
         assert_eq!(map_roris_type_to_len(&types::DataType::Json), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Array(Box::new(types::DataType::Int32))), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Map(Box::new(types::DataType::String), Box::new(types::DataType::String))), -1);
+        assert_eq!(
+            map_roris_type_to_len(&types::DataType::Array(Box::new(types::DataType::Int32))),
+            -1
+        );
+        assert_eq!(
+            map_roris_type_to_len(&types::DataType::Map(
+                Box::new(types::DataType::String),
+                Box::new(types::DataType::String)
+            )),
+            -1
+        );
         assert_eq!(map_roris_type_to_len(&types::DataType::Struct(vec![])), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Float32Vector(256)), -1);
+        assert_eq!(
+            map_roris_type_to_len(&types::DataType::Float32Vector(256)),
+            -1
+        );
     }
 
     #[test]
     fn test_map_type_to_sql() {
-        assert_eq!(map_roris_type_to_sql_type(&types::DataType::Int32), "integer");
-        assert_eq!(map_roris_type_to_sql_type(&types::DataType::String), "text");
-        assert_eq!(map_roris_type_to_sql_type(&types::DataType::Varchar(100)), "character varying(100)");
-        assert_eq!(map_roris_type_to_sql_type(&types::DataType::Boolean), "boolean");
-        assert_eq!(map_roris_type_to_sql_type(&types::DataType::Float64), "double precision");
         assert_eq!(
-            map_roris_type_to_sql_type(&types::DataType::Decimal(types::DecimalType { precision: 38, scale: 10 })),
+            map_roris_type_to_sql_type(&types::DataType::Int32),
+            "integer"
+        );
+        assert_eq!(map_roris_type_to_sql_type(&types::DataType::String), "text");
+        assert_eq!(
+            map_roris_type_to_sql_type(&types::DataType::Varchar(100)),
+            "character varying(100)"
+        );
+        assert_eq!(
+            map_roris_type_to_sql_type(&types::DataType::Boolean),
+            "boolean"
+        );
+        assert_eq!(
+            map_roris_type_to_sql_type(&types::DataType::Float64),
+            "double precision"
+        );
+        assert_eq!(
+            map_roris_type_to_sql_type(&types::DataType::Decimal(types::DecimalType {
+                precision: 38,
+                scale: 10
+            })),
             "numeric(38,10)"
         );
     }

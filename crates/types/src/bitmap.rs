@@ -14,12 +14,18 @@ impl Default for Bitmap {
 
 impl Bitmap {
     pub fn new() -> Self {
-        Self { data: Vec::new(), len: 0 }
+        Self {
+            data: Vec::new(),
+            len: 0,
+        }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         let words = capacity.div_ceil(64);
-        Self { data: vec![0; words], len: 0 }
+        Self {
+            data: vec![0; words],
+            len: 0,
+        }
     }
 
     pub fn from_bools(bools: &[bool]) -> Self {
@@ -34,9 +40,10 @@ impl Bitmap {
         let words = len.div_ceil(64);
         let mut data = vec![u64::MAX; words];
         if !len.is_multiple_of(64)
-            && let Some(last) = data.last_mut() {
-                *last &= (1u64 << (len % 64)) - 1;
-            }
+            && let Some(last) = data.last_mut()
+        {
+            *last &= (1u64 << (len % 64)) - 1;
+        }
         Self { data, len }
     }
 
@@ -187,10 +194,12 @@ impl Bitmap {
         for word in &mut self.data {
             *word = !*word;
         }
-        if !self.len.is_multiple_of(64) && !self.data.is_empty()
-            && let Some(last) = self.data.last_mut() {
-                *last &= (1u64 << (self.len % 64)) - 1;
-            }
+        if !self.len.is_multiple_of(64)
+            && !self.data.is_empty()
+            && let Some(last) = self.data.last_mut()
+        {
+            *last &= (1u64 << (self.len % 64)) - 1;
+        }
     }
 
     /// In-place AND with another bitmap
@@ -250,12 +259,12 @@ impl BitAnd for &Bitmap {
         let len = self.len.min(rhs.len);
         let words = len.div_ceil(64);
         let mut data = Vec::with_capacity(words);
-        
+
         let min_len = self.data.len().min(rhs.data.len());
         for i in 0..min_len {
             data.push(self.data[i] & rhs.data[i]);
         }
-        
+
         Bitmap { data, len }
     }
 }
@@ -266,14 +275,14 @@ impl BitOr for &Bitmap {
         let len = self.len.max(rhs.len);
         let words = len.div_ceil(64);
         let mut data = Vec::with_capacity(words);
-        
+
         let max_len = self.data.len().max(rhs.data.len());
         for i in 0..max_len {
             let left = self.data.get(i).copied().unwrap_or(0);
             let right = rhs.data.get(i).copied().unwrap_or(0);
             data.push(left | right);
         }
-        
+
         Bitmap { data, len }
     }
 }
@@ -283,16 +292,21 @@ impl Not for &Bitmap {
     fn not(self) -> Bitmap {
         let words = self.len.div_ceil(64);
         let mut data = Vec::with_capacity(words);
-        
+
         for i in 0..words {
             let word = self.data.get(i).copied().unwrap_or(0);
             data.push(!word);
         }
-        
-        if !self.len.is_multiple_of(64) && !data.is_empty()
-            && let Some(last) = data.last_mut() {
-                *last &= (1u64 << (self.len % 64)) - 1;
-            }
-        Bitmap { data, len: self.len }
+
+        if !self.len.is_multiple_of(64)
+            && !data.is_empty()
+            && let Some(last) = data.last_mut()
+        {
+            *last &= (1u64 << (self.len % 64)) - 1;
+        }
+        Bitmap {
+            data,
+            len: self.len,
+        }
     }
 }

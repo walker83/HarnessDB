@@ -166,7 +166,11 @@ impl DrorisError {
         }
     }
 
-    pub fn storage_with_tablet(kind: StorageError, tablet_id: u64, message: impl Into<String>) -> Self {
+    pub fn storage_with_tablet(
+        kind: StorageError,
+        tablet_id: u64,
+        message: impl Into<String>,
+    ) -> Self {
         DrorisError::Storage {
             kind,
             tablet_id: Some(tablet_id),
@@ -182,7 +186,11 @@ impl DrorisError {
         }
     }
 
-    pub fn query_with_id(kind: QueryError, query_id: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn query_with_id(
+        kind: QueryError,
+        query_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         DrorisError::Query {
             kind,
             query_id: Some(query_id.into()),
@@ -199,7 +207,11 @@ impl DrorisError {
         }
     }
 
-    pub fn catalog_with_db(kind: CatalogError, database_name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn catalog_with_db(
+        kind: CatalogError,
+        database_name: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         DrorisError::Catalog {
             kind,
             database_name: Some(database_name.into()),
@@ -208,7 +220,12 @@ impl DrorisError {
         }
     }
 
-    pub fn catalog_with_table(kind: CatalogError, database_name: impl Into<String>, table_name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn catalog_with_table(
+        kind: CatalogError,
+        database_name: impl Into<String>,
+        table_name: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         DrorisError::Catalog {
             kind,
             database_name: Some(database_name.into()),
@@ -225,7 +242,11 @@ impl DrorisError {
         }
     }
 
-    pub fn parse_with_position(kind: ParseError, position: usize, message: impl Into<String>) -> Self {
+    pub fn parse_with_position(
+        kind: ParseError,
+        position: usize,
+        message: impl Into<String>,
+    ) -> Self {
         DrorisError::Parse {
             kind,
             position: Some(position),
@@ -248,7 +269,11 @@ impl DrorisError {
         }
     }
 
-    pub fn rpc_with_endpoint(kind: RpcError, endpoint: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn rpc_with_endpoint(
+        kind: RpcError,
+        endpoint: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         DrorisError::Rpc {
             kind,
             endpoint: Some(endpoint.into()),

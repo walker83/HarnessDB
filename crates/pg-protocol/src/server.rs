@@ -23,11 +23,11 @@
 //! }
 //! ```
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tracing::{error, info, warn, info_span, Instrument};
+use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::auth::AuthConfig;
 use crate::connection::run_connection;
@@ -117,14 +117,8 @@ impl PgServer {
                     info!("PG connection {} accepted from {}", conn_id, peer_addr);
                     tokio::spawn(
                         async move {
-                            handle_pg_connection(
-                                stream,
-                                conn_id,
-                                handler,
-                                auth_config,
-                                permit,
-                            )
-                            .await;
+                            handle_pg_connection(stream, conn_id, handler, auth_config, permit)
+                                .await;
                         }
                         .instrument(info_span!("pg_conn", cid = conn_id)),
                     );

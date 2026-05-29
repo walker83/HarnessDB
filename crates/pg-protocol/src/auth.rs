@@ -198,7 +198,12 @@ mod tests {
         };
 
         // The client would send: md5(md5(password+username) + salt) = stored_hash
-        assert!(verify_md5_password(username, &expected_inner, &stored_hash, &salt));
+        assert!(verify_md5_password(
+            username,
+            &expected_inner,
+            &stored_hash,
+            &salt
+        ));
     }
 
     #[test]
@@ -209,7 +214,12 @@ mod tests {
         let wrong_expected = format!("md5{}", "a".repeat(32));
         let wrong_client = format!("md5{}", "b".repeat(32));
 
-        assert!(!verify_md5_password(username, &wrong_expected, &wrong_client, &salt));
+        assert!(!verify_md5_password(
+            username,
+            &wrong_expected,
+            &wrong_client,
+            &salt
+        ));
     }
 
     #[test]
@@ -244,7 +254,12 @@ mod tests {
         };
         let salt = [0x00, 0x00, 0x00, 0x00];
 
-        assert!(!validate_password(&config, "wronguser", "correctpass", &salt));
+        assert!(!validate_password(
+            &config,
+            "wronguser",
+            "correctpass",
+            &salt
+        ));
     }
 
     #[test]
@@ -274,7 +289,12 @@ mod tests {
         assert!(validate_password(&config, "user", &correct_response, &salt));
 
         // Wrong MD5 response should fail
-        assert!(!validate_password(&config, "user", "md5wronghash1234567890abcdef0123456", &salt));
+        assert!(!validate_password(
+            &config,
+            "user",
+            "md5wronghash1234567890abcdef0123456",
+            &salt
+        ));
     }
 
     #[test]

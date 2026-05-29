@@ -3,16 +3,16 @@
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string(), is_null() helpers.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 29990;
@@ -37,14 +37,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -77,7 +84,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -109,7 +118,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -133,7 +145,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -143,7 +156,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -154,7 +168,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -170,7 +191,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -182,8 +204,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -294,24 +323,26 @@ fn test_arithmetic_on_columns() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE t (a INT, b INT, x DOUBLE, y DOUBLE)");
-    ctx.exec("INSERT INTO t VALUES (10, 3, 3.14, -2.71), (100, 7, 1.414, 0.0), (-5, 2, 9.81, 100.0)");
+    ctx.exec(
+        "INSERT INTO t VALUES (10, 3, 3.14, -2.71), (100, 7, 1.414, 0.0), (-5, 2, 9.81, 100.0)",
+    );
 
     // 1. Column addition — ORDER BY a: -5, 10, 100
     let rows = ctx.query("SELECT a + b FROM t ORDER BY a");
-    assert_eq!(get_i64(&rows[0], 0), -3);  // -5 + 2
-    assert_eq!(get_i64(&rows[1], 0), 13);  // 10 + 3
+    assert_eq!(get_i64(&rows[0], 0), -3); // -5 + 2
+    assert_eq!(get_i64(&rows[1], 0), 13); // 10 + 3
     assert_eq!(get_i64(&rows[2], 0), 107); // 100 + 7
 
     // 2. Column subtraction — ORDER BY a: -5, 10, 100
     let rows = ctx.query("SELECT a - b FROM t ORDER BY a");
-    assert_eq!(get_i64(&rows[0], 0), -7);  // -5 - 2
-    assert_eq!(get_i64(&rows[1], 0), 7);   // 10 - 3
-    assert_eq!(get_i64(&rows[2], 0), 93);  // 100 - 7
+    assert_eq!(get_i64(&rows[0], 0), -7); // -5 - 2
+    assert_eq!(get_i64(&rows[1], 0), 7); // 10 - 3
+    assert_eq!(get_i64(&rows[2], 0), 93); // 100 - 7
 
     // 3. Column multiplication — ORDER BY a: -5, 10, 100
     let rows = ctx.query("SELECT a * b FROM t ORDER BY a");
     assert_eq!(get_i64(&rows[0], 0), -10); // -5 * 2
-    assert_eq!(get_i64(&rows[1], 0), 30);  // 10 * 3
+    assert_eq!(get_i64(&rows[1], 0), 30); // 10 * 3
     assert_eq!(get_i64(&rows[2], 0), 700); // 100 * 7
 
     // 4. Column float addition — ORDER BY a: -5, 10, 100
@@ -364,9 +395,9 @@ fn test_abs() {
     ctx.exec("INSERT INTO t VALUES (-5, -2.5), (10, 3.7), (0, -0.0)");
 
     let rows = ctx.query("SELECT ABS(a) FROM t ORDER BY a");
-    assert_eq!(get_i64(&rows[0], 0), 5);   // ABS(-5)
-    assert_eq!(get_i64(&rows[1], 0), 0);   // ABS(0)
-    assert_eq!(get_i64(&rows[2], 0), 10);  // ABS(10)
+    assert_eq!(get_i64(&rows[0], 0), 5); // ABS(-5)
+    assert_eq!(get_i64(&rows[1], 0), 0); // ABS(0)
+    assert_eq!(get_i64(&rows[2], 0), 10); // ABS(10)
 
     let rows = ctx.query("SELECT ABS(x) FROM t ORDER BY a");
     let v0 = get_f64(&rows[0], 0);
@@ -456,11 +487,11 @@ fn test_round_on_columns() {
     ctx.exec("INSERT INTO t VALUES (1.49), (2.5), (3.51), (-1.49), (-2.5)");
 
     let rows = ctx.query("SELECT ROUND(x) FROM t ORDER BY x");
-    assert_eq!(get_i64(&rows[0], 0), -3);  // ROUND(-2.5)
-    assert_eq!(get_i64(&rows[1], 0), -1);  // ROUND(-1.49)
-    assert_eq!(get_i64(&rows[2], 0), 1);   // ROUND(1.49)
-    assert_eq!(get_i64(&rows[3], 0), 3);   // ROUND(2.5)
-    assert_eq!(get_i64(&rows[4], 0), 4);   // ROUND(3.51)
+    assert_eq!(get_i64(&rows[0], 0), -3); // ROUND(-2.5)
+    assert_eq!(get_i64(&rows[1], 0), -1); // ROUND(-1.49)
+    assert_eq!(get_i64(&rows[2], 0), 1); // ROUND(1.49)
+    assert_eq!(get_i64(&rows[3], 0), 3); // ROUND(2.5)
+    assert_eq!(get_i64(&rows[4], 0), 4); // ROUND(3.51)
 
     ctx.drop_db(&db);
 }
@@ -682,7 +713,9 @@ fn test_sign_mod() {
 
     // Helper to check if query result is an error message from server
     fn check_rows(rows: &[Row]) -> bool {
-        if rows.is_empty() { return false; }
+        if rows.is_empty() {
+            return false;
+        }
         match &rows[0][0] {
             mysql::Value::Bytes(b) => !String::from_utf8_lossy(b).starts_with("ERROR"),
             _ => true,
@@ -691,33 +724,51 @@ fn test_sign_mod() {
 
     // SIGN — not registered in DataFusion, skip if error
     if let Ok(rows) = ctx.query_ignore_error("SELECT SIGN(5)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), 1); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), 1);
+        }
     }
     if let Ok(rows) = ctx.query_ignore_error("SELECT SIGN(-5)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), -1); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), -1);
+        }
     }
     if let Ok(rows) = ctx.query_ignore_error("SELECT SIGN(0)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), 0); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), 0);
+        }
     }
     if let Ok(rows) = ctx.query_ignore_error("SELECT SIGN(3.14)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), 1); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), 1);
+        }
     }
     if let Ok(rows) = ctx.query_ignore_error("SELECT SIGN(-0.001)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), -1); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), -1);
+        }
     }
 
     // MOD — not registered in DataFusion, skip if error
     if let Ok(rows) = ctx.query_ignore_error("SELECT MOD(10, 3)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), 1); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), 1);
+        }
     }
     if let Ok(rows) = ctx.query_ignore_error("SELECT MOD(10, 5)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), 0); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), 0);
+        }
     }
     if let Ok(rows) = ctx.query_ignore_error("SELECT MOD(7, 2)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), 1); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), 1);
+        }
     }
     if let Ok(rows) = ctx.query_ignore_error("SELECT MOD(100, 7)") {
-        if check_rows(&rows) { assert_eq!(get_i64(&rows[0], 0), 2); }
+        if check_rows(&rows) {
+            assert_eq!(get_i64(&rows[0], 0), 2);
+        }
     }
 
     ctx.drop_db(&db);
@@ -747,7 +798,12 @@ fn test_math_with_aggregates() {
     let rows = ctx.query("SELECT AVG(x * 2) FROM t");
     let avg = get_f64(&rows[0], 0);
     let expected_avg = (3.14 * 2.0 + 1.414 * 2.0 + 9.81 * 2.0 + 0.0 * 2.0) / 4.0;
-    assert!((avg - expected_avg).abs() < 0.01, "AVG(x*2) = {} expected {}", avg, expected_avg);
+    assert!(
+        (avg - expected_avg).abs() < 0.01,
+        "AVG(x*2) = {} expected {}",
+        avg,
+        expected_avg
+    );
 
     // MAX of ABS
     let rows = ctx.query("SELECT MAX(ABS(a)) FROM t");
@@ -767,8 +823,8 @@ fn test_math_with_aggregates() {
 
     // Multiple aggregates in one query
     let rows = ctx.query("SELECT MIN(a), MAX(a), SUM(a), AVG(a) FROM t");
-    assert_eq!(get_i64(&rows[0], 0), 10);  // MIN
-    assert_eq!(get_i64(&rows[0], 1), 40);  // MAX
+    assert_eq!(get_i64(&rows[0], 0), 10); // MIN
+    assert_eq!(get_i64(&rows[0], 1), 40); // MAX
     assert_eq!(get_i64(&rows[0], 2), 100); // SUM
     let avg_a = get_f64(&rows[0], 3);
     assert!((avg_a - 25.0).abs() < 0.001, "AVG(a) = {}", avg_a);
@@ -782,7 +838,11 @@ fn test_math_with_aggregates() {
     let rows = ctx.query("SELECT ROUND(AVG(x), 1) FROM t");
     let rounded = get_f64(&rows[0], 0);
     let raw_avg = (3.14 + 1.414 + 9.81 + 0.0) / 4.0; // ~3.591
-    assert!((rounded - 3.6).abs() < 0.1, "ROUND(AVG(x), 1) = {} expected ~3.6", rounded);
+    assert!(
+        (rounded - 3.6).abs() < 0.1,
+        "ROUND(AVG(x), 1) = {} expected ~3.6",
+        rounded
+    );
 
     ctx.drop_db(&db);
 }
@@ -858,10 +918,11 @@ fn test_math_in_where() {
     // WHERE SIGN(a) = 1 — SIGN function not registered
     if let Ok(rows) = ctx.query_ignore_error("SELECT a FROM t WHERE SIGN(a) = 1 ORDER BY a") {
         // Skip if server returned error as data
-        let is_error = !rows.is_empty() && match &rows[0][0] {
-            mysql::Value::Bytes(b) => String::from_utf8_lossy(b).starts_with("ERROR"),
-            _ => false,
-        };
+        let is_error = !rows.is_empty()
+            && match &rows[0][0] {
+                mysql::Value::Bytes(b) => String::from_utf8_lossy(b).starts_with("ERROR"),
+                _ => false,
+            };
         if !is_error {
             assert!(rows.len() >= 2, "Expected at least 2 rows for SIGN(a)=1");
         }
@@ -894,7 +955,11 @@ fn test_math_edge_cases() {
     // Very small floats
     let rows = ctx.query("SELECT 0.0001 * 0.0001");
     let val = get_f64(&rows[0], 0);
-    assert!((val - 0.00000001).abs() < 0.000000001, "0.0001*0.0001 = {}", val);
+    assert!(
+        (val - 0.00000001).abs() < 0.000000001,
+        "0.0001*0.0001 = {}",
+        val
+    );
 
     // Zero in arithmetic
     let rows = ctx.query("SELECT 0 + 0");
@@ -1024,12 +1089,16 @@ fn test_nested_math() {
     // Complex: ROUND(POW(SQRT(ABS(a)), 2)) = ROUND(a_abs)  // approximately
     let rows = ctx.query("SELECT ROUND(POW(SQRT(ABS(a)), 2)) FROM t ORDER BY a");
     let v1 = get_f64(&rows[0], 0);
-    assert!((v1 - 16.0).abs() < 0.01, "ROUND(POW(SQRT(|-16|), 2)) = {}", v1);
+    assert!(
+        (v1 - 16.0).abs() < 0.01,
+        "ROUND(POW(SQRT(|-16|), 2)) = {}",
+        v1
+    );
 
     // Chain of functions mixed with arithmetic
     let rows = ctx.query("SELECT ABS(a) + ABS(b) FROM t ORDER BY a");
     assert_eq!(get_f64(&rows[0], 0), 17.2); // |-16| + |1.2| = 17.2
-    assert_eq!(get_f64(&rows[1], 0), 6.5);  // |-4| + |2.5| = 6.5
+    assert_eq!(get_f64(&rows[1], 0), 6.5); // |-4| + |2.5| = 6.5
     assert_eq!(get_f64(&rows[2], 0), 12.8); // |9| + |3.8| = 12.8
 
     ctx.drop_db(&db);
@@ -1049,15 +1118,15 @@ fn test_math_order_by() {
 
     // ORDER BY a + b
     let rows = ctx.query("SELECT a, b, a + b AS s FROM t ORDER BY s");
-    assert_eq!(get_i64(&rows[0], 2), 3);  // 2+1=3
-    assert_eq!(get_i64(&rows[1], 2), 9);  // 4+5=9
+    assert_eq!(get_i64(&rows[0], 2), 3); // 2+1=3
+    assert_eq!(get_i64(&rows[1], 2), 9); // 4+5=9
     assert_eq!(get_i64(&rows[2], 2), 13); // 3+10=13
     assert_eq!(get_i64(&rows[3], 2), 101); // 1+100=101
 
     // ORDER BY a * b DESC
     let rows = ctx.query("SELECT a, b, a * b AS p FROM t ORDER BY p DESC");
     assert_eq!(get_i64(&rows[0], 2), 100); // 1*100
-    assert_eq!(get_i64(&rows[1], 2), 30);  // 3*10
+    assert_eq!(get_i64(&rows[1], 2), 30); // 3*10
 
     ctx.drop_db(&db);
 }

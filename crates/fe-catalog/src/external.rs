@@ -94,10 +94,15 @@ impl Catalog for InternalCatalog {
     }
 
     async fn list_databases(&self) -> Result<Vec<DatabaseInfo>, String> {
-        Ok(self.manager.list_databases().into_iter().map(|name| DatabaseInfo {
-            name,
-            properties: HashMap::new(),
-        }).collect())
+        Ok(self
+            .manager
+            .list_databases()
+            .into_iter()
+            .map(|name| DatabaseInfo {
+                name,
+                properties: HashMap::new(),
+            })
+            .collect())
     }
 
     async fn get_database(&self, name: &str) -> Result<Option<DatabaseInfo>, String> {
@@ -108,7 +113,8 @@ impl Catalog for InternalCatalog {
     }
 
     async fn list_tables(&self, database: &str) -> Result<Vec<String>, String> {
-        self.manager.list_tables(database)
+        self.manager
+            .list_tables(database)
             .ok_or(format!("Database {} not found", database))
     }
 
@@ -117,12 +123,16 @@ impl Catalog for InternalCatalog {
             name: t.name.clone(),
             database: t.database.clone(),
             catalog_name: self.name.clone(),
-            columns: t.columns.iter().map(|c| ColumnInfo {
-                name: c.name.clone(),
-                data_type: format!("{:?}", c.data_type),
-                nullable: c.nullable,
-                comment: Some(c.comment.clone()),
-            }).collect(),
+            columns: t
+                .columns
+                .iter()
+                .map(|c| ColumnInfo {
+                    name: c.name.clone(),
+                    data_type: format!("{:?}", c.data_type),
+                    nullable: c.nullable,
+                    comment: Some(c.comment.clone()),
+                })
+                .collect(),
             location: None,
             file_format: Some(FileFormat::Parquet),
             partition_keys: vec![],
@@ -195,7 +205,9 @@ pub mod iceberg {
                 builder = builder.header("Authorization", format!("Bearer {}", token));
             }
 
-            let response = builder.send().await
+            let response = builder
+                .send()
+                .await
                 .map_err(|e| format!("Iceberg REST request failed: {}", e))?;
 
             let status = response.status();
@@ -207,7 +219,9 @@ pub mod iceberg {
                 ));
             }
 
-            response.json().await
+            response
+                .json()
+                .await
                 .map_err(|e| format!("Failed to parse Iceberg response: {}", e))
         }
     }
@@ -241,13 +255,19 @@ pub mod iceberg {
 
         async fn list_databases(&self) -> Result<Vec<DatabaseInfo>, String> {
             #[derive(serde::Deserialize)]
-            struct Response { namespaces: Vec<Namespace> }
+            struct Response {
+                namespaces: Vec<Namespace>,
+            }
 
             let resp: Response = self.request("/v1/namespaces").await?;
-            Ok(resp.namespaces.into_iter().map(|n| DatabaseInfo {
-                name: n.full_name(),
-                properties: HashMap::new(),
-            }).collect())
+            Ok(resp
+                .namespaces
+                .into_iter()
+                .map(|n| DatabaseInfo {
+                    name: n.full_name(),
+                    properties: HashMap::new(),
+                })
+                .collect())
         }
 
         async fn get_database(&self, name: &str) -> Result<Option<DatabaseInfo>, String> {
@@ -261,7 +281,11 @@ pub mod iceberg {
             Ok(vec![])
         }
 
-        async fn get_table(&self, _database: &str, _table: &str) -> Result<Option<TableInfo>, String> {
+        async fn get_table(
+            &self,
+            _database: &str,
+            _table: &str,
+        ) -> Result<Option<TableInfo>, String> {
             Ok(None)
         }
 

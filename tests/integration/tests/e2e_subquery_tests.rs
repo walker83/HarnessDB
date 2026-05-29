@@ -6,16 +6,16 @@
 // CRITICAL: Server returns ALL values as Bytes (strings).
 // Always use get_i64(), get_f64(), get_string(), is_null().
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 const MYSQL_PORT: u16 = 30030;
 
@@ -39,14 +39,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -79,7 +86,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -111,7 +120,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     fn new_db_name() -> String {
@@ -132,7 +144,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -142,7 +155,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -152,7 +166,14 @@ impl TestContext {
 
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -167,7 +188,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -179,8 +201,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -193,8 +222,19 @@ fn get_string(row: &Row, idx: usize) -> String {
         Value::UInt(n) => n.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Double(d) => d.to_string(),
-        Value::Date(y, m, d, h, min, s, us) => format!("{}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}", y, m, d, h, min, s, us),
-        Value::Time(neg, days, h, m, s, us) => format!("{}{}:{:02}:{:02}:{:02}.{:06}", if *neg { "-" } else { "" }, days, h, m, s, us),
+        Value::Date(y, m, d, h, min, s, us) => format!(
+            "{}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
+            y, m, d, h, min, s, us
+        ),
+        Value::Time(neg, days, h, m, s, us) => format!(
+            "{}{}:{:02}:{:02}:{:02}.{:06}",
+            if *neg { "-" } else { "" },
+            days,
+            h,
+            m,
+            s,
+            us
+        ),
     }
 }
 
@@ -207,38 +247,50 @@ fn is_null(row: &Row, idx: usize) -> bool {
 // ============================================================================
 
 fn create_all_tables(ctx: &TestContext) {
-    ctx.exec("CREATE TABLE employees (
+    ctx.exec(
+        "CREATE TABLE employees (
         id INT,
         name VARCHAR(50),
         dept_id INT,
         salary DOUBLE
-    )");
-    ctx.exec("CREATE TABLE departments (
+    )",
+    );
+    ctx.exec(
+        "CREATE TABLE departments (
         id INT,
         dept_name VARCHAR(50)
-    )");
-    ctx.exec("CREATE TABLE bonuses (
+    )",
+    );
+    ctx.exec(
+        "CREATE TABLE bonuses (
         emp_id INT,
         amount DOUBLE
-    )");
+    )",
+    );
 }
 
 fn insert_all_data(ctx: &TestContext) {
-    ctx.exec("INSERT INTO employees VALUES
+    ctx.exec(
+        "INSERT INTO employees VALUES
         (1,'Alice',10,50000),
         (2,'Bob',20,45000),
         (3,'Charlie',10,60000),
         (4,'Diana',30,52000),
         (5,'Eve',20,48000),
-        (6,'Frank',10,55000)");
-    ctx.exec("INSERT INTO departments VALUES
+        (6,'Frank',10,55000)",
+    );
+    ctx.exec(
+        "INSERT INTO departments VALUES
         (10,'Engineering'),
         (20,'Marketing'),
-        (30,'Sales')");
-    ctx.exec("INSERT INTO bonuses VALUES
+        (30,'Sales')",
+    );
+    ctx.exec(
+        "INSERT INTO bonuses VALUES
         (1,5000),
         (2,3000),
-        (4,4000)");
+        (4,4000)",
+    );
 }
 
 // ============================================================================
@@ -268,7 +320,8 @@ fn test_scalar_subquery_where_gt_avg() {
     assert_eq!(get_f64(&rows[2], 1), 55000.0, "Above avg row 2 salary");
 
     // Employees with salary = avg (no one should match since no one earns exactly avg)
-    let rows = ctx.query("SELECT name FROM employees WHERE salary = (SELECT AVG(salary) FROM employees)");
+    let rows =
+        ctx.query("SELECT name FROM employees WHERE salary = (SELECT AVG(salary) FROM employees)");
     assert_eq!(rows.len(), 0, "No one earns exactly the avg");
 
     // Scalar subquery with less-than
@@ -302,20 +355,34 @@ fn test_scalar_subquery_in_select() {
     assert!(diff_charlie > 0.0, "Charlie diff positive");
 
     // Scalar subquery with MIN
-    let rows = ctx.query("SELECT name, salary FROM employees WHERE salary = (SELECT MIN(salary) FROM employees)");
+    let rows = ctx.query(
+        "SELECT name, salary FROM employees WHERE salary = (SELECT MIN(salary) FROM employees)",
+    );
     assert_eq!(rows.len(), 1, "Employee with min salary");
     assert_eq!(get_string(&rows[0], 0), "Bob", "Min salary is Bob (45000)");
 
     // Scalar subquery with MAX
-    let rows = ctx.query("SELECT name, salary FROM employees WHERE salary = (SELECT MAX(salary) FROM employees)");
+    let rows = ctx.query(
+        "SELECT name, salary FROM employees WHERE salary = (SELECT MAX(salary) FROM employees)",
+    );
     assert_eq!(rows.len(), 1, "Employee with max salary");
-    assert_eq!(get_string(&rows[0], 0), "Charlie", "Max salary is Charlie (60000)");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Charlie",
+        "Max salary is Charlie (60000)"
+    );
 
     // Scalar subquery with constant (COUNT)
-    let rows = ctx.query("SELECT name, (SELECT COUNT(*) FROM employees) AS cnt FROM employees ORDER BY id");
+    let rows = ctx
+        .query("SELECT name, (SELECT COUNT(*) FROM employees) AS cnt FROM employees ORDER BY id");
     assert_eq!(rows.len(), 6, "Scalar COUNT subquery rows");
     for i in 0..6 {
-        assert_eq!(get_i64(&rows[i], 1), 6, "COUNT(*) in scalar subquery row {}", i);
+        assert_eq!(
+            get_i64(&rows[i], 1),
+            6,
+            "COUNT(*) in scalar subquery row {}",
+            i
+        );
     }
 
     ctx.drop_db(&db);
@@ -379,14 +446,17 @@ fn test_in_subquery_with_bonuses() {
     insert_all_data(&ctx);
 
     // Employees who have a bonus
-    let rows = ctx.query("SELECT name FROM employees WHERE id IN (SELECT emp_id FROM bonuses) ORDER BY name");
+    let rows = ctx
+        .query("SELECT name FROM employees WHERE id IN (SELECT emp_id FROM bonuses) ORDER BY name");
     assert_eq!(rows.len(), 3, "Employees with bonuses");
     assert_eq!(get_string(&rows[0], 0), "Alice", "Bonus emp 1");
     assert_eq!(get_string(&rows[1], 0), "Bob", "Bonus emp 2");
     assert_eq!(get_string(&rows[2], 0), "Diana", "Bonus emp 3");
 
     // NOT IN: employees who do NOT have a bonus
-    let rows = ctx.query("SELECT name FROM employees WHERE id NOT IN (SELECT emp_id FROM bonuses) ORDER BY name");
+    let rows = ctx.query(
+        "SELECT name FROM employees WHERE id NOT IN (SELECT emp_id FROM bonuses) ORDER BY name",
+    );
     assert_eq!(rows.len(), 3, "Employees without bonuses");
     assert_eq!(get_string(&rows[0], 0), "Charlie", "No bonus emp 1");
     assert_eq!(get_string(&rows[1], 0), "Eve", "No bonus emp 2");
@@ -411,7 +481,9 @@ fn test_in_subquery_edge_cases() {
     insert_all_data(&ctx);
 
     // IN with subquery returning empty set
-    let rows = ctx.query("SELECT name FROM employees WHERE id IN (SELECT emp_id FROM bonuses WHERE amount > 10000)");
+    let rows = ctx.query(
+        "SELECT name FROM employees WHERE id IN (SELECT emp_id FROM bonuses WHERE amount > 10000)",
+    );
     assert_eq!(rows.len(), 0, "IN with empty subquery");
 
     // IN with no matching rows
@@ -472,32 +544,58 @@ fn test_exists_correlated_variants() {
     // EXISTS with bonus > 4000 — only Alice (5000 > 4000)
     let rows = ctx.query("SELECT name FROM employees WHERE EXISTS (SELECT 1 FROM bonuses WHERE bonuses.emp_id = employees.id AND bonuses.amount > 4000) ORDER BY name");
     assert_eq!(rows.len(), 1, "EXISTS bonus > 4000");
-    assert_eq!(get_string(&rows[0], 0), "Alice", "EXISTS bonus > 4000: Alice has 5000");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Alice",
+        "EXISTS bonus > 4000: Alice has 5000"
+    );
 
     // EXISTS with bonus >= 4000
     let rows = ctx.query("SELECT name FROM employees WHERE EXISTS (SELECT 1 FROM bonuses WHERE bonuses.emp_id = employees.id AND bonuses.amount >= 4000) ORDER BY name");
     assert_eq!(rows.len(), 2, "EXISTS bonus >= 4000");
-    assert_eq!(get_string(&rows[0], 0), "Alice", "EXISTS bonus >= 4000: Alice");
-    assert_eq!(get_string(&rows[1], 0), "Diana", "EXISTS bonus >= 4000: Diana");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Alice",
+        "EXISTS bonus >= 4000: Alice"
+    );
+    assert_eq!(
+        get_string(&rows[1], 0),
+        "Diana",
+        "EXISTS bonus >= 4000: Diana"
+    );
 
     // EXISTS: employees earning > 50000 who also have a bonus
     let rows = ctx.query("SELECT name FROM employees WHERE salary > 50000 AND EXISTS (SELECT 1 FROM bonuses WHERE bonuses.emp_id = employees.id) ORDER BY name");
     assert_eq!(rows.len(), 1, "EXISTS high salary with bonus");
-    assert_eq!(get_string(&rows[0], 0), "Diana", "Diana has salary 52000 and bonus 4000");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Diana",
+        "Diana has salary 52000 and bonus 4000"
+    );
 
     // NOT EXISTS with additional condition
     let rows = ctx.query("SELECT name FROM employees WHERE dept_id = 10 AND NOT EXISTS (SELECT 1 FROM bonuses WHERE bonuses.emp_id = employees.id) ORDER BY name");
     assert_eq!(rows.len(), 2, "NOT EXISTS Engineering without bonus");
     // Engineering (dept 10): Alice (has bonus), Charlie (no), Frank (no)
-    assert_eq!(get_string(&rows[0], 0), "Charlie", "NOT EXISTS Engineering no bonus 1");
-    assert_eq!(get_string(&rows[1], 0), "Frank", "NOT EXISTS Engineering no bonus 2");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Charlie",
+        "NOT EXISTS Engineering no bonus 1"
+    );
+    assert_eq!(
+        get_string(&rows[1], 0),
+        "Frank",
+        "NOT EXISTS Engineering no bonus 2"
+    );
 
     // EXISTS with 1=0 (always false) — no rows should match
-    let rows = ctx.query("SELECT name FROM employees WHERE EXISTS (SELECT 1 FROM bonuses WHERE 1=0)");
+    let rows =
+        ctx.query("SELECT name FROM employees WHERE EXISTS (SELECT 1 FROM bonuses WHERE 1=0)");
     assert_eq!(rows.len(), 0, "EXISTS with always-false condition");
 
     // NOT EXISTS with 1=1 (always true, but NOT negates) — no rows should match
-    let rows = ctx.query("SELECT name FROM employees WHERE NOT EXISTS (SELECT 1 FROM bonuses WHERE 1=1)");
+    let rows =
+        ctx.query("SELECT name FROM employees WHERE NOT EXISTS (SELECT 1 FROM bonuses WHERE 1=1)");
     assert_eq!(rows.len(), 0, "NOT EXISTS with always-true condition");
 
     ctx.drop_db(&db);
@@ -523,15 +621,27 @@ fn test_correlated_subquery_in_select() {
         assert_eq!(get_string(&rows[1], 0), "Bob", "Correlated SELECT Bob");
         assert_eq!(get_f64(&rows[1], 1), 3000.0, "Bob bonus total");
         // Charlie has no bonus -> NULL
-        assert!(is_null(&rows[2], 1) || get_string(&rows[2], 1).is_empty() || get_f64(&rows[2], 1) == 0.0,
-            "Charlie bonus NULL/0");
+        assert!(
+            is_null(&rows[2], 1)
+                || get_string(&rows[2], 1).is_empty()
+                || get_f64(&rows[2], 1) == 0.0,
+            "Charlie bonus NULL/0"
+        );
         assert_eq!(get_f64(&rows[3], 1), 4000.0, "Diana bonus total");
         // Eve has no bonus
-        assert!(is_null(&rows[4], 1) || get_string(&rows[4], 1).is_empty() || get_f64(&rows[4], 1) == 0.0,
-            "Eve bonus NULL/0");
+        assert!(
+            is_null(&rows[4], 1)
+                || get_string(&rows[4], 1).is_empty()
+                || get_f64(&rows[4], 1) == 0.0,
+            "Eve bonus NULL/0"
+        );
         // Frank has no bonus
-        assert!(is_null(&rows[5], 1) || get_string(&rows[5], 1).is_empty() || get_f64(&rows[5], 1) == 0.0,
-            "Frank bonus NULL/0");
+        assert!(
+            is_null(&rows[5], 1)
+                || get_string(&rows[5], 1).is_empty()
+                || get_f64(&rows[5], 1) == 0.0,
+            "Frank bonus NULL/0"
+        );
     } else {
         eprintln!("Note: Correlated subquery in SELECT not supported by this DataFusion version");
     }
@@ -732,7 +842,11 @@ fn test_cte_join() {
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 6, "CTE join rows");
         assert_eq!(get_string(&rows[0], 0), "Alice", "CTE join Alice");
-        assert_eq!(get_string(&rows[0], 1), "Engineering", "CTE join Alice dept");
+        assert_eq!(
+            get_string(&rows[0], 1),
+            "Engineering",
+            "CTE join Alice dept"
+        );
         assert_eq!(get_string(&rows[3], 0), "Diana", "CTE join Diana");
         assert_eq!(get_string(&rows[3], 1), "Sales", "CTE join Diana dept");
     } else {
@@ -754,7 +868,7 @@ fn test_cte_multiple() {
         "WITH \
          dept10 AS (SELECT id, name FROM employees WHERE dept_id = 10), \
          dept20 AS (SELECT id, name FROM employees WHERE dept_id = 20) \
-         SELECT name FROM dept10 UNION ALL SELECT name FROM dept20 ORDER BY name"
+         SELECT name FROM dept10 UNION ALL SELECT name FROM dept20 ORDER BY name",
     );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5, "Multiple CTEs UNION ALL rows");
@@ -780,7 +894,7 @@ fn test_cte_with_where() {
 
     let result = ctx.query_ignore_error(
         "WITH high_earners AS (SELECT name, salary FROM employees WHERE salary > 50000) \
-         SELECT name, salary FROM high_earners WHERE salary < 60000 ORDER BY name"
+         SELECT name, salary FROM high_earners WHERE salary < 60000 ORDER BY name",
     );
     if let Ok(rows) = result {
         // salary > 50000: Charlie(60000), Diana(52000), Frank(55000)
@@ -869,7 +983,11 @@ fn test_cte_chaining() {
     if let Ok(rows) = result {
         // Depts with avg > 50000: Engineering(55000), Sales(52000)
         assert_eq!(rows.len(), 2, "Chained CTE rows");
-        assert_eq!(get_string(&rows[0], 0), "Engineering", "Chained CTE Engineering");
+        assert_eq!(
+            get_string(&rows[0], 0),
+            "Engineering",
+            "Chained CTE Engineering"
+        );
         assert_eq!(get_f64(&rows[0], 1), 55000.0, "Chained CTE Engineering avg");
         assert_eq!(get_string(&rows[1], 0), "Sales", "Chained CTE Sales");
         assert_eq!(get_f64(&rows[1], 1), 52000.0, "Chained CTE Sales avg");
@@ -895,17 +1013,25 @@ fn test_cte_complex_query() {
                        FROM employees e LEFT JOIN bonuses b ON e.id = b.emp_id) \
          SELECT eb.name, eb.salary, eb.bonus, da.avg_sal \
          FROM emp_bonus eb JOIN dept_avg da ON eb.dept_id = da.dept_id \
-         WHERE eb.salary > da.avg_sal ORDER BY eb.name"
+         WHERE eb.salary > da.avg_sal ORDER BY eb.name",
     );
     if let Ok(rows) = result {
         // Above dept avg: Charlie(60000 > 55000, dept 10), Eve(48000 > 46500, dept 20)
         assert_eq!(rows.len(), 2, "Complex CTE rows");
         assert_eq!(get_string(&rows[0], 0), "Charlie", "Complex CTE Charlie");
         assert_eq!(get_f64(&rows[0], 1), 60000.0, "Complex CTE Charlie salary");
-        assert_eq!(get_f64(&rows[0], 2), 0.0, "Complex CTE Charlie bonus (no bonus)");
+        assert_eq!(
+            get_f64(&rows[0], 2),
+            0.0,
+            "Complex CTE Charlie bonus (no bonus)"
+        );
         assert_eq!(get_string(&rows[1], 0), "Eve", "Complex CTE Eve");
         assert_eq!(get_f64(&rows[1], 1), 48000.0, "Complex CTE Eve salary");
-        assert_eq!(get_f64(&rows[1], 2), 0.0, "Complex CTE Eve bonus (no bonus)");
+        assert_eq!(
+            get_f64(&rows[1], 2),
+            0.0,
+            "Complex CTE Eve bonus (no bonus)"
+        );
     } else {
         eprintln!("Note: Complex CTE query not supported by this DataFusion version");
     }
@@ -927,19 +1053,23 @@ fn test_union_basic() {
     insert_all_data(&ctx);
 
     // UNION basic: names from employees + dept names (different meaning but same type)
-    let rows = ctx.query("SELECT name FROM employees UNION SELECT dept_name FROM departments ORDER BY name");
+    let rows = ctx
+        .query("SELECT name FROM employees UNION SELECT dept_name FROM departments ORDER BY name");
     // 6 employee names + 3 department names = 9 unique values
     assert_eq!(rows.len(), 9, "UNION basic rows");
     let names: Vec<String> = rows.iter().map(|r| get_string(r, 0)).collect();
     assert!(names.contains(&"Alice".to_string()), "UNION contains Alice");
-    assert!(names.contains(&"Engineering".to_string()), "UNION contains Engineering");
+    assert!(
+        names.contains(&"Engineering".to_string()),
+        "UNION contains Engineering"
+    );
     assert!(names.contains(&"Sales".to_string()), "UNION contains Sales");
 
     // UNION removes duplicates: names from dept 10 + names from all employees
     let rows = ctx.query(
         "SELECT name FROM employees WHERE dept_id = 10 \
          UNION \
-         SELECT name FROM employees ORDER BY name"
+         SELECT name FROM employees ORDER BY name",
     );
     // All names are unique anyway, so 6 rows (since the first query's results are subset of second)
     assert_eq!(rows.len(), 6, "UNION dedup rows");
@@ -962,7 +1092,7 @@ fn test_union_dedup() {
     let rows = ctx.query(
         "SELECT name FROM employees WHERE dept_id = 20 \
          UNION \
-         SELECT name FROM employees WHERE salary < 50000 ORDER BY name"
+         SELECT name FROM employees WHERE salary < 50000 ORDER BY name",
     );
     assert_eq!(rows.len(), 2, "UNION dedup");
     assert_eq!(get_string(&rows[0], 0), "Bob", "UNION dedup Bob");
@@ -984,7 +1114,7 @@ fn test_union_three_queries() {
          UNION \
          SELECT name FROM employees WHERE dept_id = 20 \
          UNION \
-         SELECT name FROM employees WHERE dept_id = 30 ORDER BY name"
+         SELECT name FROM employees WHERE dept_id = 30 ORDER BY name",
     );
     assert_eq!(rows.len(), 6, "UNION 3 queries");
     assert_eq!(get_string(&rows[0], 0), "Alice", "UNION 3 Alice");
@@ -1008,7 +1138,7 @@ fn test_union_with_where() {
     let rows = ctx.query(
         "SELECT name, salary FROM employees WHERE salary >= 55000 \
          UNION \
-         SELECT name, salary FROM employees WHERE salary <= 48000 ORDER BY name"
+         SELECT name, salary FROM employees WHERE salary <= 48000 ORDER BY name",
     );
     // >= 55000: Charlie(60000), Frank(55000)
     // <= 48000: Bob(45000), Eve(48000)
@@ -1027,7 +1157,7 @@ fn test_union_with_where() {
     let rows = ctx.query(
         "SELECT 'high' AS cat, name FROM employees WHERE salary > 55000 \
          UNION \
-         SELECT 'low' AS cat, name FROM employees WHERE salary < 48000 ORDER BY name"
+         SELECT 'low' AS cat, name FROM employees WHERE salary < 48000 ORDER BY name",
     );
     // high: Charlie(60000); low: Bob(45000)
     assert_eq!(rows.len(), 2, "UNION with constants");
@@ -1051,7 +1181,7 @@ fn test_union_with_limit() {
         "SELECT name FROM employees WHERE dept_id = 10 \
          UNION \
          SELECT name FROM employees WHERE dept_id = 20 \
-         ORDER BY name LIMIT 3"
+         ORDER BY name LIMIT 3",
     );
     // dept 10: Alice, Charlie, Frank; dept 20: Bob, Eve
     // UNION -> 5 rows, ORDER BY name LIMIT 3 -> Alice, Bob, Charlie
@@ -1076,7 +1206,7 @@ fn test_union_all_keeps_duplicates() {
     let rows = ctx.query(
         "SELECT name FROM employees WHERE dept_id = 20 \
          UNION ALL \
-         SELECT name FROM employees WHERE salary < 50000 ORDER BY name"
+         SELECT name FROM employees WHERE salary < 50000 ORDER BY name",
     );
     // First query: Bob, Eve (dept 20)
     // Second: Bob(45k), Eve(48k) — salary < 50000 (Alice is exactly 50k)
@@ -1093,7 +1223,7 @@ fn test_union_all_keeps_duplicates() {
          UNION ALL \
          SELECT 'x' FROM employees WHERE dept_id = 20 \
          UNION ALL \
-         SELECT 'x' FROM employees WHERE dept_id = 30"
+         SELECT 'x' FROM employees WHERE dept_id = 30",
     );
     // dept 10: 3 rows of 'x', dept 20: 2 rows of 'x', dept 30: 1 row of 'x' = 6
     assert_eq!(rows.len(), 6, "UNION ALL 3 queries x values");
@@ -1115,12 +1245,12 @@ fn test_union_all_vs_union() {
     let rows_all = ctx.query(
         "SELECT name FROM employees WHERE dept_id = 20 \
          UNION ALL \
-         SELECT name FROM employees WHERE dept_id = 20"
+         SELECT name FROM employees WHERE dept_id = 20",
     );
     let rows_distinct = ctx.query(
         "SELECT name FROM employees WHERE dept_id = 20 \
          UNION \
-         SELECT name FROM employees WHERE dept_id = 20"
+         SELECT name FROM employees WHERE dept_id = 20",
     );
     // UNION ALL: 2 rows (Bob, Eve) + 2 rows (Bob, Eve) = 4
     assert_eq!(rows_all.len(), 4, "UNION ALL dept 20 rows");
@@ -1128,7 +1258,10 @@ fn test_union_all_vs_union() {
     assert_eq!(rows_distinct.len(), 2, "UNION dept 20 distinct rows");
 
     // Verify UNION ALL has more rows than UNION (when there are duplicates)
-    assert!(rows_all.len() > rows_distinct.len(), "UNION ALL should have more rows than UNION");
+    assert!(
+        rows_all.len() > rows_distinct.len(),
+        "UNION ALL should have more rows than UNION"
+    );
 
     ctx.drop_db(&db);
 }
@@ -1146,7 +1279,7 @@ fn test_intersect_and_except() {
     let result = ctx.query_ignore_error(
         "SELECT name FROM employees \
          INTERSECT \
-         SELECT name FROM employees WHERE dept_id = 10 ORDER BY name"
+         SELECT name FROM employees WHERE dept_id = 10 ORDER BY name",
     );
     if let Ok(rows) = result {
         // All employees intersect with dept 10 employees -> Alice, Charlie, Frank
@@ -1162,7 +1295,7 @@ fn test_intersect_and_except() {
     let result = ctx.query_ignore_error(
         "SELECT name FROM employees \
          EXCEPT \
-         SELECT name FROM employees WHERE dept_id = 10 ORDER BY name"
+         SELECT name FROM employees WHERE dept_id = 10 ORDER BY name",
     );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 3, "EXCEPT rows");
@@ -1188,7 +1321,7 @@ fn test_except_vs_not_in() {
     let result_except = ctx.query_ignore_error(
         "SELECT name FROM employees \
          EXCEPT \
-         SELECT name FROM employees WHERE dept_id = 10"
+         SELECT name FROM employees WHERE dept_id = 10",
     );
     let not_in = ctx.query(
         "SELECT name FROM employees WHERE name NOT IN (SELECT name FROM employees WHERE dept_id = 10) ORDER BY name"
@@ -1199,7 +1332,11 @@ fn test_except_vs_not_in() {
         let mut except_names: Vec<String> = rows_except.iter().map(|r| get_string(r, 0)).collect();
         except_names.sort();
         let not_in_names: Vec<String> = not_in.iter().map(|r| get_string(r, 0)).collect();
-        assert_eq!(except_names.len(), not_in_names.len(), "EXCEPT and NOT IN same size");
+        assert_eq!(
+            except_names.len(),
+            not_in_names.len(),
+            "EXCEPT and NOT IN same size"
+        );
         for (e, n) in except_names.iter().zip(not_in_names.iter()) {
             assert_eq!(e, n, "EXCEPT and NOT IN should match");
         }
@@ -1232,21 +1369,33 @@ fn test_case_simple() {
            WHEN 30 THEN 'Sales' \
            ELSE 'Unknown' \
          END AS dept_name \
-         FROM employees ORDER BY name"
+         FROM employees ORDER BY name",
     );
     assert_eq!(rows.len(), 6, "Simple CASE rows");
     assert_eq!(get_string(&rows[0], 0), "Alice", "Simple CASE Alice");
-    assert_eq!(get_string(&rows[0], 2), "Engineering", "Alice dept Engineering");
+    assert_eq!(
+        get_string(&rows[0], 2),
+        "Engineering",
+        "Alice dept Engineering"
+    );
     assert_eq!(get_string(&rows[1], 0), "Bob", "Simple CASE Bob");
     assert_eq!(get_string(&rows[1], 2), "Marketing", "Bob dept Marketing");
     assert_eq!(get_string(&rows[2], 0), "Charlie", "Simple CASE Charlie");
-    assert_eq!(get_string(&rows[2], 2), "Engineering", "Charlie dept Engineering");
+    assert_eq!(
+        get_string(&rows[2], 2),
+        "Engineering",
+        "Charlie dept Engineering"
+    );
     assert_eq!(get_string(&rows[3], 0), "Diana", "Simple CASE Diana");
     assert_eq!(get_string(&rows[3], 2), "Sales", "Diana dept Sales");
     assert_eq!(get_string(&rows[4], 0), "Eve", "Simple CASE Eve");
     assert_eq!(get_string(&rows[4], 2), "Marketing", "Eve dept Marketing");
     assert_eq!(get_string(&rows[5], 0), "Frank", "Simple CASE Frank");
-    assert_eq!(get_string(&rows[5], 2), "Engineering", "Frank dept Engineering");
+    assert_eq!(
+        get_string(&rows[5], 2),
+        "Engineering",
+        "Frank dept Engineering"
+    );
 
     // Simple CASE without ELSE (returns NULL for unmatched)
     let rows = ctx.query(
@@ -1254,9 +1403,15 @@ fn test_case_simple() {
     );
     assert_eq!(rows.len(), 6, "Simple CASE no ELSE rows");
     // Diana has dept 30 (Sales) — no WHEN matches, so should be NULL
-    assert_eq!(get_string(&rows[3], 0), "Diana", "Simple CASE no ELSE Diana");
-    assert!(is_null(&rows[3], 1) || get_string(&rows[3], 1).is_empty(),
-        "Diana CASE no match should be NULL");
+    assert_eq!(
+        get_string(&rows[3], 0),
+        "Diana",
+        "Simple CASE no ELSE Diana"
+    );
+    assert!(
+        is_null(&rows[3], 1) || get_string(&rows[3], 1).is_empty(),
+        "Diana CASE no match should be NULL"
+    );
 
     ctx.drop_db(&db);
 }
@@ -1281,10 +1436,14 @@ fn test_case_simple_with_aggregation() {
            WHEN 10 THEN 'Engineering' \
            WHEN 20 THEN 'Marketing' \
            WHEN 30 THEN 'Sales' \
-         END ORDER BY dept_name"
+         END ORDER BY dept_name",
     );
     assert_eq!(rows.len(), 3, "Simple CASE agg rows");
-    assert_eq!(get_string(&rows[0], 0), "Engineering", "CASE agg Engineering");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Engineering",
+        "CASE agg Engineering"
+    );
     assert_eq!(get_i64(&rows[0], 1), 3, "Engineering count");
     assert_eq!(get_string(&rows[1], 0), "Marketing", "CASE agg Marketing");
     assert_eq!(get_i64(&rows[1], 1), 2, "Marketing count");
@@ -1312,7 +1471,7 @@ fn test_case_searched() {
            WHEN salary < 60000 THEN 'High' \
            ELSE 'Top' \
          END AS salary_band \
-         FROM employees ORDER BY name"
+         FROM employees ORDER BY name",
     );
     assert_eq!(rows.len(), 6, "Searched CASE rows");
     // Alice: 50000 -> Medium, Bob: 45000 -> Low
@@ -1354,7 +1513,7 @@ fn test_case_searched_in_where_and_order_by() {
            WHEN dept_id = 10 THEN salary > 50000 \
            WHEN dept_id = 20 THEN salary < 50000 \
            ELSE salary > 50000 \
-         END ORDER BY name"
+         END ORDER BY name",
     );
     // For each dept:
     //   dept 10: salary > 50000 -> Charlie(60000) and Frank(55000)... wait, Frank is 55000 which is > 50000
@@ -1365,7 +1524,11 @@ fn test_case_searched_in_where_and_order_by() {
     // Total: Charlie, Frank, Bob, Eve, Diana = 5
     // Wait: dept 20 with salary < 50000: Bob(45000) and Eve(48000) both < 50000, so 2
     // Total: Charlie, Frank, Bob, Eve, Diana = 5
-    assert!(rows.len() >= 4, "CASE in WHERE should match 5 rows, got {}", rows.len());
+    assert!(
+        rows.len() >= 4,
+        "CASE in WHERE should match 5 rows, got {}",
+        rows.len()
+    );
     assert_eq!(get_string(&rows[0], 0), "Bob", "CASE WHERE Bob");
 
     // CASE in ORDER BY: order Engineering first, then Sales, then Marketing
@@ -1376,11 +1539,15 @@ fn test_case_searched_in_where_and_order_by() {
              WHEN 10 THEN 1 \
              WHEN 30 THEN 2 \
              ELSE 3 \
-           END, name"
+           END, name",
     );
     assert_eq!(rows.len(), 6, "CASE ORDER BY rows");
     // Engineering (dept 10, order 1) first, sorted by name: Alice, Charlie, Frank
-    assert_eq!(get_string(&rows[0], 0), "Alice", "CASE ORDER BY Alice first");
+    assert_eq!(
+        get_string(&rows[0], 0),
+        "Alice",
+        "CASE ORDER BY Alice first"
+    );
     assert_eq!(get_i64(&rows[0], 1), 10, "Alice dept 10");
     assert_eq!(get_string(&rows[1], 0), "Charlie", "CASE ORDER BY Charlie");
     assert_eq!(get_string(&rows[2], 0), "Frank", "CASE ORDER BY Frank");
@@ -1412,7 +1579,7 @@ fn test_case_searched_complex() {
            WHEN dept_id = 30 THEN 'Sales Rep' \
            ELSE 'Other' \
          END AS title \
-         FROM employees ORDER BY name"
+         FROM employees ORDER BY name",
     );
     assert_eq!(rows.len(), 6, "Complex CASE rows");
     // Alice: dept 10, salary 50000 < 55000 -> Junior Eng

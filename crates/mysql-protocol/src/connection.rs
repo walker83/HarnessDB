@@ -9,9 +9,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::auth::{AuthError, AuthUser, Credentials};
 use crate::packet::{
-    self, command, column_type, CapabilityFlags, Column, HandshakeResponse, HandshakeV10,
+    self, CapabilityFlags, Column, HandshakeResponse, HandshakeV10, column_type, command,
 };
-use crate::server::{QueryHandler, QueryResult, ColumnDef, ColumnType};
+use crate::server::{ColumnDef, ColumnType, QueryHandler, QueryResult};
 
 /// The connection state machine phases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +48,13 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, conn_id: u32, handler: Arc<dyn QueryHandler>, auth_timeout_secs: u64, credentials: Credentials) -> Self {
+    pub fn new(
+        stream: TcpStream,
+        conn_id: u32,
+        handler: Arc<dyn QueryHandler>,
+        auth_timeout_secs: u64,
+        credentials: Credentials,
+    ) -> Self {
         Self {
             stream,
             conn_id,
@@ -74,21 +80,37 @@ impl Connection {
         info!("Connection {} starting handshake phase", self.conn_id);
         // Phase 1: Send handshake
         self.send_handshake().await?;
-        info!("Connection {} handshake sent, waiting for auth response (timeout={}s)", self.conn_id, self.auth_timeout_secs);
+        info!(
+            "Connection {} handshake sent, waiting for auth response (timeout={}s)",
+            self.conn_id, self.auth_timeout_secs
+        );
 
         // Phase 2: Receive auth response (with configurable timeout)
-        let auth_result = timeout(Duration::from_secs(self.auth_timeout_secs), self.handle_auth_response()).await;
+        let auth_result = timeout(
+            Duration::from_secs(self.auth_timeout_secs),
+            self.handle_auth_response(),
+        )
+        .await;
         match auth_result {
             Ok(Ok(())) => {
-                info!("Connection {} auth successful, entering command loop", self.conn_id);
+                info!(
+                    "Connection {} auth successful, entering command loop",
+                    self.conn_id
+                );
             }
             Ok(Err(e)) => {
                 warn!("Auth failed for conn {}: {}", self.conn_id, e);
                 return Err(e);
             }
             Err(_) => {
-                warn!("Auth timeout for conn {} after {}s", self.conn_id, self.auth_timeout_secs);
-                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "auth timeout"));
+                warn!(
+                    "Auth timeout for conn {} after {}s",
+                    self.conn_id, self.auth_timeout_secs
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "auth timeout",
+                ));
             }
         }
 
@@ -116,14 +138,26 @@ impl Connection {
 
     async fn handle_auth_response(&mut self) -> std::io::Result<()> {
         let seq_before = self.seq_id;
-        debug!("handle_auth_response: reading auth packet, current seq_id={}", seq_before);
+        debug!(
+            "handle_auth_response: reading auth packet, current seq_id={}",
+            seq_before
+        );
         let payload = self.read_packet().await?;
-        info!("Connection {} received auth response: {} bytes, seq_id={}", self.conn_id, payload.len(), self.seq_id);
+        info!(
+            "Connection {} received auth response: {} bytes, seq_id={}",
+            self.conn_id,
+            payload.len(),
+            self.seq_id
+        );
 
         let response = match HandshakeResponse::parse(&payload) {
             Ok(r) => r,
             Err(e) => {
-                error!("Failed to parse handshake response ({} bytes): {}", payload.len(), e);
+                error!(
+                    "Failed to parse handshake response ({} bytes): {}",
+                    payload.len(),
+                    e
+                );
                 debug!("Raw payload: {:02x?}", &payload[..payload.len().min(128)]);
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
             }
@@ -145,11 +179,13 @@ impl Connection {
             response.auth_plugin_name
         );
 
-        let auth_result = self.authenticate_user(
-            &self.username,
-            &response.auth_response,
-            response.auth_plugin_name.as_deref(),
-        ).await;
+        let auth_result = self
+            .authenticate_user(
+                &self.username,
+                &response.auth_response,
+                response.auth_plugin_name.as_deref(),
+            )
+            .await;
 
         match auth_result {
             Ok(auth_user) => {
@@ -179,7 +215,7 @@ impl Connection {
         auth_response: &[u8],
         auth_plugin_name: Option<&str>,
     ) -> Result<AuthUser, AuthError> {
-        use crate::auth::{NativePasswordAuth, TokenAuth, TokenConfig, AuthPlugin};
+        use crate::auth::{AuthPlugin, NativePasswordAuth, TokenAuth, TokenConfig};
 
         if username.is_empty() {
             return Err(AuthError::Failed("Empty username".to_string()));
@@ -190,21 +226,18 @@ impl Connection {
         match plugin_name {
             "mysql_native_password" => {
                 let auth = NativePasswordAuth::with_credentials(self.credentials.clone());
-                auth.authenticate(username, auth_response, &self.auth_salt).await
+                auth.authenticate(username, auth_response, &self.auth_salt)
+                    .await
             }
             "auth_token" => {
-                let jwt_secret = std::env::var("RORIS_JWT_SECRET")
-                    .unwrap_or_else(|_| {
-                        tracing::warn!("RORIS_JWT_SECRET not set — token auth using fallback key");
-                        "rorisdb_dev_fallback_key".to_string()
-                    });
-                let config = TokenConfig::new(
-                    jwt_secret,
-                    3600,
-                    "rorisdb".to_string(),
-                );
+                let jwt_secret = std::env::var("RORIS_JWT_SECRET").unwrap_or_else(|_| {
+                    tracing::warn!("RORIS_JWT_SECRET not set — token auth using fallback key");
+                    "rorisdb_dev_fallback_key".to_string()
+                });
+                let config = TokenConfig::new(jwt_secret, 3600, "rorisdb".to_string());
                 let auth = TokenAuth::new(config);
-                auth.authenticate(username, auth_response, &self.auth_salt).await
+                auth.authenticate(username, auth_response, &self.auth_salt)
+                    .await
             }
             _ => Err(AuthError::PluginNotSupported(plugin_name.to_string())),
         }
@@ -266,44 +299,55 @@ impl Connection {
             let data = &payload[1..];
 
             let cmd_str = match cmd {
-                    0x00 => "COM_SLEEP",
-                    0x01 => "COM_QUIT",
-                    0x02 => "COM_INIT_DB",
-                    0x03 => "COM_QUERY",
-                    0x04 => "COM_FIELD_LIST",
-                    0x05 => "COM_CREATE_DB",
-                    0x06 => "COM_DROP_DB",
-                    0x07 => "COM_REFRESH",
-                    0x08 => "COM_SHUTDOWN",
-                    0x09 => "COM_STATISTICS",
-                    0x0a => "COM_PROCESS_INFO",
-                    0x0b => "COM_CONNECT",
-                    0x0c => "COM_PROCESS_KILL",
-                    0x0d => "COM_DEBUG",
-                    0x0e => "COM_PING",
-                    0x0f => "COM_TIME",
-                    0x10 => "COM_DELAYED_INSERT",
-                    0x11 => "COM_CHANGE_USER",
-                    0x12 => "COM_BINLOG_DUMP",
-                    0x13 => "COM_TABLE_DUMP",
-                    0x14 => "COM_CONNECT_OUT",
-                    0x15 => "COM_REGISTER_SLAVE",
-                    0x16 => "COM_STMT_PREPARE",
-                    0x17 => "COM_STMT_EXECUTE",
-                    0x18 => "COM_STMT_SEND_LONG_DATA",
-                    0x19 => "COM_STMT_CLOSE",
-                    0x1a => "COM_STMT_RESET",
-                    0x1b => "COM_SET_OPTION",
-                    0x1c => "COM_STMT_FETCH",
-                    0x1d => "COM_DAEMON",
-                    0x1e => "COM_BINLOG_DUMP_GTID",
-                    0x1f => "COM_RESET_CONNECTION",
-                    _ => "UNKNOWN",
-                };
+                0x00 => "COM_SLEEP",
+                0x01 => "COM_QUIT",
+                0x02 => "COM_INIT_DB",
+                0x03 => "COM_QUERY",
+                0x04 => "COM_FIELD_LIST",
+                0x05 => "COM_CREATE_DB",
+                0x06 => "COM_DROP_DB",
+                0x07 => "COM_REFRESH",
+                0x08 => "COM_SHUTDOWN",
+                0x09 => "COM_STATISTICS",
+                0x0a => "COM_PROCESS_INFO",
+                0x0b => "COM_CONNECT",
+                0x0c => "COM_PROCESS_KILL",
+                0x0d => "COM_DEBUG",
+                0x0e => "COM_PING",
+                0x0f => "COM_TIME",
+                0x10 => "COM_DELAYED_INSERT",
+                0x11 => "COM_CHANGE_USER",
+                0x12 => "COM_BINLOG_DUMP",
+                0x13 => "COM_TABLE_DUMP",
+                0x14 => "COM_CONNECT_OUT",
+                0x15 => "COM_REGISTER_SLAVE",
+                0x16 => "COM_STMT_PREPARE",
+                0x17 => "COM_STMT_EXECUTE",
+                0x18 => "COM_STMT_SEND_LONG_DATA",
+                0x19 => "COM_STMT_CLOSE",
+                0x1a => "COM_STMT_RESET",
+                0x1b => "COM_SET_OPTION",
+                0x1c => "COM_STMT_FETCH",
+                0x1d => "COM_DAEMON",
+                0x1e => "COM_BINLOG_DUMP_GTID",
+                0x1f => "COM_RESET_CONNECTION",
+                _ => "UNKNOWN",
+            };
             if cmd == 0x03 {
-                info!("Connection {} command: {} ({} bytes) - SQL: {:?}", self.conn_id, cmd_str, data.len(), String::from_utf8_lossy(data));
+                info!(
+                    "Connection {} command: {} ({} bytes) - SQL: {:?}",
+                    self.conn_id,
+                    cmd_str,
+                    data.len(),
+                    String::from_utf8_lossy(data)
+                );
             } else {
-                info!("Connection {} command: {} ({} bytes)", self.conn_id, cmd_str, data.len());
+                info!(
+                    "Connection {} command: {} ({} bytes)",
+                    self.conn_id,
+                    cmd_str,
+                    data.len()
+                );
             }
 
             match cmd {
@@ -416,7 +460,10 @@ impl Connection {
             // select @@version_comment limit 1
             if trimmed.contains("@@version_comment") {
                 let result = QueryResult::with_rows(
-                    vec![ColumnDef { name: "@@version_comment".to_string(), col_type: ColumnType::String }],
+                    vec![ColumnDef {
+                        name: "@@version_comment".to_string(),
+                        col_type: ColumnType::String,
+                    }],
                     vec![vec![Some("RorisDB".to_string())]],
                 );
                 return self.send_result_set(result).await;
@@ -425,7 +472,10 @@ impl Connection {
             if trimmed.contains("database()") {
                 let db = self.database.clone().unwrap_or_default();
                 let result = QueryResult::with_rows(
-                    vec![ColumnDef { name: "database()".to_string(), col_type: ColumnType::String }],
+                    vec![ColumnDef {
+                        name: "database()".to_string(),
+                        col_type: ColumnType::String,
+                    }],
                     vec![vec![if db.is_empty() { None } else { Some(db) }]],
                 );
                 return self.send_result_set(result).await;
@@ -437,7 +487,14 @@ impl Connection {
                 let var_name = trimmed
                     .split("@@")
                     .nth(1)
-                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").trim_end_matches(';').trim())
+                    .map(|s| {
+                        s.trim()
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .trim_end_matches(';')
+                            .trim()
+                    })
                     .unwrap_or("");
                 // Strip session./global. prefix if present
                 let clean_var = var_name
@@ -448,8 +505,12 @@ impl Connection {
                 let (value, col_type) = match clean_var {
                     "max_allowed_packet" => (4194304.to_string(), ColumnType::Int), // 4MB default
                     "version" | "version_comment" => ("RorisDB".to_string(), ColumnType::String),
-                    "character_set_client" | "character_set_connection" | "character_set_results" => ("utf8mb4".to_string(), ColumnType::String),
-                    "collation_connection" | "collation_server" => ("utf8mb4_general_ci".to_string(), ColumnType::String),
+                    "character_set_client"
+                    | "character_set_connection"
+                    | "character_set_results" => ("utf8mb4".to_string(), ColumnType::String),
+                    "collation_connection" | "collation_server" => {
+                        ("utf8mb4_general_ci".to_string(), ColumnType::String)
+                    }
                     "autocommit" => ("1".to_string(), ColumnType::Int),
                     "sql_mode" => ("".to_string(), ColumnType::String),
                     "time_zone" => ("SYSTEM".to_string(), ColumnType::String),
@@ -468,12 +529,14 @@ impl Connection {
                 };
 
                 let result = QueryResult::with_rows(
-                    vec![ColumnDef { name: format!("@@{}", var_name), col_type }],
+                    vec![ColumnDef {
+                        name: format!("@@{}", var_name),
+                        col_type,
+                    }],
                     vec![vec![Some(value)]],
                 );
                 return self.send_result_set(result).await;
             }
-
         }
 
         // Handle transaction commands
@@ -488,7 +551,10 @@ impl Connection {
         // Handle SET commands (autocommit, names, etc.)
         if trimmed.starts_with("set ") {
             // SET AUTOCOMMIT = 0|1, SET @@autocommit = 0|1, etc.
-            if trimmed.contains("autocommit") || trimmed.contains("names ") || trimmed.contains("character_set") {
+            if trimmed.contains("autocommit")
+                || trimmed.contains("names ")
+                || trimmed.contains("character_set")
+            {
                 return self.send_ok(0, 0).await;
             }
         }
@@ -498,9 +564,18 @@ impl Connection {
             if trimmed.contains("warnings") || trimmed.contains("errors") {
                 let result = QueryResult::with_rows(
                     vec![
-                        ColumnDef { name: "Level".to_string(), col_type: ColumnType::String },
-                        ColumnDef { name: "Code".to_string(), col_type: ColumnType::Int },
-                        ColumnDef { name: "Message".to_string(), col_type: ColumnType::String },
+                        ColumnDef {
+                            name: "Level".to_string(),
+                            col_type: ColumnType::String,
+                        },
+                        ColumnDef {
+                            name: "Code".to_string(),
+                            col_type: ColumnType::Int,
+                        },
+                        ColumnDef {
+                            name: "Message".to_string(),
+                            col_type: ColumnType::String,
+                        },
                     ],
                     vec![],
                 );
@@ -609,7 +684,9 @@ impl Connection {
         // Check if this is a DML statement (INSERT/UPDATE/DELETE)
         // For DML, we don't execute during PREPARE - just validate syntax
         let upper_sql = sql.trim().to_uppercase();
-        let is_dml = upper_sql.starts_with("INSERT") || upper_sql.starts_with("UPDATE") || upper_sql.starts_with("DELETE");
+        let is_dml = upper_sql.starts_with("INSERT")
+            || upper_sql.starts_with("UPDATE")
+            || upper_sql.starts_with("DELETE");
 
         let (num_columns, result_columns) = if is_dml {
             // DML statements don't return columns during PREPARE
@@ -622,12 +699,18 @@ impl Connection {
             } else {
                 sql.to_string()
             };
-            info!("Connection {} COM_STMT_PREPARE exec_sql: {}", self.conn_id, exec_sql);
+            info!(
+                "Connection {} COM_STMT_PREPARE exec_sql: {}",
+                self.conn_id, exec_sql
+            );
 
             let result = self.handler.handle_query(self.conn_id, &exec_sql);
             (result.columns.len() as u16, result.columns)
         };
-        info!("Connection {} COM_STMT_PREPARE result: {} columns, {} params", self.conn_id, num_columns, num_params);
+        info!(
+            "Connection {} COM_STMT_PREPARE result: {} columns, {} params",
+            self.conn_id, num_columns, num_params
+        );
 
         // Store the statement
         self.prepared_statements
@@ -673,7 +756,8 @@ impl Connection {
 
     async fn handle_stmt_execute(&mut self, data: &[u8]) -> std::io::Result<()> {
         if data.len() < 9 {
-            self.send_general_err(1045, "Malformed COM_STMT_EXECUTE".to_string()).await?;
+            self.send_general_err(1045, "Malformed COM_STMT_EXECUTE".to_string())
+                .await?;
             return Ok(());
         }
 
@@ -696,14 +780,22 @@ impl Connection {
             sql.clone()
         };
 
-        info!("Connection {} COM_STMT_EXECUTE: {} (bound: {})", self.conn_id, sql, bound_sql);
+        info!(
+            "Connection {} COM_STMT_EXECUTE: {} (bound: {})",
+            self.conn_id, sql, bound_sql
+        );
 
         // Execute the SQL with bound parameters
         let result = self.handler.handle_query(self.conn_id, &bound_sql);
 
         // Use actual column count from result, not stored value
         let actual_num_cols = result.columns.len() as u16;
-        info!("Connection {} COM_STMT_EXECUTE result: {} columns, {} rows", self.conn_id, actual_num_cols, result.rows.len());
+        info!(
+            "Connection {} COM_STMT_EXECUTE result: {} columns, {} rows",
+            self.conn_id,
+            actual_num_cols,
+            result.rows.len()
+        );
 
         // Send result set using binary protocol
         self.send_binary_result_set(result, actual_num_cols).await
@@ -773,7 +865,9 @@ impl Connection {
             types
         } else {
             // Default all to string type
-            (0..num_params).map(|_| (column_type::VAR_STRING, false)).collect()
+            (0..num_params)
+                .map(|_| (column_type::VAR_STRING, false))
+                .collect()
         };
 
         // Now read ALL parameter values
@@ -801,7 +895,13 @@ impl Connection {
 
     /// Read a parameter value from the packet data.
     /// Returns (value_string, bytes_consumed).
-    fn read_param_value(&self, data: &[u8], offset: usize, param_type: u8, _is_unsigned: bool) -> (String, usize) {
+    fn read_param_value(
+        &self,
+        data: &[u8],
+        offset: usize,
+        param_type: u8,
+        _is_unsigned: bool,
+    ) -> (String, usize) {
         if offset >= data.len() {
             return ("NULL".to_string(), 0);
         }
@@ -816,41 +916,82 @@ impl Connection {
             }
             column_type::SHORT => {
                 if offset + 2 <= data.len() {
-                    (i16::from_le_bytes([data[offset], data[offset + 1]]).to_string(), 2)
+                    (
+                        i16::from_le_bytes([data[offset], data[offset + 1]]).to_string(),
+                        2,
+                    )
                 } else {
                     ("0".to_string(), 0)
                 }
             }
             column_type::LONG => {
                 if offset + 4 <= data.len() {
-                    (i32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]).to_string(), 4)
+                    (
+                        i32::from_le_bytes([
+                            data[offset],
+                            data[offset + 1],
+                            data[offset + 2],
+                            data[offset + 3],
+                        ])
+                        .to_string(),
+                        4,
+                    )
                 } else {
                     ("0".to_string(), 0)
                 }
             }
             column_type::LONGLONG => {
                 if offset + 8 <= data.len() {
-                    (i64::from_le_bytes([
-                        data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-                        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
-                    ]).to_string(), 8)
+                    (
+                        i64::from_le_bytes([
+                            data[offset],
+                            data[offset + 1],
+                            data[offset + 2],
+                            data[offset + 3],
+                            data[offset + 4],
+                            data[offset + 5],
+                            data[offset + 6],
+                            data[offset + 7],
+                        ])
+                        .to_string(),
+                        8,
+                    )
                 } else {
                     ("0".to_string(), 0)
                 }
             }
             column_type::FLOAT => {
                 if offset + 4 <= data.len() {
-                    (f32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]).to_string(), 4)
+                    (
+                        f32::from_le_bytes([
+                            data[offset],
+                            data[offset + 1],
+                            data[offset + 2],
+                            data[offset + 3],
+                        ])
+                        .to_string(),
+                        4,
+                    )
                 } else {
                     ("0.0".to_string(), 0)
                 }
             }
             column_type::DOUBLE => {
                 if offset + 8 <= data.len() {
-                    (f64::from_le_bytes([
-                        data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-                        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
-                    ]).to_string(), 8)
+                    (
+                        f64::from_le_bytes([
+                            data[offset],
+                            data[offset + 1],
+                            data[offset + 2],
+                            data[offset + 3],
+                            data[offset + 4],
+                            data[offset + 5],
+                            data[offset + 6],
+                            data[offset + 7],
+                        ])
+                        .to_string(),
+                        8,
+                    )
                 } else {
                     ("0.0".to_string(), 0)
                 }
@@ -888,9 +1029,7 @@ impl Connection {
                     ("''".to_string(), 0)
                 }
             }
-            _ => {
-                ("NULL".to_string(), 0)
-            }
+            _ => ("NULL".to_string(), 0),
         }
     }
 
@@ -899,13 +1038,28 @@ impl Connection {
         let mut result = String::new();
         let mut in_string = false;
         let mut string_char = b'\0';
-        let mut prev = b'\0';
         let mut param_idx = 0;
+        let sql_bytes = sql.as_bytes();
 
-        for b in sql.bytes() {
+        for (i, &b) in sql_bytes.iter().enumerate() {
             if in_string {
-                if b == string_char && prev != b'\\' {
-                    in_string = false;
+                if b == string_char {
+                    // Count consecutive preceding backslashes to detect escaped quotes
+                    let mut backslash_count = 0usize;
+                    let mut j = i;
+                    while j > 0 {
+                        j -= 1;
+                        if sql_bytes[j] == b'\\' {
+                            backslash_count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if backslash_count % 2 == 0 {
+                        // Even backslashes: real quote boundary
+                        in_string = false;
+                    }
+                    // Odd backslashes: escaped quote, stay in string
                 }
                 result.push(b as char);
             } else if b == b'\'' || b == b'"' {
@@ -922,22 +1076,36 @@ impl Connection {
             } else {
                 result.push(b as char);
             }
-            prev = b;
         }
         result
     }
 
     /// Send result set in binary protocol format (for COM_STMT_EXECUTE).
-    async fn send_binary_result_set(&mut self, result: QueryResult, num_columns: u16) -> std::io::Result<()> {
-        info!("Connection {} send_binary_result_set: {} columns, {} rows, columns={:?}",
-            self.conn_id, num_columns, result.rows.len(),
-            result.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>());
+    async fn send_binary_result_set(
+        &mut self,
+        result: QueryResult,
+        num_columns: u16,
+    ) -> std::io::Result<()> {
+        info!(
+            "Connection {} send_binary_result_set: {} columns, {} rows, columns={:?}",
+            self.conn_id,
+            num_columns,
+            result.rows.len(),
+            result
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect::<Vec<_>>()
+        );
 
         // For prepared statements, always send column count and definitions
         // even if result.columns is empty (DDL) or num_columns is 0
         if num_columns == 0 {
             // This was a DDL or non-select statement
-            info!("Connection {} send_binary_result_set: num_columns=0, sending OK", self.conn_id);
+            info!(
+                "Connection {} send_binary_result_set: num_columns=0, sending OK",
+                self.conn_id
+            );
             self.send_ok(0, 0).await?;
             return Ok(());
         }
@@ -1023,8 +1191,8 @@ impl Connection {
         loop {
             // Try to parse a complete packet from the buffer
             if self.read_buf.len() >= 4 {
-                let (payload_len, _seq) = packet::read_packet_header(&self.read_buf)
-                    .ok_or_else(|| {
+                let (payload_len, _seq) =
+                    packet::read_packet_header(&self.read_buf).ok_or_else(|| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, "bad header")
                     })?;
 
@@ -1053,11 +1221,7 @@ impl Connection {
     }
 
     /// Send an OK packet.
-    async fn send_ok(
-        &mut self,
-        affected_rows: u64,
-        last_insert_id: u64,
-    ) -> std::io::Result<()> {
+    async fn send_ok(&mut self, affected_rows: u64, last_insert_id: u64) -> std::io::Result<()> {
         let pkt = packet::make_ok_packet(
             self.seq_id,
             affected_rows,
@@ -1071,11 +1235,7 @@ impl Connection {
     }
 
     /// Send a general error packet.
-    async fn send_general_err(
-        &mut self,
-        error_code: u16,
-        message: String,
-    ) -> std::io::Result<()> {
+    async fn send_general_err(&mut self, error_code: u16, message: String) -> std::io::Result<()> {
         let pkt = packet::make_general_err(self.seq_id, error_code, &message);
         self.write_all(&pkt).await?;
         self.seq_id = self.seq_id.wrapping_add(1);
@@ -1098,12 +1258,25 @@ fn count_placeholders(sql: &str) -> usize {
     let mut count = 0;
     let mut in_string = false;
     let mut string_char = b'\0';
-    let mut prev = b'\0';
+    let sql_bytes = sql.as_bytes();
 
-    for &b in sql.as_bytes() {
+    for (i, &b) in sql_bytes.iter().enumerate() {
         if in_string {
-            if b == string_char && prev != b'\\' {
-                in_string = false;
+            if b == string_char {
+                // Count consecutive preceding backslashes
+                let mut backslash_count = 0usize;
+                let mut j = i;
+                while j > 0 {
+                    j -= 1;
+                    if sql_bytes[j] == b'\\' {
+                        backslash_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if backslash_count % 2 == 0 {
+                    in_string = false;
+                }
             }
         } else if b == b'\'' || b == b'"' {
             in_string = true;
@@ -1111,7 +1284,6 @@ fn count_placeholders(sql: &str) -> usize {
         } else if b == b'?' {
             count += 1;
         }
-        prev = b;
     }
     count
 }

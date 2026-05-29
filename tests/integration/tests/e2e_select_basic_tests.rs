@@ -8,16 +8,16 @@
 // protocol.  ALWAYS use get_i64(), get_f64(), get_string(), is_null()
 // helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 29950;
@@ -42,14 +42,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -82,7 +89,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -114,7 +123,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -138,7 +150,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -148,7 +161,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -159,7 +173,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -175,7 +196,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -187,8 +209,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -453,8 +482,14 @@ fn test_where_logical_and_or() {
     // Mixed AND/OR
     // Only Bob (age=25, active=true) matches (age<28 AND active=true);
     // no one matches (age>30 AND active=true) since all age>30 have active=false
-    ctx.assert_row_count("SELECT * FROM t WHERE (age > 30 AND active = true) OR (age < 28 AND active = true)", 1);
-    ctx.assert_row_count("SELECT * FROM t WHERE age > 30 OR (age < 28 AND active = true)", 3);
+    ctx.assert_row_count(
+        "SELECT * FROM t WHERE (age > 30 AND active = true) OR (age < 28 AND active = true)",
+        1,
+    );
+    ctx.assert_row_count(
+        "SELECT * FROM t WHERE age > 30 OR (age < 28 AND active = true)",
+        3,
+    );
 
     ctx.drop_db(&db);
 }
@@ -471,7 +506,10 @@ fn test_where_logical_not_and_compound() {
     ctx.assert_row_count("SELECT * FROM t WHERE NOT (age > 30)", 3);
 
     // Compound: AND with multiple conditions
-    ctx.assert_row_count("SELECT * FROM t WHERE age >= 28 AND age <= 32 AND active = true", 2);
+    ctx.assert_row_count(
+        "SELECT * FROM t WHERE age >= 28 AND age <= 32 AND active = true",
+        2,
+    );
 
     // Complex: multiple ORs
     ctx.assert_row_count("SELECT * FROM t WHERE id = 1 OR id = 3 OR id = 5", 3);
@@ -541,7 +579,10 @@ fn test_where_in_between() {
     // BETWEEN
     ctx.assert_row_count("SELECT * FROM t WHERE id BETWEEN 2 AND 4", 3);
     ctx.assert_row_count("SELECT * FROM t WHERE age BETWEEN 28 AND 32", 3);
-    ctx.assert_row_count("SELECT * FROM t WHERE salary BETWEEN 50000.0 AND 58000.0", 3);
+    ctx.assert_row_count(
+        "SELECT * FROM t WHERE salary BETWEEN 50000.0 AND 58000.0",
+        3,
+    );
 
     // NOT BETWEEN
     ctx.assert_row_count("SELECT * FROM t WHERE id NOT BETWEEN 2 AND 4", 2);
@@ -642,7 +683,9 @@ fn test_order_by_multiple_columns() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
     ctx.exec("CREATE TABLE multi_order (category VARCHAR(20), val INT)");
-    ctx.exec("INSERT INTO multi_order VALUES ('A', 3), ('A', 1), ('B', 2), ('A', 2), ('B', 1), ('B', 3)");
+    ctx.exec(
+        "INSERT INTO multi_order VALUES ('A', 3), ('A', 1), ('B', 2), ('A', 2), ('B', 1), ('B', 3)",
+    );
 
     // ORDER BY category ASC, val ASC
     let rows = ctx.query("SELECT category, val FROM multi_order ORDER BY category ASC, val ASC");
@@ -856,7 +899,8 @@ fn test_select_with_where_order_limit_combined() {
     ctx.exec("INSERT INTO t VALUES (1, 'Alice', 30, 50000.0, true), (2, 'Bob', 25, 45000.0, true), (3, 'Charlie', 35, 60000.0, false), (4, 'Diana', 28, 52000.0, true), (5, 'Eve', 32, 58000.0, false)");
 
     // WHERE + ORDER BY + LIMIT
-    let rows = ctx.query("SELECT name, salary FROM t WHERE active = true ORDER BY salary DESC LIMIT 2");
+    let rows =
+        ctx.query("SELECT name, salary FROM t WHERE active = true ORDER BY salary DESC LIMIT 2");
     assert_eq!(rows.len(), 2);
     assert_eq!(get_string(&rows[0], 0), "Diana");
     assert_eq!(get_string(&rows[1], 0), "Alice");
@@ -865,12 +909,15 @@ fn test_select_with_where_order_limit_combined() {
     // salary > 50000: Charlie(60000), Diana(52000), Eve(58000)
     // ORDER BY name ASC: Charlie, Diana, Eve
     // LIMIT 1 OFFSET 1: skip Charlie, return Diana
-    let rows = ctx.query("SELECT name FROM t WHERE salary > 50000 ORDER BY name ASC LIMIT 1 OFFSET 1");
+    let rows =
+        ctx.query("SELECT name FROM t WHERE salary > 50000 ORDER BY name ASC LIMIT 1 OFFSET 1");
     assert_eq!(rows.len(), 1);
     assert_eq!(get_string(&rows[0], 0), "Diana");
 
     // Complex projection
-    let rows = ctx.query("SELECT name, age, age + 10 AS age_plus_10 FROM t WHERE age <= 30 ORDER BY age DESC");
+    let rows = ctx.query(
+        "SELECT name, age, age + 10 AS age_plus_10 FROM t WHERE age <= 30 ORDER BY age DESC",
+    );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Alice");
     assert_eq!(get_i64(&rows[0], 1), 30);
@@ -898,7 +945,10 @@ fn test_data_retrieval_verify_all_values() {
     assert_eq!(get_i64(&rows[0], 0), 1, "Alice id");
     assert_eq!(get_string(&rows[0], 1), "Alice", "Alice name");
     assert_eq!(get_i64(&rows[0], 2), 30, "Alice age");
-    assert!((get_f64(&rows[0], 3) - 50000.0).abs() < 0.001, "Alice salary");
+    assert!(
+        (get_f64(&rows[0], 3) - 50000.0).abs() < 0.001,
+        "Alice salary"
+    );
     assert_eq!(get_i64(&rows[0], 4), 1, "Alice active (1=true)");
 
     // Row 1: Bob
@@ -912,7 +962,10 @@ fn test_data_retrieval_verify_all_values() {
     assert_eq!(get_i64(&rows[2], 0), 3, "Charlie id");
     assert_eq!(get_string(&rows[2], 1), "Charlie", "Charlie name");
     assert_eq!(get_i64(&rows[2], 2), 35, "Charlie age");
-    assert!((get_f64(&rows[2], 3) - 60000.0).abs() < 0.001, "Charlie salary");
+    assert!(
+        (get_f64(&rows[2], 3) - 60000.0).abs() < 0.001,
+        "Charlie salary"
+    );
     assert_eq!(get_i64(&rows[2], 4), 0, "Charlie active (0=false)");
 
     ctx.drop_db(&db);
@@ -975,7 +1028,7 @@ fn test_complex_combined_queries() {
 
     // Complex: WHERE + ORDER BY multiple columns + LIMIT
     let rows = ctx.query(
-        "SELECT name, dept, salary FROM t WHERE dept = 'Engineering' ORDER BY salary DESC LIMIT 3"
+        "SELECT name, dept, salary FROM t WHERE dept = 'Engineering' ORDER BY salary DESC LIMIT 3",
     );
     assert_eq!(rows.len(), 3);
     assert_eq!(get_string(&rows[0], 0), "Frank");
@@ -993,9 +1046,8 @@ fn test_complex_combined_queries() {
     assert_eq!(get_string(&rows[3], 0), "Diana");
 
     // Complex: NOT with compound condition
-    let rows = ctx.query(
-        "SELECT name, dept FROM t WHERE NOT (dept = 'Engineering') ORDER BY name ASC"
-    );
+    let rows =
+        ctx.query("SELECT name, dept FROM t WHERE NOT (dept = 'Engineering') ORDER BY name ASC");
     assert_eq!(rows.len(), 6);
     assert_eq!(get_string(&rows[0], 0), "Bob");
     assert_eq!(get_string(&rows[1], 0), "Diana");

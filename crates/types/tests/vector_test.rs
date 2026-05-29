@@ -1,10 +1,9 @@
 use types::{
+    Bitmap, Block, DataType, Field, ScalarValue, Schema, Vector,
     vector::{
-        Int32Vector, Int64Vector, Float64Vector, BooleanVector, DateVector,
-        StringVector, Int8Vector, Int16Vector, Int128Vector, Float32Vector,
-        StringViewVector,
+        BooleanVector, DateVector, Float32Vector, Float64Vector, Int8Vector, Int16Vector,
+        Int32Vector, Int64Vector, Int128Vector, StringVector, StringViewVector,
     },
-    Bitmap, Block, DataType, Field, Schema, ScalarValue, Vector,
 };
 
 // ===========================================================================
@@ -205,8 +204,8 @@ fn test_boolean_vector_from_vec() {
 fn test_date_vector_operations() {
     // Dates stored as i32 (days since epoch)
     let mut v = DateVector::new();
-    v.push(Some(0));       // epoch
-    v.push(Some(18628));   // ~51 years
+    v.push(Some(0)); // epoch
+    v.push(Some(18628)); // ~51 years
     v.push(None);
 
     assert_eq!(v.len(), 3);
@@ -244,11 +243,7 @@ fn test_string_vector_push() {
 
 #[test]
 fn test_string_vector_null_handling() {
-    let v = StringVector::from_option_vec(vec![
-        Some("a".to_string()),
-        None,
-        Some("c".to_string()),
-    ]);
+    let v = StringVector::from_option_vec(vec![Some("a".to_string()), None, Some("c".to_string())]);
     assert_eq!(v.len(), 3);
     assert_eq!(v.null_count(), 1);
     assert_eq!(v.get(0), Some("a"));
@@ -492,7 +487,9 @@ fn test_schema_from_iterator() {
     let schema: Schema = vec![
         Field::new("x", DataType::Int32, false),
         Field::new("y", DataType::Float64, false),
-    ].into_iter().collect();
+    ]
+    .into_iter()
+    .collect();
 
     assert_eq!(schema.num_fields(), 2);
 }
@@ -555,7 +552,10 @@ fn test_scalar_value_data_type() {
     assert_eq!(ScalarValue::Int64(42).data_type(), DataType::Int64);
     assert_eq!(ScalarValue::Float64(2.5).data_type(), DataType::Float64);
     assert_eq!(ScalarValue::Boolean(true).data_type(), DataType::Boolean);
-    assert_eq!(ScalarValue::String("hello".to_string()).data_type(), DataType::String);
+    assert_eq!(
+        ScalarValue::String("hello".to_string()).data_type(),
+        DataType::String
+    );
     assert_eq!(ScalarValue::Date(0).data_type(), DataType::Date);
     assert_eq!(ScalarValue::Null.data_type(), DataType::Null);
 }
@@ -591,9 +591,7 @@ fn test_block_creation() {
 
 #[test]
 fn test_block_empty() {
-    let schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-    ]);
+    let schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
     let block = Block::empty(schema);
     assert_eq!(block.num_rows(), 0);
     assert!(block.is_empty());
@@ -703,13 +701,9 @@ fn test_block_filter() {
 
 #[test]
 fn test_block_slice() {
-    let schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-    ]);
+    let schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
 
-    let columns = vec![
-        Vector::Int64(Int64Vector::from_vec(vec![1, 2, 3, 4, 5])),
-    ];
+    let columns = vec![Vector::Int64(Int64Vector::from_vec(vec![1, 2, 3, 4, 5]))];
 
     let block = Block::new(schema, columns);
     let sliced = block.slice(1, 3);
@@ -722,9 +716,7 @@ fn test_block_slice() {
 
 #[test]
 fn test_block_concat() {
-    let schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-    ]);
+    let schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
 
     let make_block = |ids: Vec<i64>| -> Block {
         let s = schema.clone();
@@ -749,9 +741,7 @@ fn test_block_concat_empty() {
 
 #[test]
 fn test_block_append() {
-    let schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-    ]);
+    let schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
 
     let mut block = Block::new(
         schema.clone(),
@@ -783,12 +773,27 @@ fn test_block_schema() {
 
 #[test]
 fn test_vector_data_type() {
-    assert_eq!(Vector::Int64(Int64Vector::new()).data_type(), DataType::Int64);
-    assert_eq!(Vector::Int32(Int32Vector::new()).data_type(), DataType::Int32);
-    assert_eq!(Vector::Float64(Float64Vector::new()).data_type(), DataType::Float64);
-    assert_eq!(Vector::Boolean(BooleanVector::new()).data_type(), DataType::Boolean);
+    assert_eq!(
+        Vector::Int64(Int64Vector::new()).data_type(),
+        DataType::Int64
+    );
+    assert_eq!(
+        Vector::Int32(Int32Vector::new()).data_type(),
+        DataType::Int32
+    );
+    assert_eq!(
+        Vector::Float64(Float64Vector::new()).data_type(),
+        DataType::Float64
+    );
+    assert_eq!(
+        Vector::Boolean(BooleanVector::new()).data_type(),
+        DataType::Boolean
+    );
     assert_eq!(Vector::Date(DateVector::new()).data_type(), DataType::Date);
-    assert_eq!(Vector::String(StringVector::new()).data_type(), DataType::String);
+    assert_eq!(
+        Vector::String(StringVector::new()).data_type(),
+        DataType::String
+    );
 }
 
 #[test]
@@ -838,7 +843,10 @@ fn test_vector_slice_dispatch() {
 #[test]
 fn test_vector_null_count() {
     let v = Vector::Int32(Int32Vector::from_nullable_vec(vec![
-        Some(1), None, Some(3), None,
+        Some(1),
+        None,
+        Some(3),
+        None,
     ]));
     assert_eq!(v.null_count(), 2);
 }
@@ -909,9 +917,7 @@ fn test_float32_vector() {
 
 #[test]
 fn test_float64_vector_filter_with_nulls() {
-    let v = Float64Vector::from_nullable_vec(vec![
-        Some(1.0), None, Some(3.0), Some(4.0), None,
-    ]);
+    let v = Float64Vector::from_nullable_vec(vec![Some(1.0), None, Some(3.0), Some(4.0), None]);
     let sel = Bitmap::from_bools(&[true, true, false, true, false]);
     let filtered = v.filter(&sel);
     assert_eq!(filtered.len(), 3);
@@ -951,7 +957,8 @@ fn test_float64_vector_min_max_batch() {
     assert_eq!(v.min_batch(), Some(0.5));
     assert_eq!(v.max_batch(), Some(3.5));
 
-    let v_with_nulls = Float64Vector::from_nullable_vec(vec![Some(10.0), None, Some(5.0), Some(15.0)]);
+    let v_with_nulls =
+        Float64Vector::from_nullable_vec(vec![Some(10.0), None, Some(5.0), Some(15.0)]);
     assert_eq!(v_with_nulls.min_batch(), Some(5.0));
     assert_eq!(v_with_nulls.max_batch(), Some(15.0));
 }
@@ -961,7 +968,11 @@ fn test_int64_vector_avg_batch() {
     let v = Vector::Int64(Int64Vector::from_vec(vec![10, 20, 30]));
     assert_eq!(v.avg_batch(), Some(ScalarValue::Float64(20.0)));
 
-    let v_with_nulls = Vector::Int64(Int64Vector::from_nullable_vec(vec![Some(10), None, Some(30)]));
+    let v_with_nulls = Vector::Int64(Int64Vector::from_nullable_vec(vec![
+        Some(10),
+        None,
+        Some(30),
+    ]));
     assert_eq!(v_with_nulls.avg_batch(), Some(ScalarValue::Float64(20.0)));
 }
 
@@ -976,9 +987,17 @@ fn test_boolean_vector_sum_batch() {
 
 #[test]
 fn test_string_vector_min_max_batch() {
-    let v = Vector::String(StringVector::from_vec(vec!["delta", "alpha", "gamma", "beta"]));
-    assert_eq!(v.min_batch(), Some(ScalarValue::String("alpha".to_string())));
-    assert_eq!(v.max_batch(), Some(ScalarValue::String("gamma".to_string())));
+    let v = Vector::String(StringVector::from_vec(vec![
+        "delta", "alpha", "gamma", "beta",
+    ]));
+    assert_eq!(
+        v.min_batch(),
+        Some(ScalarValue::String("alpha".to_string()))
+    );
+    assert_eq!(
+        v.max_batch(),
+        Some(ScalarValue::String("gamma".to_string()))
+    );
 }
 
 #[test]
@@ -1036,7 +1055,11 @@ fn test_vector_compare_at_string() {
 
 #[test]
 fn test_vector_compare_at_with_nulls() {
-    let v = Vector::Int64(Int64Vector::from_nullable_vec(vec![Some(10), None, Some(20)]));
+    let v = Vector::Int64(Int64Vector::from_nullable_vec(vec![
+        Some(10),
+        None,
+        Some(20),
+    ]));
     // null should be less than non-null
     assert_eq!(v.compare_at(0, 1), std::cmp::Ordering::Greater);
     assert_eq!(v.compare_at(1, 0), std::cmp::Ordering::Less);

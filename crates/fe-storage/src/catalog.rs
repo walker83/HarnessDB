@@ -1,11 +1,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use arrow_schema::Schema as ArrowSchema;
+use async_trait::async_trait;
+use dashmap::DashMap;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
 use datafusion::error::Result as DFResult;
-use dashmap::DashMap;
 
 use fe_catalog::CatalogManager;
 
@@ -66,7 +66,12 @@ impl SchemaProvider for ParquetSchemaProvider {
     fn table_names(&self) -> Vec<String> {
         self.catalog
             .get_database(&self.db_name)
-            .map(|db| db.table_names().into_iter().map(|s| s.to_string()).collect())
+            .map(|db| {
+                db.table_names()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -120,7 +125,10 @@ impl ParquetCatalogProvider {
         // Register custom information_schema with MySQL-compatible types
         schemas.insert(
             "information_schema".to_string(),
-            Arc::new(crate::information_schema::InformationSchemaProvider::new(catalog.clone(), storage.clone())) as Arc<dyn datafusion::catalog::SchemaProvider>,
+            Arc::new(crate::information_schema::InformationSchemaProvider::new(
+                catalog.clone(),
+                storage.clone(),
+            )) as Arc<dyn datafusion::catalog::SchemaProvider>,
         );
         Self {
             catalog,
@@ -145,7 +153,12 @@ impl ParquetCatalogProvider {
     }
 
     /// Create table: writes empty Parquet with schema.
-    pub fn create_table(&self, db: &str, name: &str, schema: Arc<ArrowSchema>) -> Result<(), String> {
+    pub fn create_table(
+        &self,
+        db: &str,
+        name: &str,
+        schema: Arc<ArrowSchema>,
+    ) -> Result<(), String> {
         self.storage
             .create_table(db, name, schema)
             .map_err(|e| format!("Failed to create table: {}", e))
@@ -191,8 +204,6 @@ impl CatalogProvider for ParquetCatalogProvider {
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn datafusion::catalog::SchemaProvider>> {
-        self.schemas
-            .get(name)
-            .map(|r| r.value().clone())
+        self.schemas.get(name).map(|r| r.value().clone())
     }
 }

@@ -287,15 +287,18 @@ impl TaskResultResponse {
 
     /// Get the result data (CSV text) from the first task, if available.
     pub fn result_data(&self) -> Option<&str> {
-        self.tasks.tasks.first().and_then(|task| {
-            task.results.iter().find_map(|r| r.text.as_deref())
-        })
+        self.tasks
+            .tasks
+            .first()
+            .and_then(|task| task.results.iter().find_map(|r| r.text.as_deref()))
     }
 
     /// Get the select result status from the first task, if available.
     pub fn select_result_status(&self) -> Option<&str> {
         self.tasks.tasks.first().and_then(|task| {
-            task.results.iter().find_map(|r| r.select_result_status.as_deref())
+            task.results
+                .iter()
+                .find_map(|r| r.select_result_status.as_deref())
         })
     }
 }
@@ -330,7 +333,11 @@ pub struct ResultElement {
     #[serde(rename = "$value", default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Select result status (e.g. "OK").
-    #[serde(rename = "SelectResultStatus", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "SelectResultStatus",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub select_result_status: Option<String>,
     /// Whether the result is from a SELECT query.
     #[serde(rename = "IsSelect", default, skip_serializing_if = "Option::is_none")]
@@ -467,7 +474,9 @@ impl TableDetailResponse {
         } else {
             Some(TableSchema {
                 columns: ColumnList { columns },
-                partition_keys: Some(PartitionKeys { columns: partition_keys }),
+                partition_keys: Some(PartitionKeys {
+                    columns: partition_keys,
+                }),
             })
         };
 
@@ -816,7 +825,8 @@ mod tests {
 
     #[test]
     fn test_instance_response_round_trip() {
-        let resp = InstanceResponse::new("i-abc", "ALIYUN$roris", "2024-01-01T00:00:00Z", "Running");
+        let resp =
+            InstanceResponse::new("i-abc", "ALIYUN$roris", "2024-01-01T00:00:00Z", "Running");
         let xml = resp.to_xml().expect("serialize");
         let parsed = InstanceResponse::from_xml(&xml).expect("deserialize round-trip");
         assert_eq!(parsed.name, "i-abc");
@@ -904,12 +914,30 @@ mod tests {
 
         // First result should be text
         assert!(resp.tasks.tasks[0].results[0].text.is_some());
-        assert!(resp.tasks.tasks[0].results[0].text.as_ref().unwrap().contains("Alice"));
+        assert!(
+            resp.tasks.tasks[0].results[0]
+                .text
+                .as_ref()
+                .unwrap()
+                .contains("Alice")
+        );
 
         // Second result should be structured
-        assert!(resp.tasks.tasks[0].results[1].select_result_status.is_some());
-        assert_eq!(resp.tasks.tasks[0].results[1].select_result_status.as_deref(), Some("OK"));
-        assert_eq!(resp.tasks.tasks[0].results[1].is_select.as_deref(), Some("true"));
+        assert!(
+            resp.tasks.tasks[0].results[1]
+                .select_result_status
+                .is_some()
+        );
+        assert_eq!(
+            resp.tasks.tasks[0].results[1]
+                .select_result_status
+                .as_deref(),
+            Some("OK")
+        );
+        assert_eq!(
+            resp.tasks.tasks[0].results[1].is_select.as_deref(),
+            Some("true")
+        );
     }
 
     #[test]
@@ -921,8 +949,16 @@ mod tests {
                     name: "AnonymousSQLTask".to_string(),
                     status: "Success".to_string(),
                     results: vec![
-                        ResultElement { text: Some("col1,col2\n1,2".to_string()), select_result_status: None, is_select: None },
-                        ResultElement { text: None, select_result_status: Some("OK".to_string()), is_select: Some("true".to_string()) },
+                        ResultElement {
+                            text: Some("col1,col2\n1,2".to_string()),
+                            select_result_status: None,
+                            is_select: None,
+                        },
+                        ResultElement {
+                            text: None,
+                            select_result_status: Some("OK".to_string()),
+                            is_select: Some("true".to_string()),
+                        },
                     ],
                 }],
             },
@@ -940,8 +976,16 @@ mod tests {
                     name: "MyTask".to_string(),
                     status: "Success".to_string(),
                     results: vec![
-                        ResultElement { text: Some("data".to_string()), select_result_status: None, is_select: None },
-                        ResultElement { text: None, select_result_status: Some("OK".to_string()), is_select: Some("false".to_string()) },
+                        ResultElement {
+                            text: Some("data".to_string()),
+                            select_result_status: None,
+                            is_select: None,
+                        },
+                        ResultElement {
+                            text: None,
+                            select_result_status: Some("OK".to_string()),
+                            is_select: Some("false".to_string()),
+                        },
                     ],
                 }],
             },
@@ -962,8 +1006,16 @@ mod tests {
                     name: "T1".to_string(),
                     status: "Success".to_string(),
                     results: vec![
-                        ResultElement { text: Some("csv,data".to_string()), select_result_status: None, is_select: None },
-                        ResultElement { text: None, select_result_status: Some("OK".to_string()), is_select: Some("true".to_string()) },
+                        ResultElement {
+                            text: Some("csv,data".to_string()),
+                            select_result_status: None,
+                            is_select: None,
+                        },
+                        ResultElement {
+                            text: None,
+                            select_result_status: Some("OK".to_string()),
+                            is_select: Some("true".to_string()),
+                        },
                     ],
                 }],
             },
@@ -971,7 +1023,10 @@ mod tests {
         let xml = original.to_xml().expect("serialize");
         let parsed = TaskResultResponse::from_xml(&xml).expect("deserialize round-trip");
         assert_eq!(parsed.result_data(), original.result_data());
-        assert_eq!(parsed.select_result_status(), original.select_result_status());
+        assert_eq!(
+            parsed.select_result_status(),
+            original.select_result_status()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1025,7 +1080,11 @@ mod tests {
         let resp = TablesResponse::new(vec![]);
         let xml = resp.to_xml().expect("serialize");
         // quick-xml may produce either <Tables/> or <Tables></Tables>
-        assert!(xml.contains("Tables"), "Expected Tables element in: {}", xml);
+        assert!(
+            xml.contains("Tables"),
+            "Expected Tables element in: {}",
+            xml
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1097,8 +1156,14 @@ mod tests {
     #[test]
     fn test_table_detail_response_no_schema() {
         let resp = TableDetailResponse::new(
-            "empty", "ALIYUN$roris", "2024-01-01T00:00:00Z",
-            "2024-01-01T00:00:00Z", "MANUAL", vec![], vec![], 0,
+            "empty",
+            "ALIYUN$roris",
+            "2024-01-01T00:00:00Z",
+            "2024-01-01T00:00:00Z",
+            "MANUAL",
+            vec![],
+            vec![],
+            0,
         );
         let xml = resp.to_xml().expect("serialize");
         assert!(!xml.contains("<TableSchema>"), "should omit empty schema");
@@ -1111,9 +1176,12 @@ mod tests {
     #[test]
     fn test_project_response_to_xml() {
         let resp = ProjectResponse::new(
-            "my_project", "ALIYUN$roris",
-            "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z",
-            "AVAILABLE", "cn-hangzhou",
+            "my_project",
+            "ALIYUN$roris",
+            "2024-01-01T00:00:00Z",
+            "2024-01-01T00:00:00Z",
+            "AVAILABLE",
+            "cn-hangzhou",
         );
         let xml = resp.to_xml().expect("serialize");
         assert!(xml.contains("<Project>"));
@@ -1141,9 +1209,12 @@ mod tests {
     #[test]
     fn test_project_response_round_trip() {
         let resp = ProjectResponse::new(
-            "rt_test", "ALIYUN$test",
-            "2024-06-01T00:00:00Z", "2024-06-01T12:00:00Z",
-            "AVAILABLE", "cn-hangzhou",
+            "rt_test",
+            "ALIYUN$test",
+            "2024-06-01T00:00:00Z",
+            "2024-06-01T12:00:00Z",
+            "AVAILABLE",
+            "cn-hangzhou",
         );
         let xml = resp.to_xml().expect("serialize");
         let parsed = ProjectResponse::from_xml(&xml).expect("deserialize round-trip");

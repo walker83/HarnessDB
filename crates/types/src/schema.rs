@@ -39,7 +39,8 @@ impl Schema {
     }
 
     pub fn project(&self, indices: &[usize]) -> Self {
-        let fields: Vec<Field> = indices.iter()
+        let fields: Vec<Field> = indices
+            .iter()
             .filter_map(|&i| self.fields.get(i).cloned())
             .collect();
         Self { fields }
@@ -48,6 +49,8 @@ impl Schema {
 
 impl FromIterator<Field> for Schema {
     fn from_iter<I: IntoIterator<Item = Field>>(iter: I) -> Self {
-        Self { fields: iter.into_iter().collect() }
+        Self {
+            fields: iter.into_iter().collect(),
+        }
     }
 }

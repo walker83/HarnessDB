@@ -1,9 +1,11 @@
-use std::sync::Arc;
 use anyhow::Result;
-use mysql_protocol::server::{MysqlServer, QueryHandler, QueryResult, ServerConfig, ColumnDef, ColumnType};
+use datafusion::arrow::array::{Array, BooleanArray, Float64Array, Int64Array, StringArray};
+use datafusion::arrow::datatypes::DataType as ArrowDataType;
+use mysql_protocol::server::{
+    ColumnDef, ColumnType, MysqlServer, QueryHandler, QueryResult, ServerConfig,
+};
+use std::sync::Arc;
 use tpch_bench::TpchBenchmark;
-use datafusion::arrow::array::{Array, StringArray, Int64Array, Float64Array, BooleanArray};
-use datafusion::arrow::datatypes::{DataType as ArrowDataType};
 
 struct TpchQueryHandler {
     bench: TpchBenchmark,
@@ -29,7 +31,10 @@ impl QueryHandler for TpchQueryHandler {
         // Show databases
         if sql_upper == "SHOW DATABASES" {
             return QueryResult::with_rows(
-                vec![ColumnDef { name: "Database".to_string(), col_type: ColumnType::String }],
+                vec![ColumnDef {
+                    name: "Database".to_string(),
+                    col_type: ColumnType::String,
+                }],
                 vec![vec![Some("tpch".to_string())]],
             );
         }
@@ -37,7 +42,10 @@ impl QueryHandler for TpchQueryHandler {
         // Show tables
         if sql_upper == "SHOW TABLES" {
             return QueryResult::with_rows(
-                vec![ColumnDef { name: "Tables_in_tpch".to_string(), col_type: ColumnType::String }],
+                vec![ColumnDef {
+                    name: "Tables_in_tpch".to_string(),
+                    col_type: ColumnType::String,
+                }],
                 vec![
                     vec![Some("nation".to_string())],
                     vec![Some("region".to_string())],
@@ -77,9 +85,15 @@ impl TpchQueryHandler {
             3
         } else if sql.contains("FROM ORDERS") && sql.contains("O_ORDERPRIORITY") {
             4
-        } else if sql.contains("FROM CUSTOMER, ORDERS, LINEITEM, SUPPLIER") && sql.contains("N_NAME") && !sql.contains("1995") {
+        } else if sql.contains("FROM CUSTOMER, ORDERS, LINEITEM, SUPPLIER")
+            && sql.contains("N_NAME")
+            && !sql.contains("1995")
+        {
             5
-        } else if sql.contains("FROM LINEITEM") && sql.contains("L_DISCOUNT") && sql.contains("L_QUANTITY") {
+        } else if sql.contains("FROM LINEITEM")
+            && sql.contains("L_DISCOUNT")
+            && sql.contains("L_QUANTITY")
+        {
             6
         } else if sql.contains("1995") {
             7
@@ -127,9 +141,18 @@ impl TpchQueryHandler {
         // Return row count info
         QueryResult::with_rows(
             vec![
-                ColumnDef { name: "query".to_string(), col_type: ColumnType::String },
-                ColumnDef { name: "rows".to_string(), col_type: ColumnType::Int },
-                ColumnDef { name: "time_us".to_string(), col_type: ColumnType::Int },
+                ColumnDef {
+                    name: "query".to_string(),
+                    col_type: ColumnType::String,
+                },
+                ColumnDef {
+                    name: "rows".to_string(),
+                    col_type: ColumnType::Int,
+                },
+                ColumnDef {
+                    name: "time_us".to_string(),
+                    col_type: ColumnType::Int,
+                },
             ],
             vec![vec![
                 Some(format!("Q{}", query_num)),

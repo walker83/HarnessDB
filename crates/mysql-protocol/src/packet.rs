@@ -12,8 +12,7 @@ use crate::value::{encode_lenenc_int, encode_lenenc_str};
 pub const MAX_PACKET_SIZE: usize = 0x00FF_FFFF;
 
 /// Default server capability flags.
-pub const DEFAULT_CAPABILITIES: u32 =
-    CapabilityFlags::PROTOCOL_41
+pub const DEFAULT_CAPABILITIES: u32 = CapabilityFlags::PROTOCOL_41
     | CapabilityFlags::PLUGIN_AUTH
     | CapabilityFlags::SECURE_CONNECTION
     | CapabilityFlags::CONNECT_WITH_DB
@@ -356,24 +355,25 @@ impl HandshakeResponse {
 
         // Auth response - starts right after username null terminator
         let auth_start = username_end + 1;
-        let (auth_response, auth_total_len) = if (capability_flags & CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA) != 0 {
-            // Length-encoded auth response
-            let (len, n) = read_lenenc_int(&payload[auth_start..])?;
-            let data = payload[auth_start + n..auth_start + n + len].to_vec();
-            (data, n + len)
-        } else if (capability_flags & CapabilityFlags::SECURE_CONNECTION) != 0 {
-            let len = payload[auth_start] as usize;
-            let data = payload[auth_start + 1..auth_start + 1 + len].to_vec();
-            (data, 1 + len)
-        } else {
-            // Null-terminated
-            let end = payload[auth_start..]
-                .iter()
-                .position(|&b| b == 0)
-                .unwrap_or(payload.len() - auth_start);
-            let data = payload[auth_start..auth_start + end].to_vec();
-            (data, end + 1) // +1 for null terminator
-        };
+        let (auth_response, auth_total_len) =
+            if (capability_flags & CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA) != 0 {
+                // Length-encoded auth response
+                let (len, n) = read_lenenc_int(&payload[auth_start..])?;
+                let data = payload[auth_start + n..auth_start + n + len].to_vec();
+                (data, n + len)
+            } else if (capability_flags & CapabilityFlags::SECURE_CONNECTION) != 0 {
+                let len = payload[auth_start] as usize;
+                let data = payload[auth_start + 1..auth_start + 1 + len].to_vec();
+                (data, 1 + len)
+            } else {
+                // Null-terminated
+                let end = payload[auth_start..]
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(payload.len() - auth_start);
+                let data = payload[auth_start..auth_start + end].to_vec();
+                (data, end + 1) // +1 for null terminator
+            };
 
         // Database - starts after auth response
         let db_start = auth_start + auth_total_len;
@@ -403,7 +403,8 @@ impl HandshakeResponse {
                 .iter()
                 .position(|&b| b == 0)
                 .unwrap_or(payload.len() - plugin_start);
-            let name = String::from_utf8_lossy(&payload[plugin_start..plugin_start + end]).to_string();
+            let name =
+                String::from_utf8_lossy(&payload[plugin_start..plugin_start + end]).to_string();
             Some(name)
         } else {
             None
@@ -483,7 +484,12 @@ pub fn make_ok_packet(
 // ---------------------------------------------------------------------------
 
 /// Build an ERR response packet.
-pub fn make_err_packet(seq_id: u8, error_code: u16, sql_state: &[u8; 5], message: &str) -> BytesMut {
+pub fn make_err_packet(
+    seq_id: u8,
+    error_code: u16,
+    sql_state: &[u8; 5],
+    message: &str,
+) -> BytesMut {
     let mut pb = PacketBuilder::new(seq_id);
     pb.put_u8(0xFF); // ERR header byte
     pb.put_u16_le(error_code);
@@ -584,19 +590,19 @@ impl Column {
         let mut pb = PacketBuilder::new(seq_id);
 
         // For Protocol::ColumnDefinition41, we use lenenc encoding
-        pb.lenenc_str("def");        // catalog (always "def")
+        pb.lenenc_str("def"); // catalog (always "def")
         pb.lenenc_str(&self.schema);
         pb.lenenc_str(&self.table);
         pb.lenenc_str(&self.org_table);
         pb.lenenc_str(&self.name);
         pb.lenenc_str(&self.org_name);
-        pb.lenenc_int(0x0C);         // length of fixed-length fields (always 0x0C)
+        pb.lenenc_int(0x0C); // length of fixed-length fields (always 0x0C)
         pb.put_u16_le(self.charset as u16);
         pb.put_u32_le(self.column_length);
         pb.put_u8(self.column_type);
         pb.put_u16_le(self.flags);
         pb.put_u8(self.decimals);
-        pb.put_u16_le(0x0000);       // filler
+        pb.put_u16_le(0x0000); // filler
 
         let (packet, _) = pb.finish();
         packet
@@ -689,16 +695,16 @@ pub fn scalar_to_text_bytes(val: &ScalarValue) -> Option<Vec<u8>> {
             let s = format!("{f}");
             s.into_bytes()
         }),
-        ScalarValue::Date(_days) => {
-            Some(b"1970-01-01".to_vec())
-        }
-        ScalarValue::DateTime(_micros) => {
-            Some(b"1970-01-01 00:00:00".to_vec())
-        }
+        ScalarValue::Date(_days) => Some(b"1970-01-01".to_vec()),
+        ScalarValue::DateTime(_micros) => Some(b"1970-01-01 00:00:00".to_vec()),
         ScalarValue::String(s) => Some(s.clone().into_bytes()),
         ScalarValue::Binary(b) => Some(b.clone()),
         ScalarValue::Array(_) => Some(b"[]".to_vec()),
-        ScalarValue::Json(j) => Some(serde_json::to_string(j).unwrap_or_else(|_| "null".to_string()).into_bytes()),
+        ScalarValue::Json(j) => Some(
+            serde_json::to_string(j)
+                .unwrap_or_else(|_| "null".to_string())
+                .into_bytes(),
+        ),
         ScalarValue::Float32Array(arr) => {
             let items: Vec<String> = arr.iter().map(|f| f.to_string()).collect();
             Some(format!("[{}]", items.join(",")).into_bytes())
@@ -811,9 +817,24 @@ pub enum BinaryValue {
     /// Date (MYSQL_TYPE_DATE)
     Date { year: u16, month: u8, day: u8 },
     /// DateTime (MYSQL_TYPE_DATETIME)
-    DateTime { year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8, micros: u32 },
+    DateTime {
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        micros: u32,
+    },
     /// Time (MYSQL_TYPE_TIME)
-    Time { is_neg: bool, days: u32, hours: u8, minutes: u8, seconds: u8, micros: u32 },
+    Time {
+        is_neg: bool,
+        days: u32,
+        hours: u8,
+        minutes: u8,
+        seconds: u8,
+        micros: u32,
+    },
 }
 
 /// Encode a binary value into the packet builder.
@@ -858,7 +879,15 @@ fn encode_binary_value(pb: &mut PacketBuilder, val: &BinaryValue) {
             pb.put_u8(*month);
             pb.put_u8(*day);
         }
-        BinaryValue::DateTime { year, month, day, hour, minute, second, micros } => {
+        BinaryValue::DateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            micros,
+        } => {
             if *micros == 0 {
                 pb.put_u8(7); // length without micros
                 pb.put_u16_le(*year);
@@ -878,7 +907,14 @@ fn encode_binary_value(pb: &mut PacketBuilder, val: &BinaryValue) {
                 pb.put_u32_le(*micros);
             }
         }
-        BinaryValue::Time { is_neg, days, hours, minutes, seconds, micros } => {
+        BinaryValue::Time {
+            is_neg,
+            days,
+            hours,
+            minutes,
+            seconds,
+            micros,
+        } => {
             if *micros == 0 {
                 pb.put_u8(8); // length without micros
                 pb.put_u8(if *is_neg { 1 } else { 0 });
@@ -903,24 +939,12 @@ fn encode_binary_value(pb: &mut PacketBuilder, val: &BinaryValue) {
 pub fn text_to_binary(text: Option<&str>, col_type: u8) -> Option<BinaryValue> {
     let text = text?;
     match col_type {
-        column_type::TINY => {
-            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
-        }
-        column_type::SHORT => {
-            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
-        }
-        column_type::LONG => {
-            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
-        }
-        column_type::LONGLONG => {
-            text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n))
-        }
-        column_type::FLOAT => {
-            text.parse::<f64>().ok().map(|f| BinaryValue::Double(f))
-        }
-        column_type::DOUBLE => {
-            text.parse::<f64>().ok().map(|f| BinaryValue::Double(f))
-        }
+        column_type::TINY => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
+        column_type::SHORT => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
+        column_type::LONG => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
+        column_type::LONGLONG => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
+        column_type::FLOAT => text.parse::<f64>().ok().map(|f| BinaryValue::Double(f)),
+        column_type::DOUBLE => text.parse::<f64>().ok().map(|f| BinaryValue::Double(f)),
         column_type::VAR_STRING | column_type::VARCHAR | column_type::BLOB => {
             Some(BinaryValue::String(text.as_bytes().to_vec()))
         }
@@ -951,7 +975,11 @@ pub fn text_to_binary(text: Option<&str>, col_type: u8) -> Option<BinaryValue> {
                         hour: time_parts[0].parse().ok()?,
                         minute: time_parts[1].parse().ok()?,
                         second: time_parts[2].parse().ok()?,
-                        micros: if time_parts.len() > 3 { time_parts[3].parse().ok()? } else { 0 },
+                        micros: if time_parts.len() > 3 {
+                            time_parts[3].parse().ok()?
+                        } else {
+                            0
+                        },
                     })
                 } else {
                     Some(BinaryValue::String(text.as_bytes().to_vec()))

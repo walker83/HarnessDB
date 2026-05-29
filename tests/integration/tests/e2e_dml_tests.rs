@@ -6,16 +6,16 @@
 // IMPORTANT: Server returns ALL values as Bytes (strings). Use get_i64(),
 // get_f64(), get_string(), is_null() helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === PORT (unique per test file) ===
 const MYSQL_PORT: u16 = 29940;
@@ -40,14 +40,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -80,7 +87,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -112,7 +121,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -136,7 +148,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -146,7 +159,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -157,7 +171,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -172,7 +193,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -184,8 +206,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -223,7 +252,10 @@ fn test_insert_single_row_basic_types() {
     assert_eq!(rows.len(), 1);
     assert_eq!(get_i64(&rows[0], 0), 1, "id should be 1");
     assert_eq!(get_string(&rows[0], 1), "Alice", "name should be Alice");
-    assert!((get_f64(&rows[0], 2) - 95.5).abs() < 0.01, "score should be 95.5");
+    assert!(
+        (get_f64(&rows[0], 2) - 95.5).abs() < 0.01,
+        "score should be 95.5"
+    );
     // Note: Server may return empty/NULL for DATE values
     let date_str = get_string(&rows[0], 3);
     if !date_str.is_empty() {
@@ -271,7 +303,10 @@ fn test_insert_negative_numbers() {
     if is_null(&rows[0], 2) {
         // Server sends negative DOUBLE as NULL — accept this
     } else {
-        assert!((get_f64(&rows[0], 2) - (-99.99)).abs() < 0.01, "balance should be -99.99");
+        assert!(
+            (get_f64(&rows[0], 2) - (-99.99)).abs() < 0.01,
+            "balance should be -99.99"
+        );
     }
 
     ctx.drop_db(&db);
@@ -288,8 +323,15 @@ fn test_insert_large_numbers() {
     let rows = ctx.query("SELECT * FROM t_large");
     assert_eq!(rows.len(), 1);
     assert_eq!(get_i64(&rows[0], 0), 1);
-    assert_eq!(get_i64(&rows[0], 1), 2147483647, "big_int should be 2147483647");
-    assert!((get_f64(&rows[0], 2) - 999999.999).abs() < 0.001, "big_float should be 999999.999");
+    assert_eq!(
+        get_i64(&rows[0], 1),
+        2147483647,
+        "big_int should be 2147483647"
+    );
+    assert!(
+        (get_f64(&rows[0], 2) - 999999.999).abs() < 0.001,
+        "big_float should be 999999.999"
+    );
 
     ctx.drop_db(&db);
 }
@@ -423,7 +465,9 @@ fn test_insert_five_rows() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE t5 (id INT, label VARCHAR(20)) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
-    ctx.exec("INSERT INTO t5 VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five')");
+    ctx.exec(
+        "INSERT INTO t5 VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five')",
+    );
 
     let rows = ctx.query("SELECT * FROM t5 ORDER BY id");
     assert_eq!(rows.len(), 5);
@@ -446,7 +490,13 @@ fn test_insert_ten_rows() {
     let rows = ctx.query("SELECT * FROM t10 ORDER BY id");
     assert_eq!(rows.len(), 10);
     for i in 0..10 {
-        assert_eq!(get_i64(&rows[i], 0), (i + 1) as i64, "row {} should have id {}", i, i + 1);
+        assert_eq!(
+            get_i64(&rows[i], 0),
+            (i + 1) as i64,
+            "row {} should have id {}",
+            i,
+            i + 1
+        );
     }
 
     ctx.drop_db(&db);
@@ -610,11 +660,17 @@ fn test_update_single_column() {
 
     let rows = ctx.query("SELECT score FROM t_up1 WHERE id = 1");
     assert_eq!(rows.len(), 1);
-    assert!((get_f64(&rows[0], 0) - 95.0).abs() < 0.01, "Alice score should be 95");
+    assert!(
+        (get_f64(&rows[0], 0) - 95.0).abs() < 0.01,
+        "Alice score should be 95"
+    );
 
     let rows = ctx.query("SELECT score FROM t_up1 WHERE id = 2");
     assert_eq!(rows.len(), 1);
-    assert!((get_f64(&rows[0], 0) - 80.0).abs() < 0.01, "Bob score unchanged at 80");
+    assert!(
+        (get_f64(&rows[0], 0) - 80.0).abs() < 0.01,
+        "Bob score unchanged at 80"
+    );
 
     ctx.drop_db(&db);
 }
@@ -641,7 +697,9 @@ fn test_update_where_eq() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_up3 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_up3 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_up3 VALUES (1, 10), (2, 20), (3, 30)");
     ctx.exec("UPDATE t_up3 SET val = 99 WHERE id = 2");
 
@@ -659,7 +717,9 @@ fn test_update_where_gt() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_up4 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_up4 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_up4 VALUES (1, 50), (2, 100), (3, 150)");
     ctx.exec("UPDATE t_up4 SET val = 0 WHERE val > 100");
 
@@ -667,7 +727,11 @@ fn test_update_where_gt() {
     assert_eq!(get_i64(&rows[0], 0), 0, "id=3 val>100 should become 0");
 
     let rows = ctx.query("SELECT val FROM t_up4 WHERE id = 2");
-    assert_eq!(get_i64(&rows[0], 0), 100, "id=2 val=100 not >100, unchanged");
+    assert_eq!(
+        get_i64(&rows[0], 0),
+        100,
+        "id=2 val=100 not >100, unchanged"
+    );
 
     ctx.drop_db(&db);
 }
@@ -677,7 +741,9 @@ fn test_update_where_lt() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_up5 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_up5 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_up5 VALUES (1, 10), (2, 20), (3, 30)");
 
     // Known limitation: negative literal in UPDATE SET may not work correctly.
@@ -699,7 +765,9 @@ fn test_update_where_gte() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_up6 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_up6 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_up6 VALUES (1, 50), (2, 100), (3, 100)");
     ctx.exec("UPDATE t_up6 SET val = 200 WHERE val >= 100");
 
@@ -718,7 +786,9 @@ fn test_update_where_lte() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_up7 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_up7 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_up7 VALUES (1, 5), (2, 10), (3, 15)");
     ctx.exec("UPDATE t_up7 SET val = 0 WHERE val <= 10");
 
@@ -740,11 +810,20 @@ fn test_update_where_and() {
     ctx.exec("UPDATE t_up8 SET score = 0.0 WHERE id > 1 AND score < 80");
 
     let rows = ctx.query("SELECT score FROM t_up8 WHERE id = 2");
-    assert!((get_f64(&rows[0], 0) - 0.0).abs() < 0.01, "Bob score updated");
+    assert!(
+        (get_f64(&rows[0], 0) - 0.0).abs() < 0.01,
+        "Bob score updated"
+    );
     let rows = ctx.query("SELECT score FROM t_up8 WHERE id = 3");
-    assert!((get_f64(&rows[0], 0) - 0.0).abs() < 0.01, "Charlie score updated");
+    assert!(
+        (get_f64(&rows[0], 0) - 0.0).abs() < 0.01,
+        "Charlie score updated"
+    );
     let rows = ctx.query("SELECT score FROM t_up8 WHERE id = 1");
-    assert!((get_f64(&rows[0], 0) - 90.0).abs() < 0.01, "Alice score unchanged");
+    assert!(
+        (get_f64(&rows[0], 0) - 90.0).abs() < 0.01,
+        "Alice score unchanged"
+    );
 
     ctx.drop_db(&db);
 }
@@ -755,7 +834,9 @@ fn test_update_where_or() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE t_up9 (id INT, name VARCHAR(20), dept VARCHAR(20)) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
-    ctx.exec("INSERT INTO t_up9 VALUES (1, 'Alice', 'Eng'), (2, 'Bob', 'Sales'), (3, 'Charlie', 'Eng')");
+    ctx.exec(
+        "INSERT INTO t_up9 VALUES (1, 'Alice', 'Eng'), (2, 'Bob', 'Sales'), (3, 'Charlie', 'Eng')",
+    );
     ctx.exec("UPDATE t_up9 SET dept = 'Admin' WHERE id = 1 OR id = 3");
 
     let rows = ctx.query("SELECT dept FROM t_up9 WHERE id = 1");
@@ -792,7 +873,9 @@ fn test_update_where_between() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_up11 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_up11 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_up11 VALUES (1, 5), (2, 10), (3, 15), (4, 20)");
     ctx.exec("UPDATE t_up11 SET val = 0 WHERE val BETWEEN 10 AND 15");
 
@@ -846,7 +929,9 @@ fn test_update_no_matching_rows() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_up14 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_up14 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_up14 VALUES (1, 10), (2, 20)");
     ctx.exec("UPDATE t_up14 SET val = 999 WHERE id = 999");
 
@@ -905,7 +990,9 @@ fn test_delete_where_gt() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_del2 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_del2 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_del2 VALUES (1, 10), (2, 20), (3, 30)");
     ctx.exec("DELETE FROM t_del2 WHERE val > 20");
 
@@ -922,7 +1009,9 @@ fn test_delete_where_lt() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_del3 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_del3 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_del3 VALUES (1, 5), (2, 15), (3, 25)");
     ctx.exec("DELETE FROM t_del3 WHERE val < 15");
 
@@ -988,7 +1077,9 @@ fn test_delete_where_between() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_del7 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_del7 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_del7 VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
     ctx.exec("DELETE FROM t_del7 WHERE val BETWEEN 20 AND 30");
 
@@ -1021,7 +1112,9 @@ fn test_delete_all_rows() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_del9 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_del9 (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_del9 VALUES (1, 10), (2, 20), (3, 30)");
     ctx.exec("DELETE FROM t_del9");
 
@@ -1103,7 +1196,10 @@ fn test_verify_insert_then_select() {
     assert_eq!(get_i64(&rows[0], 0), 3, "COUNT after insert");
 
     let rows = ctx.query("SELECT SUM(salary) FROM t_v1");
-    assert!((get_f64(&rows[0], 0) - 180000.0).abs() < 0.01, "SUM(salary)=180000");
+    assert!(
+        (get_f64(&rows[0], 0) - 180000.0).abs() < 0.01,
+        "SUM(salary)=180000"
+    );
 
     ctx.drop_db(&db);
 }
@@ -1153,7 +1249,9 @@ fn test_multi_dml_sequence() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_seq (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_seq (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_seq VALUES (1, 10), (2, 20), (3, 30)");
 
     // Known limitation: arithmetic in UPDATE SET (val = val + 5) may not work.
@@ -1177,7 +1275,10 @@ fn test_multi_dml_sequence() {
 
     // Final verify
     let rows = ctx.query("SELECT SUM(val) FROM t_seq");
-    assert!((get_f64(&rows[0], 0) - 100.0).abs() < 0.01, "SUM=25+35+40=100");
+    assert!(
+        (get_f64(&rows[0], 0) - 100.0).abs() < 0.01,
+        "SUM=25+35+40=100"
+    );
 
     ctx.drop_db(&db);
 }
@@ -1211,7 +1312,9 @@ fn test_insert_many_rows_and_count() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_many (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_many (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
 
     // Build a single INSERT with 55 rows
     let mut values = String::from("INSERT INTO t_many VALUES ");
@@ -1230,7 +1333,11 @@ fn test_insert_many_rows_and_count() {
     let rows = ctx.query("SELECT SUM(val) FROM t_many");
     // SUM(100, 200, ..., 5500) = 100 * (55*56/2) = 100 * 1540 = 154000
     let expected_sum: i64 = 55i64 * (55 + 1) / 2 * 100;
-    assert!((get_f64(&rows[0], 0) - expected_sum as f64).abs() < 0.01, "SUM should be {}", expected_sum);
+    assert!(
+        (get_f64(&rows[0], 0) - expected_sum as f64).abs() < 0.01,
+        "SUM should be {}",
+        expected_sum
+    );
 
     ctx.drop_db(&db);
 }
@@ -1261,7 +1368,9 @@ fn test_update_then_delete_same_rows() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
 
-    ctx.exec("CREATE TABLE t_ud (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1");
+    ctx.exec(
+        "CREATE TABLE t_ud (id INT, val INT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1",
+    );
     ctx.exec("INSERT INTO t_ud VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
 
     // Mark rows for deletion by setting val=0
@@ -1319,7 +1428,10 @@ fn test_update_double_with_compound_condition() {
     let rows = ctx.query("SELECT id, grade FROM t_compound WHERE id = 1");
     assert_eq!(get_string(&rows[0], 1), "A", "Alice grade A");
     let rows = ctx.query("SELECT id, score FROM t_compound WHERE id = 3");
-    assert!((get_f64(&rows[0], 1) - 100.0).abs() < 0.01, "Charlie score = 100.0");
+    assert!(
+        (get_f64(&rows[0], 1) - 100.0).abs() < 0.01,
+        "Charlie score = 100.0"
+    );
     let rows = ctx.query("SELECT id, grade FROM t_compound WHERE id = 2");
     assert_eq!(get_string(&rows[0], 1), "C", "Bob unchanged");
 

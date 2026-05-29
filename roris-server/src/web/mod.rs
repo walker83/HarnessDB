@@ -2,11 +2,11 @@
 
 pub mod routes;
 
-use std::sync::Arc;
-use crate::handler_struct::RorisQueryHandler;
 use crate::connection_tracker::ConnectionTracker;
+use crate::handler_struct::RorisQueryHandler;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
 pub struct WebState {
@@ -48,10 +48,16 @@ impl WebState {
     }
 }
 
-pub async fn start_web_server(state: Arc<WebState>, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use axum::{Router, routing::{get, post}};
-    use tower_http::cors::CorsLayer;
+pub async fn start_web_server(
+    state: Arc<WebState>,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use axum::{
+        Router,
+        routing::{get, post},
+    };
     use std::net::SocketAddr;
+    use tower_http::cors::CorsLayer;
 
     let app = Router::new()
         .route("/", get(routes::serve_editor))

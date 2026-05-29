@@ -1,5 +1,5 @@
 use crate::DataType;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ScalarValue {

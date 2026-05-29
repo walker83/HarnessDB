@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::Field;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DataType {
     Null,
@@ -31,13 +33,6 @@ pub enum DataType {
 pub struct DecimalType {
     pub precision: u8,
     pub scale: u8,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Field {
-    pub name: String,
-    pub data_type: DataType,
-    pub nullable: bool,
 }
 
 impl DataType {

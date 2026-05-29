@@ -4,16 +4,16 @@
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 29930;
@@ -38,14 +38,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -78,7 +85,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -110,7 +119,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -134,7 +146,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -144,7 +157,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -155,7 +169,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -171,7 +192,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -183,8 +205,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -223,7 +252,11 @@ fn test_create_database_basic() {
     // Verify existence via SHOW DATABASES
     let rows = ctx.query("SHOW DATABASES");
     let names: Vec<String> = rows.iter().map(|r| get_string(r, 0)).collect();
-    assert!(names.contains(&db), "Database '{}' should appear in SHOW DATABASES", db);
+    assert!(
+        names.contains(&db),
+        "Database '{}' should appear in SHOW DATABASES",
+        db
+    );
     ctx.drop_db(&db);
 }
 
@@ -291,7 +324,10 @@ fn test_create_database_drop_then_recreate() {
     ctx.exec(&format!("CREATE DATABASE {}", db));
     let rows = ctx.query("SHOW DATABASES");
     let names: Vec<String> = rows.iter().map(|r| get_string(r, 0)).collect();
-    assert!(names.contains(&db), "Recreated database should appear in SHOW DATABASES");
+    assert!(
+        names.contains(&db),
+        "Recreated database should appear in SHOW DATABASES"
+    );
     ctx.drop_db(&db);
 }
 
@@ -309,7 +345,10 @@ fn test_create_database_name_with_underscores() {
 #[test]
 fn test_create_database_long_name() {
     let ctx = TestContext::new();
-    let db = format!("a_very_long_database_name_for_testing_purposes_{}", ctx.new_db_name());
+    let db = format!(
+        "a_very_long_database_name_for_testing_purposes_{}",
+        ctx.new_db_name()
+    );
     ctx.exec(&format!("CREATE DATABASE {}", db));
     let rows = ctx.query("SHOW DATABASES");
     let names: Vec<String> = rows.iter().map(|r| get_string(r, 0)).collect();
@@ -348,7 +387,10 @@ fn test_drop_database_basic() {
     ctx.exec(&format!("DROP DATABASE {}", db));
     let rows = ctx.query("SHOW DATABASES");
     let names: Vec<String> = rows.iter().map(|r| get_string(r, 0)).collect();
-    assert!(!names.contains(&db), "Dropped database should not appear in SHOW DATABASES");
+    assert!(
+        !names.contains(&db),
+        "Dropped database should not appear in SHOW DATABASES"
+    );
 }
 
 #[test]
@@ -390,7 +432,11 @@ fn test_drop_database_removes_tables() {
     ctx.exec(&format!("CREATE DATABASE {}", db));
     ctx.exec(&format!("USE {}", db));
     let rows = ctx.query("SHOW TABLES");
-    assert_eq!(rows.len(), 0, "Tables should be removed when database is dropped");
+    assert_eq!(
+        rows.len(),
+        0,
+        "Tables should be removed when database is dropped"
+    );
     ctx.drop_db(&db);
 }
 
@@ -504,7 +550,11 @@ fn test_create_table_double() {
     let rows = ctx.query("SELECT * FROM t_double");
     assert_eq!(rows.len(), 1);
     let v = get_f64(&rows[0], 1);
-    assert!((v - 3.14159265358979).abs() < 0.0001, "Expected ~3.14159, got {}", v);
+    assert!(
+        (v - 3.14159265358979).abs() < 0.0001,
+        "Expected ~3.14159, got {}",
+        v
+    );
     ctx.drop_db(&db);
 }
 
@@ -576,9 +626,17 @@ fn test_create_table_datetime() {
     let rows = ctx.query("SELECT * FROM t_dt ORDER BY id");
     assert_eq!(rows.len(), 2);
     let s1 = get_string(&rows[0], 1);
-    assert!(s1 == "2024-01-15 10:30:00" || s1.is_empty(), "DATETIME value: '{}'", s1);
+    assert!(
+        s1 == "2024-01-15 10:30:00" || s1.is_empty(),
+        "DATETIME value: '{}'",
+        s1
+    );
     let s2 = get_string(&rows[1], 1);
-    assert!(s2 == "2024-06-30 23:59:59" || s2.is_empty(), "DATETIME value: '{}'", s2);
+    assert!(
+        s2 == "2024-06-30 23:59:59" || s2.is_empty(),
+        "DATETIME value: '{}'",
+        s2
+    );
     ctx.drop_db(&db);
 }
 
@@ -632,7 +690,7 @@ fn test_create_table_multiple_types() {
             salary DOUBLE,
             active BOOLEAN,
             birth_date DATE
-        )"
+        )",
     );
     ctx.exec("INSERT INTO t_multi VALUES (1, 'John', 75000.50, true, '1990-05-20')");
     let rows = ctx.query("SELECT * FROM t_multi");
@@ -678,11 +736,9 @@ fn test_create_table_many_columns() {
             c01 INT, c02 INT, c03 INT, c04 INT, c05 INT,
             c06 INT, c07 INT, c08 INT, c09 INT, c10 INT,
             c11 STRING, c12 STRING, c13 STRING, c14 STRING, c15 STRING
-        )"
+        )",
     );
-    ctx.exec(
-        "INSERT INTO t_many VALUES (1,2,3,4,5,6,7,8,9,10,'a','b','c','d','e')"
-    );
+    ctx.exec("INSERT INTO t_many VALUES (1,2,3,4,5,6,7,8,9,10,'a','b','c','d','e')");
     let rows = ctx.query("SELECT * FROM t_many");
     assert_eq!(rows.len(), 1);
     assert_eq!(get_i64(&rows[0], 0), 1);
@@ -705,7 +761,7 @@ fn test_create_table_duplicate_key() {
         "CREATE TABLE t_dup (
             id INT,
             name VARCHAR(50)
-        ) DUPLICATE KEY(id)"
+        ) DUPLICATE KEY(id)",
     );
     ctx.exec("INSERT INTO t_dup VALUES (1, 'Alice')");
     let rows = ctx.query("SELECT * FROM t_dup");
@@ -723,7 +779,7 @@ fn test_create_table_duplicate_key_multiple() {
             id INT,
             date DATE,
             value DOUBLE
-        ) DUPLICATE KEY(id, date)"
+        ) DUPLICATE KEY(id, date)",
     );
     ctx.exec("INSERT INTO t_dup_multi VALUES (1, '2024-01-01', 100.5)");
     let rows = ctx.query("SELECT * FROM t_dup_multi");
@@ -755,7 +811,7 @@ fn test_create_table_distributed_by_hash() {
         "CREATE TABLE t_dist (
             id INT,
             name VARCHAR(50)
-        ) DISTRIBUTED BY HASH(id) BUCKETS 1"
+        ) DISTRIBUTED BY HASH(id) BUCKETS 1",
     );
     ctx.exec("INSERT INTO t_dist VALUES (1, 'Alice')");
     let rows = ctx.query("SELECT * FROM t_dist");
@@ -772,7 +828,7 @@ fn test_create_table_distributed_by_hash_diff_col() {
             user_id INT,
             event_id INT,
             data STRING
-        ) DISTRIBUTED BY HASH(event_id) BUCKETS 4"
+        ) DISTRIBUTED BY HASH(event_id) BUCKETS 4",
     );
     ctx.exec("INSERT INTO t_dist2 VALUES (100, 1, 'login')");
     let rows = ctx.query("SELECT * FROM t_dist2");
@@ -792,7 +848,7 @@ fn test_create_table_full_doris_syntax() {
             name VARCHAR(100),
             score DOUBLE
         ) DUPLICATE KEY(id)
-        DISTRIBUTED BY HASH(id) BUCKETS 1"
+        DISTRIBUTED BY HASH(id) BUCKETS 1",
     );
     ctx.exec("INSERT INTO t_full VALUES (1, 'Alice', 95.5)");
     ctx.exec("INSERT INTO t_full VALUES (2, 'Bob', 87.0)");
@@ -1013,7 +1069,11 @@ fn test_truncate_table_with_data() {
     assert_eq!(get_i64(&before[0], 0), 3);
     ctx.exec("TRUNCATE TABLE t_trunc");
     let after = ctx.query("SELECT COUNT(*) FROM t_trunc");
-    assert_eq!(get_i64(&after[0], 0), 0, "Table should be empty after TRUNCATE");
+    assert_eq!(
+        get_i64(&after[0], 0),
+        0,
+        "Table should be empty after TRUNCATE"
+    );
     ctx.drop_db(&db);
 }
 
@@ -1193,9 +1253,18 @@ fn test_show_create_table_basic() {
     let table_name = get_string(&rows[0], 0);
     assert_eq!(table_name, "t_show_create");
     let create_sql = get_string(&rows[0], 1);
-    assert!(create_sql.contains("t_show_create"), "CREATE TABLE output should contain table name");
-    assert!(create_sql.contains("id"), "CREATE TABLE output should contain column id");
-    assert!(create_sql.contains("name"), "CREATE TABLE output should contain column name");
+    assert!(
+        create_sql.contains("t_show_create"),
+        "CREATE TABLE output should contain table name"
+    );
+    assert!(
+        create_sql.contains("id"),
+        "CREATE TABLE output should contain column id"
+    );
+    assert!(
+        create_sql.contains("name"),
+        "CREATE TABLE output should contain column name"
+    );
     ctx.drop_db(&db);
 }
 
@@ -1221,8 +1290,14 @@ fn test_long_column_name() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
     let long_col = "a_very_long_column_name_that_exceeds_typical_limits_for_testing_purposes";
-    ctx.exec(&format!("CREATE TABLE t_longcol (id INT, {} DOUBLE)", long_col));
-    ctx.exec(&format!("INSERT INTO t_longcol (id, {}) VALUES (1, 3.14159)", long_col));
+    ctx.exec(&format!(
+        "CREATE TABLE t_longcol (id INT, {} DOUBLE)",
+        long_col
+    ));
+    ctx.exec(&format!(
+        "INSERT INTO t_longcol (id, {}) VALUES (1, 3.14159)",
+        long_col
+    ));
     let rows = ctx.query(&format!("SELECT {} FROM t_longcol", long_col));
     assert_eq!(rows.len(), 1);
     let v = get_f64(&rows[0], 0);
@@ -1253,9 +1328,7 @@ fn test_create_table_backtick_keywords() {
     let ctx = TestContext::new();
     let db = ctx.create_and_use_db();
     // Use backticks for column names that are SQL keywords
-    ctx.exec(
-        "CREATE TABLE t_btick (`select` INT, `from` STRING, `where` DOUBLE)"
-    );
+    ctx.exec("CREATE TABLE t_btick (`select` INT, `from` STRING, `where` DOUBLE)");
     ctx.exec("INSERT INTO t_btick (`select`, `from`, `where`) VALUES (1, 'test', 1.5)");
     let rows = ctx.query("SELECT * FROM t_btick");
     assert_eq!(rows.len(), 1);
@@ -1281,7 +1354,13 @@ fn test_create_table_many_columns_20() {
     let rows = ctx.query("SELECT * FROM t_20");
     assert_eq!(rows.len(), 1);
     for i in 0..20 {
-        assert_eq!(get_i64(&rows[0], i), i as i64, "Column col{:02} should have value {}", i, i);
+        assert_eq!(
+            get_i64(&rows[0], i),
+            i as i64,
+            "Column col{:02} should have value {}",
+            i,
+            i
+        );
     }
     ctx.drop_db(&db);
 }
@@ -1313,7 +1392,7 @@ fn test_create_table_all_integer_types() {
             c_small SMALLINT,
             c_int INT,
             c_big BIGINT
-        )"
+        )",
     );
     ctx.exec("INSERT INTO t_all_int VALUES (true, 1, 2, 3, 4)");
     let rows = ctx.query("SELECT * FROM t_all_int");
@@ -1337,7 +1416,7 @@ fn test_create_table_duplicate_key_with_buckets() {
             event_time DATETIME,
             value DOUBLE
         ) DUPLICATE KEY(id, event_type)
-        DISTRIBUTED BY HASH(id) BUCKETS 3"
+        DISTRIBUTED BY HASH(id) BUCKETS 3",
     );
     ctx.exec("INSERT INTO events VALUES (1, 'click', '2024-01-01 12:00:00', 1.5)");
     ctx.exec("INSERT INTO events VALUES (2, 'view', '2024-01-02 00:00:00', 2.5)");
@@ -1357,7 +1436,7 @@ fn test_truncate_table_with_various_types() {
             salary DOUBLE,
             active BOOLEAN,
             created DATE
-        )"
+        )",
     );
     ctx.exec("INSERT INTO t_mix VALUES (1, 'Alice', 70000.0, true, '2024-03-15')");
     ctx.exec("TRUNCATE TABLE t_mix");
@@ -1396,7 +1475,11 @@ fn test_show_databases_empty_and_create() {
     // Verify the database exists by name (don't rely on count due to parallel tests)
     let rows = ctx.query("SHOW DATABASES");
     let names: Vec<String> = rows.iter().map(|r| get_string(r, 0)).collect();
-    assert!(names.contains(&db), "Created database {} should appear in SHOW DATABASES", db);
+    assert!(
+        names.contains(&db),
+        "Created database {} should appear in SHOW DATABASES",
+        db
+    );
     ctx.drop_db(&db);
 }
 
@@ -1437,7 +1520,7 @@ fn test_create_table_duplicate_key_string_key() {
             code VARCHAR(10),
             name STRING,
             value INT
-        ) DUPLICATE KEY(code)"
+        ) DUPLICATE KEY(code)",
     );
     ctx.exec("INSERT INTO t_str_key VALUES ('A1', 'Item 1', 100)");
     ctx.exec("INSERT INTO t_str_key VALUES ('B2', 'Item 2', 200)");
@@ -1470,7 +1553,7 @@ fn test_create_table_aggregate_key() {
             id INT,
             total INT SUM
         ) AGGREGATE KEY(id)
-        DISTRIBUTED BY HASH(id) BUCKETS 1"
+        DISTRIBUTED BY HASH(id) BUCKETS 1",
     );
     ctx.exec("INSERT INTO t_agg VALUES (1, 10)");
     ctx.exec("INSERT INTO t_agg VALUES (1, 20)");

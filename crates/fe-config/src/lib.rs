@@ -7,4 +7,6 @@ pub mod config;
 pub mod variables;
 
 pub use config::RorisConfig;
-pub use variables::{GlobalVariables, SessionVariables, SystemVariableManager, VarDef, VarKind, VarScope};
+pub use variables::{
+    GlobalVariables, SessionVariables, SystemVariableManager, VarDef, VarKind, VarScope,
+};

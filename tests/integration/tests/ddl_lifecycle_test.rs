@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use fe_catalog::table::{TableColumn, KeysType, PartitionInfo, Partition, DistributionInfo};
+use fe_catalog::table::{DistributionInfo, KeysType, Partition, PartitionInfo, TableColumn};
 use fe_catalog::{CatalogManager, Table};
 use integration_tests::common;
 use types::DataType;
@@ -27,7 +27,11 @@ fn test_database_create_show_use_drop() {
     // Drop
     catalog.drop_database("lifecycle_db").unwrap();
     assert!(catalog.get_database("lifecycle_db").is_none());
-    assert!(!catalog.list_databases().contains(&"lifecycle_db".to_string()));
+    assert!(
+        !catalog
+            .list_databases()
+            .contains(&"lifecycle_db".to_string())
+    );
 }
 
 #[test]
@@ -70,7 +74,9 @@ fn test_create_table_parse() {
     catalog.create_database("test_db").unwrap();
 
     // Parse CREATE TABLE SQL
-    let result = fe_sql_parser::parse_sql("CREATE TABLE employees (id INT64, name STRING, department STRING, salary FLOAT64)");
+    let result = fe_sql_parser::parse_sql(
+        "CREATE TABLE employees (id INT64, name STRING, department STRING, salary FLOAT64)",
+    );
     assert!(result.is_ok());
 }
 
@@ -131,9 +137,30 @@ fn test_create_table_with_range_partition() {
         name: "orders".into(),
         database: "test_db".into(),
         columns: vec![
-            TableColumn { name: "id".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "order_date".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "amount".into(), data_type: DataType::Float64, nullable: true, default_value: None, agg_type: None, comment: String::new() },
+            TableColumn {
+                name: "id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "order_date".into(),
+                data_type: DataType::String,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "amount".into(),
+                data_type: DataType::Float64,
+                nullable: true,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
         ],
         keys_type: KeysType::Duplicate,
         unique_keys: vec![],
@@ -141,9 +168,24 @@ fn test_create_table_with_range_partition() {
             partition_type: "RANGE".into(),
             columns: vec!["order_date".into()],
             partitions: vec![
-                Partition { id: 1, name: "p202401".into(), range_start: Some("2024-01-01".into()), range_end: Some("2024-02-01".into()) },
-                Partition { id: 2, name: "p202402".into(), range_start: Some("2024-02-01".into()), range_end: Some("2024-03-01".into()) },
-                Partition { id: 3, name: "p202403".into(), range_start: Some("2024-03-01".into()), range_end: Some("2024-04-01".into()) },
+                Partition {
+                    id: 1,
+                    name: "p202401".into(),
+                    range_start: Some("2024-01-01".into()),
+                    range_end: Some("2024-02-01".into()),
+                },
+                Partition {
+                    id: 2,
+                    name: "p202402".into(),
+                    range_start: Some("2024-02-01".into()),
+                    range_end: Some("2024-03-01".into()),
+                },
+                Partition {
+                    id: 3,
+                    name: "p202403".into(),
+                    range_start: Some("2024-03-01".into()),
+                    range_end: Some("2024-04-01".into()),
+                },
             ],
         }),
         distribution_info: None,
@@ -180,9 +222,30 @@ fn test_create_table_with_hash_distribution() {
         name: "events".into(),
         database: "test_db".into(),
         columns: vec![
-            TableColumn { name: "event_id".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "user_id".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "event_type".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
+            TableColumn {
+                name: "event_id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "user_id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "event_type".into(),
+                data_type: DataType::String,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
         ],
         keys_type: KeysType::Duplicate,
         unique_keys: vec![],
@@ -230,9 +293,30 @@ fn test_create_table_aggregate_key() {
         name: "agg_table".into(),
         database: "test_db".into(),
         columns: vec![
-            TableColumn { name: "user_id".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "total_sales".into(), data_type: DataType::Float64, nullable: true, default_value: None, agg_type: Some("SUM".into()), comment: String::new() },
-            TableColumn { name: "visit_count".into(), data_type: DataType::Int64, nullable: true, default_value: None, agg_type: Some("REPLACE".into()), comment: String::new() },
+            TableColumn {
+                name: "user_id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "total_sales".into(),
+                data_type: DataType::Float64,
+                nullable: true,
+                default_value: None,
+                agg_type: Some("SUM".into()),
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "visit_count".into(),
+                data_type: DataType::Int64,
+                nullable: true,
+                default_value: None,
+                agg_type: Some("REPLACE".into()),
+                comment: String::new(),
+            },
         ],
         keys_type: KeysType::Aggregate,
         unique_keys: vec![],
@@ -264,8 +348,22 @@ fn test_create_table_unique_key() {
         name: "unique_table".into(),
         database: "test_db".into(),
         columns: vec![
-            TableColumn { name: "user_id".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "user_name".into(), data_type: DataType::String, nullable: false, default_value: None, agg_type: None, comment: String::new() },
+            TableColumn {
+                name: "user_id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "user_name".into(),
+                data_type: DataType::String,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
         ],
         keys_type: KeysType::Unique,
         unique_keys: vec![],
@@ -295,8 +393,22 @@ fn test_create_table_primary_key() {
         name: "pk_table".into(),
         database: "test_db".into(),
         columns: vec![
-            TableColumn { name: "id".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "data".into(), data_type: DataType::String, nullable: true, default_value: None, agg_type: None, comment: String::new() },
+            TableColumn {
+                name: "id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "data".into(),
+                data_type: DataType::String,
+                nullable: true,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
         ],
         keys_type: KeysType::Primary,
         unique_keys: vec![],
@@ -367,7 +479,8 @@ fn test_show_create_table_parse() {
 #[test]
 fn test_create_view_parse() {
     let result = fe_sql_parser::parse_sql(
-        "CREATE VIEW high_earners AS SELECT name, salary FROM employees WHERE salary > 80000");
+        "CREATE VIEW high_earners AS SELECT name, salary FROM employees WHERE salary > 80000",
+    );
     assert!(result.is_ok());
 }
 
@@ -389,8 +502,22 @@ fn test_ddl_full_lifecycle() {
         name: "t1".into(),
         database: "lifecycle_test".into(),
         columns: vec![
-            TableColumn { name: "id".into(), data_type: DataType::Int64, nullable: false, default_value: None, agg_type: None, comment: String::new() },
-            TableColumn { name: "value".into(), data_type: DataType::String, nullable: true, default_value: None, agg_type: None, comment: String::new() },
+            TableColumn {
+                name: "id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
+            TableColumn {
+                name: "value".into(),
+                data_type: DataType::String,
+                nullable: true,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            },
         ],
         keys_type: KeysType::Duplicate,
         unique_keys: vec![],

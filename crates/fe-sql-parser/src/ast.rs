@@ -6,7 +6,13 @@ pub enum Statement {
     Delete(DeleteStmt),
     CreateDatabase(CreateDatabaseStmt),
     CreateTable(CreateTableStmt),
-    CreateView { database: Option<String>, name: String, if_not_exists: bool, query: String, columns: Vec<String> },
+    CreateView {
+        database: Option<String>,
+        name: String,
+        if_not_exists: bool,
+        query: String,
+        columns: Vec<String>,
+    },
     CreateMaterializedView(CreateMaterializedViewStmt),
     DropDatabase(DropDatabaseStmt),
     DropTable(DropTableStmt),
@@ -14,7 +20,11 @@ pub enum Statement {
     AlterMaterializedView(AlterMaterializedViewStmt),
     RefreshMaterializedView(RefreshMaterializedViewStmt),
     AlterTable(AlterTableStmt),
-    TruncateTable { database: Option<String>, table: String, if_exists: bool },
+    TruncateTable {
+        database: Option<String>,
+        table: String,
+        if_exists: bool,
+    },
     ShowDatabases,
     ShowTables(Option<String>, Option<String>, bool),
     ShowCreateTable(String, String),
@@ -22,7 +32,10 @@ pub enum Statement {
     ShowCreateView(String, String),
     ShowPartitions(String, String),
     ShowTableStatus(Option<String>),
-    ShowVariables { global: bool, pattern: Option<String> },
+    ShowVariables {
+        global: bool,
+        pattern: Option<String>,
+    },
     ShowProcesslist(bool),
     ShowIndex(String, String),
     ShowAlterTable(Option<String>),
@@ -81,8 +94,15 @@ pub enum Statement {
     UninstallPlugin(String),
     ShowPlugins,
     RecoverDatabase(String),
-    RecoverTable { database: String, table: String },
-    RecoverPartition { database: String, table: String, partition: String },
+    RecoverTable {
+        database: String,
+        table: String,
+    },
+    RecoverPartition {
+        database: String,
+        table: String,
+        partition: String,
+    },
     DropCatalogRecycleBin(Option<String>),
     ShowCatalogRecycleBin,
     CreateSqlBlockRule(CreateSqlBlockRuleStmt),
@@ -90,7 +110,11 @@ pub enum Statement {
     DropSqlBlockRule(String),
     ShowSqlBlockRule(Option<String>),
     CreateRowPolicy(CreateRowPolicyStmt),
-    DropRowPolicy { name: String, database: Option<String>, table: String },
+    DropRowPolicy {
+        name: String,
+        database: Option<String>,
+        table: String,
+    },
     ShowRowPolicy(Option<String>),
     KillAnalyzeJob(String),
     AlterStats(String, Vec<(String, String)>),
@@ -105,7 +129,10 @@ pub enum Statement {
     SetTransactionIsolation(String),
 
     // Admin and operations statements
-    ShowStatus { global: bool, pattern: Option<String> },
+    ShowStatus {
+        global: bool,
+        pattern: Option<String>,
+    },
     ShowEngines,
     ShowCharset,
     KillQuery(u64),
@@ -193,9 +220,20 @@ pub struct SelectItem {
 
 #[derive(Debug, Clone)]
 pub enum TableRef {
-    Table { name: String, alias: Option<String> },
-    Join { left: Box<TableRef>, right: Box<TableRef>, r#type: JoinType, condition: Option<Expr> },
-    Subquery { query: Box<QueryStmt>, alias: String },
+    Table {
+        name: String,
+        alias: Option<String>,
+    },
+    Join {
+        left: Box<TableRef>,
+        right: Box<TableRef>,
+        r#type: JoinType,
+        condition: Option<Expr>,
+    },
+    Subquery {
+        query: Box<QueryStmt>,
+        alias: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -308,14 +346,36 @@ pub enum AlterOperation {
     DropColumn(String),
     ModifyColumn(ColumnDef),
     RenameTable(String),
-    RenameColumn { old_name: String, new_name: String },
+    RenameColumn {
+        old_name: String,
+        new_name: String,
+    },
     SetComment(String),
     SetProperty(Vec<(String, String)>),
-    AddPartition { partition_name: String, values_less_than: Vec<String>, properties: Vec<(String, String)> },
-    DropPartition { partition_name: String, if_exists: bool, force: bool },
-    AddRollup { rollup_name: String, columns: Vec<String>, properties: Vec<(String, String)> },
-    DropRollup { rollup_name: String, if_exists: bool },
-    Replace { old_table: String, swap: bool, properties: Vec<(String, String)> },
+    AddPartition {
+        partition_name: String,
+        values_less_than: Vec<String>,
+        properties: Vec<(String, String)>,
+    },
+    DropPartition {
+        partition_name: String,
+        if_exists: bool,
+        force: bool,
+    },
+    AddRollup {
+        rollup_name: String,
+        columns: Vec<String>,
+        properties: Vec<(String, String)>,
+    },
+    DropRollup {
+        rollup_name: String,
+        if_exists: bool,
+    },
+    Replace {
+        old_table: String,
+        swap: bool,
+        properties: Vec<(String, String)>,
+    },
     AddGeneratedColumn(ColumnDef),
 }
 
@@ -348,19 +408,59 @@ pub struct WhenThen {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(LiteralValue),
-    ColumnRef { table: Option<String>, column: String },
-    BinaryOp { left: Box<Expr>, op: BinaryOp, right: Box<Expr> },
-    UnaryOp { op: UnaryOp, expr: Box<Expr> },
-    FunctionCall { name: String, args: Vec<Expr>, distinct: bool },
-    Between { expr: Box<Expr>, low: Box<Expr>, high: Box<Expr>, negated: bool },
-    InList { expr: Box<Expr>, list: Vec<Expr>, negated: bool },
-    InSubquery { expr: Box<Expr>, query: Box<QueryStmt>, negated: bool },
+    ColumnRef {
+        table: Option<String>,
+        column: String,
+    },
+    BinaryOp {
+        left: Box<Expr>,
+        op: BinaryOp,
+        right: Box<Expr>,
+    },
+    UnaryOp {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
+    FunctionCall {
+        name: String,
+        args: Vec<Expr>,
+        distinct: bool,
+    },
+    Between {
+        expr: Box<Expr>,
+        low: Box<Expr>,
+        high: Box<Expr>,
+        negated: bool,
+    },
+    InList {
+        expr: Box<Expr>,
+        list: Vec<Expr>,
+        negated: bool,
+    },
+    InSubquery {
+        expr: Box<Expr>,
+        query: Box<QueryStmt>,
+        negated: bool,
+    },
     Exists(Box<QueryStmt>),
     Subquery(Box<QueryStmt>),
-    IsNull { expr: Box<Expr>, negated: bool },
-    Like { expr: Box<Expr>, pattern: Box<Expr>, negated: bool },
-    Cast { expr: Box<Expr>, target_type: String },
-    CaseWhen { cases: Vec<WhenThen>, else_expr: Option<Box<Expr>> },
+    IsNull {
+        expr: Box<Expr>,
+        negated: bool,
+    },
+    Like {
+        expr: Box<Expr>,
+        pattern: Box<Expr>,
+        negated: bool,
+    },
+    Cast {
+        expr: Box<Expr>,
+        target_type: String,
+    },
+    CaseWhen {
+        cases: Vec<WhenThen>,
+        else_expr: Option<Box<Expr>>,
+    },
     Wildcard,
     /// DEFAULT keyword - represents the default value for a column
     Default,
@@ -378,11 +478,26 @@ pub enum LiteralValue {
 
 #[derive(Debug, Clone, Copy)]
 pub enum BinaryOp {
-    Eq, NotEq, Lt, LtEq, Gt, GtEq,
-    And, Or,
-    Plus, Minus, Multiply, Divide, Modulo,
-    Like, NotLike,
-    In, NotIn,
+    Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    And,
+    Or,
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+    Like,
+    NotLike,
+    In,
+    NotIn,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -546,8 +661,14 @@ pub struct AlterColocateGroupStmt {
 
 #[derive(Debug, Clone)]
 pub enum ColocateGroupOperation {
-    AddTable { database: Option<String>, table: String },
-    RemoveTable { database: Option<String>, table: String },
+    AddTable {
+        database: Option<String>,
+        table: String,
+    },
+    RemoveTable {
+        database: Option<String>,
+        table: String,
+    },
     SetProperty(Vec<(String, String)>),
 }
 

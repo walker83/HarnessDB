@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use maxcompute_protocol::auth::{sign_request, McAuthConfig};
-use maxcompute_protocol::server::{build_router_with_state, McServerConfig, McServerState};
+use maxcompute_protocol::auth::{McAuthConfig, sign_request};
+use maxcompute_protocol::server::{McServerConfig, McServerState, build_router_with_state};
 use mysql_protocol::server::{ColumnDef, ColumnType, QueryHandler, QueryResult};
 
 // ---------------------------------------------------------------------------
@@ -195,8 +195,16 @@ async fn test_get_project_authenticated() {
     assert!(content_type.contains("application/xml") || content_type.contains("xml"));
 
     let body = resp.text().await.unwrap();
-    assert!(body.contains("<Project>"), "Response should contain Project element: {}", body);
-    assert!(body.contains("<Name>default</Name>"), "Response should contain project name: {}", body);
+    assert!(
+        body.contains("<Project>"),
+        "Response should contain Project element: {}",
+        body
+    );
+    assert!(
+        body.contains("<Name>default</Name>"),
+        "Response should contain project name: {}",
+        body
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -208,15 +216,22 @@ async fn test_list_tables_authenticated() {
     let (port, client) = setup_server().await;
 
     let headers = signed_get_headers("/api/projects/default/tables");
-    let resp = apply_headers(client.get(url(port, "/api/projects/default/tables")), &headers)
-        .send()
-        .await
-        .unwrap();
+    let resp = apply_headers(
+        client.get(url(port, "/api/projects/default/tables")),
+        &headers,
+    )
+    .send()
+    .await
+    .unwrap();
 
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
-    assert!(body.contains("<Tables>"), "Response should contain Tables element: {}", body);
+    assert!(
+        body.contains("<Tables>"),
+        "Response should contain Tables element: {}",
+        body
+    );
     assert!(
         body.contains("<Name>test_table</Name>"),
         "Response should list test_table: {}",
@@ -257,10 +272,7 @@ async fn test_submit_instance() {
 
     // Check Location header
     let location = resp.headers().get("location").and_then(|v| v.to_str().ok());
-    assert!(
-        location.is_some(),
-        "Response should have Location header"
-    );
+    assert!(location.is_some(), "Response should have Location header");
     let location = location.unwrap();
     assert!(
         location.starts_with("/api/projects/default/instances/"),
@@ -307,7 +319,11 @@ async fn test_get_instance_status() {
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
-    assert!(body.contains("<Instance>"), "Response should contain Instance element: {}", body);
+    assert!(
+        body.contains("<Instance>"),
+        "Response should contain Instance element: {}",
+        body
+    );
     assert!(
         body.contains("<Status>Success</Status>"),
         "Instance status should be Success: {}",
@@ -346,13 +362,10 @@ async fn test_get_instance_result() {
     // GET result with ?result query parameter
     let result_path = format!("{}?result", location);
     let headers = signed_get_headers(&result_path);
-    let resp = apply_headers(
-        client.get(url(port, &result_path)),
-        &headers,
-    )
-    .send()
-    .await
-    .unwrap();
+    let resp = apply_headers(client.get(url(port, &result_path)), &headers)
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), 200);
 
@@ -401,13 +414,10 @@ async fn test_unknown_project() {
     let (port, client) = setup_server().await;
 
     let headers = signed_get_headers("/api/projects/nonexistent");
-    let resp = apply_headers(
-        client.get(url(port, "/api/projects/nonexistent")),
-        &headers,
-    )
-    .send()
-    .await
-    .unwrap();
+    let resp = apply_headers(client.get(url(port, "/api/projects/nonexistent")), &headers)
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), 404, "Nonexistent project should return 404");
 
@@ -436,11 +446,7 @@ async fn test_invalid_table_name() {
     .await
     .unwrap();
 
-    assert_eq!(
-        resp.status(),
-        400,
-        "Invalid table name should return 400"
-    );
+    assert_eq!(resp.status(), 400, "Invalid table name should return 400");
 
     let body = resp.text().await.unwrap();
     assert!(

@@ -5,11 +5,13 @@
 //! - `db:{name}:table:{tbl}` → Table JSON
 //! - `next_id` → Atomic ID counter (u64)
 
-use crate::meta_store::{MetaStore, CF_CATALOG, KEY_DB, KEY_TABLE, KEY_NEXT_ID, Result, RocksStoreError};
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
-use tracing::debug;
+use crate::meta_store::{
+    CF_CATALOG, KEY_DB, KEY_NEXT_ID, KEY_TABLE, MetaStore, Result, RocksStoreError,
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::debug;
 
 /// Database metadata (mirrors fe-catalog::Database).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,8 +270,7 @@ impl CatalogStore {
         let keys = self.list_keys_with_prefix(CF_CATALOG, prefix.as_bytes())?;
         keys.iter()
             .map(|k| {
-                String::from_utf8(k.clone())
-                    .map_err(|e| RocksStoreError::InvalidKey(e.to_string()))
+                String::from_utf8(k.clone()).map_err(|e| RocksStoreError::InvalidKey(e.to_string()))
             })
             .collect()
     }
@@ -296,7 +297,8 @@ impl CatalogStore {
 
     /// Get the next unique ID and increment the counter atomically.
     pub fn next_id(&self) -> Result<u64> {
-        self.store.increment_counter(CF_CATALOG, KEY_NEXT_ID.as_bytes())
+        self.store
+            .increment_counter(CF_CATALOG, KEY_NEXT_ID.as_bytes())
     }
 
     /// Get current ID counter value.
@@ -306,7 +308,8 @@ impl CatalogStore {
 
     /// Set the ID counter value (for migration/recovery).
     pub fn set_next_id(&self, value: u64) -> Result<()> {
-        self.store.set_counter(CF_CATALOG, KEY_NEXT_ID.as_bytes(), value)
+        self.store
+            .set_counter(CF_CATALOG, KEY_NEXT_ID.as_bytes(), value)
     }
 
     /// List all tables across all databases.
@@ -327,7 +330,10 @@ impl CatalogStore {
     // Internal helpers
 
     fn list_keys_with_prefix(&self, cf_name: &str, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let cf = self.store.db().cf_handle(cf_name)
+        let cf = self
+            .store
+            .db()
+            .cf_handle(cf_name)
             .ok_or_else(|| RocksStoreError::InvalidKey(format!("CF {} not found", cf_name)))?;
 
         let mut iter = self.store.db().raw_iterator_cf(&cf);
@@ -361,13 +367,11 @@ impl CatalogStore {
 }
 
 fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(value)
-        .map_err(|e| RocksStoreError::SerializeError(e.to_string()))
+    serde_json::to_vec(value).map_err(|e| RocksStoreError::SerializeError(e.to_string()))
 }
 
 fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    serde_json::from_slice(bytes)
-        .map_err(|e| RocksStoreError::SerializeError(e.to_string()))
+    serde_json::from_slice(bytes).map_err(|e| RocksStoreError::SerializeError(e.to_string()))
 }
 
 #[cfg(test)]
@@ -386,16 +390,14 @@ mod tests {
             tablet_id: id + 1000,
             name: name.to_string(),
             database: "testdb".to_string(),
-            columns: vec![
-                TableColumn {
-                    name: "id".into(),
-                    data_type: DataType::Int64,
-                    nullable: false,
-                    default_value: None,
-                    agg_type: None,
-                    comment: String::new(),
-                },
-            ],
+            columns: vec![TableColumn {
+                name: "id".into(),
+                data_type: DataType::Int64,
+                nullable: false,
+                default_value: None,
+                agg_type: None,
+                comment: String::new(),
+            }],
             keys_type: KeysType::Duplicate,
             unique_keys: vec![],
             partition_info: None,
@@ -442,9 +444,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
-        store.put_database("db1", &make_test_database("db1", 1)).unwrap();
-        store.put_database("db2", &make_test_database("db2", 2)).unwrap();
-        store.put_database("db3", &make_test_database("db3", 3)).unwrap();
+        store
+            .put_database("db1", &make_test_database("db1", 1))
+            .unwrap();
+        store
+            .put_database("db2", &make_test_database("db2", 2))
+            .unwrap();
+        store
+            .put_database("db3", &make_test_database("db3", 3))
+            .unwrap();
 
         let dbs = store.list_databases().unwrap();
         assert_eq!(dbs.len(), 3);
@@ -458,7 +466,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
-        store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
+        store
+            .put_database("mydb", &make_test_database("mydb", 1))
+            .unwrap();
         let table = make_test_table("users", 2);
         store.put_table("mydb", "users", &table).unwrap();
 
@@ -474,7 +484,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
-        store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
+        store
+            .put_database("mydb", &make_test_database("mydb", 1))
+            .unwrap();
         let table = make_test_table("users", 2);
         store.put_table("mydb", "users", &table).unwrap();
         store.delete_table("mydb", "users").unwrap();
@@ -488,10 +500,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
-        store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
-        store.put_table("mydb", "t1", &make_test_table("t1", 2)).unwrap();
-        store.put_table("mydb", "t2", &make_test_table("t2", 3)).unwrap();
-        store.put_table("mydb", "t3", &make_test_table("t3", 4)).unwrap();
+        store
+            .put_database("mydb", &make_test_database("mydb", 1))
+            .unwrap();
+        store
+            .put_table("mydb", "t1", &make_test_table("t1", 2))
+            .unwrap();
+        store
+            .put_table("mydb", "t2", &make_test_table("t2", 3))
+            .unwrap();
+        store
+            .put_table("mydb", "t3", &make_test_table("t3", 4))
+            .unwrap();
 
         let tables = store.list_tables("mydb").unwrap();
         assert_eq!(tables.len(), 3);
@@ -532,9 +552,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = CatalogStore::new(MetaStore::open(dir.path()).unwrap().into());
 
-        store.put_database("mydb", &make_test_database("mydb", 1)).unwrap();
-        store.put_table("mydb", "t1", &make_test_table("t1", 2)).unwrap();
-        store.put_table("mydb", "t2", &make_test_table("t2", 3)).unwrap();
+        store
+            .put_database("mydb", &make_test_database("mydb", 1))
+            .unwrap();
+        store
+            .put_table("mydb", "t1", &make_test_table("t1", 2))
+            .unwrap();
+        store
+            .put_table("mydb", "t2", &make_test_table("t2", 3))
+            .unwrap();
 
         store.delete_database("mydb").unwrap();
 

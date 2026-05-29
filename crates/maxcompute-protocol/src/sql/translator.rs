@@ -58,7 +58,10 @@ fn is_noop_statement(sql: &str) -> bool {
     }
 
     // SETPROJECT statement
-    if upper.starts_with("SETPROJECT ") || upper.starts_with("SETPROJECT\t") || upper == "SETPROJECT" {
+    if upper.starts_with("SETPROJECT ")
+        || upper.starts_with("SETPROJECT\t")
+        || upper == "SETPROJECT"
+    {
         return true;
     }
 
@@ -72,7 +75,10 @@ fn is_noop_statement(sql: &str) -> bool {
 
     // ALTER TABLE statement with lifecycle (MaxCompute-specific, no-op for now)
     if upper.starts_with("ALTER TABLE") {
-        warn!("ALTER TABLE statement is not supported in RorisDB, ignoring: {}", sql);
+        warn!(
+            "ALTER TABLE statement is not supported in RorisDB, ignoring: {}",
+            sql
+        );
         return true;
     }
 
@@ -170,7 +176,10 @@ fn translate_insert_overwrite(sql: &str) -> String {
 
     // Log a warning for the translation
     if result != sql {
-        warn!("Translated INSERT OVERWRITE to INSERT INTO: {} -> {}", sql, result);
+        warn!(
+            "Translated INSERT OVERWRITE to INSERT INTO: {} -> {}",
+            sql, result
+        );
     }
 
     result
@@ -204,12 +213,8 @@ fn strip_partitioned_by(sql: &str) -> String {
                             let before_cols = &sql[..cols_close];
                             let after_partition = &sql[close_pos + 1..];
                             // Re-add the closing ) that was consumed by before_cols
-                            let combined = format!(
-                                "{}, {}){}",
-                                before_cols,
-                                partition_cols,
-                                after_partition
-                            );
+                            let combined =
+                                format!("{}, {}){}", before_cols, partition_cols, after_partition);
                             return strip_partitioned_by(&combined);
                         }
                     }
@@ -264,7 +269,8 @@ fn strip_clustered_by(sql: &str) -> String {
             // Check for SORTED BY (...)
             let sorted_re = Regex::new(r"(?i)^\s*\bSORTED\s+BY\s*\(").unwrap();
             let (end_pos, sorted_removed) = if let Some(sorted_mat) = sorted_re.find(after_paren) {
-                let sorted_open = after_paren[sorted_mat.start()..].find('(').unwrap() + sorted_mat.start();
+                let sorted_open =
+                    after_paren[sorted_mat.start()..].find('(').unwrap() + sorted_mat.start();
                 if let Some(sorted_close) = find_matching_paren(after_paren, sorted_open) {
                     // sorted_close is position within after_paren, so end position in sql is:
                     // close_pos + 1 (start of after_paren) + sorted_close + 1 (past the ')')
@@ -329,7 +335,8 @@ fn translate_distribute_sort_by(sql: &str) -> String {
     let result = sql.to_string();
 
     // Pattern: DISTRIBUTE BY ... SORT BY col -> ORDER BY col
-    let re = Regex::new(r"(?i)\bDISTRIBUTE\s+BY\s+(.+?)\bSORT\s+BY\s+(\S+(?:\s*,\s*\S+)*)\b").unwrap();
+    let re =
+        Regex::new(r"(?i)\bDISTRIBUTE\s+BY\s+(.+?)\bSORT\s+BY\s+(\S+(?:\s*,\s*\S+)*)\b").unwrap();
 
     if re.is_match(&result) {
         let translated = re.replace_all(&result, |caps: &regex::Captures| {
@@ -339,11 +346,15 @@ fn translate_distribute_sort_by(sql: &str) -> String {
         let translated_str = translated.to_string();
 
         // Remove any remaining standalone DISTRIBUTE BY clauses
-        let re_dist_only = Regex::new(r"(?i)(?:^|\s)\bDISTRIBUTE\s+BY\s+\S+(?:\s*,\s*\S+)*(?:\s|$)").unwrap();
+        let re_dist_only =
+            Regex::new(r"(?i)(?:^|\s)\bDISTRIBUTE\s+BY\s+\S+(?:\s*,\s*\S+)*(?:\s|$)").unwrap();
         let final_result = re_dist_only.replace_all(&translated_str, " ").to_string();
 
         if final_result != sql {
-            warn!("Translated DISTRIBUTE BY / SORT BY to ORDER BY: {} -> {}", sql, final_result);
+            warn!(
+                "Translated DISTRIBUTE BY / SORT BY to ORDER BY: {} -> {}",
+                sql, final_result
+            );
         }
 
         // Also handle standalone DISTRIBUTE BY without SORT BY
@@ -390,7 +401,10 @@ fn strip_partition_clause_in_insert(sql: &str) -> String {
                 let result = format!("{}{}", before, after.trim_start());
 
                 if result != sql {
-                    warn!("Stripped PARTITION clause from INSERT: {} -> {}", sql, result);
+                    warn!(
+                        "Stripped PARTITION clause from INSERT: {} -> {}",
+                        sql, result
+                    );
                 }
 
                 return result;
@@ -447,10 +461,14 @@ mod tests {
 
     #[test]
     fn test_create_table_partitioned_by_multiple() {
-        let sql = "CREATE TABLE t (id BIGINT, name STRING) PARTITIONED BY (ds STRING, region STRING)";
+        let sql =
+            "CREATE TABLE t (id BIGINT, name STRING) PARTITIONED BY (ds STRING, region STRING)";
         let (result, noop) = translate_mc_sql(sql);
         assert!(!noop);
-        assert_eq!(result, "CREATE TABLE t (id BIGINT, name STRING, ds STRING, region STRING)");
+        assert_eq!(
+            result,
+            "CREATE TABLE t (id BIGINT, name STRING, ds STRING, region STRING)"
+        );
     }
 
     #[test]
@@ -464,10 +482,14 @@ mod tests {
     #[test]
     fn test_create_table_partitioned_by_nested_parens() {
         // Partition column with default value containing parens
-        let sql = "CREATE TABLE t (id BIGINT) PARTITIONED BY (ds STRING COMMENT 'partition (date)')";
+        let sql =
+            "CREATE TABLE t (id BIGINT) PARTITIONED BY (ds STRING COMMENT 'partition (date)')";
         let (result, noop) = translate_mc_sql(sql);
         assert!(!noop);
-        assert_eq!(result, "CREATE TABLE t (id BIGINT, ds STRING COMMENT 'partition (date)')");
+        assert_eq!(
+            result,
+            "CREATE TABLE t (id BIGINT, ds STRING COMMENT 'partition (date)')"
+        );
     }
 
     // ===== CREATE TABLE with LIFECYCLE =====
@@ -729,7 +751,8 @@ mod tests {
 
     #[test]
     fn test_create_table_without_partitioned_by() {
-        let sql = "CREATE TABLE t (id BIGINT, name STRING, ds STRING) STORED AS PARQUET LIFECYCLE 365";
+        let sql =
+            "CREATE TABLE t (id BIGINT, name STRING, ds STRING) STORED AS PARQUET LIFECYCLE 365";
         let (result, noop) = translate_mc_sql(sql);
         assert!(!noop);
         assert_eq!(result, "CREATE TABLE t (id BIGINT, name STRING, ds STRING)");
@@ -748,7 +771,10 @@ mod tests {
         let sql = "SELECT /*+ MAPJOIN(b) */ /*+ SKEWJOIN(c) */ a.id, b.name, c.val FROM a JOIN b JOIN c WHERE a.id = b.id AND b.id = c.id";
         let (result, noop) = translate_mc_sql(sql);
         assert!(!noop);
-        assert_eq!(result, "SELECT   a.id, b.name, c.val FROM a JOIN b JOIN c WHERE a.id = b.id AND b.id = c.id");
+        assert_eq!(
+            result,
+            "SELECT   a.id, b.name, c.val FROM a JOIN b JOIN c WHERE a.id = b.id AND b.id = c.id"
+        );
     }
 
     #[test]

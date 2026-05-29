@@ -37,8 +37,8 @@
 //! ```
 
 use axum::http::HeaderMap;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
@@ -224,9 +224,8 @@ pub fn build_canonical_request_v4(
 
     // CanonicalHeaders (sorted lowercase header:value\n)
     // Includes: content-type, content-md5, date, and all x-odps-* headers
-    let (canonical_headers, signed_headers) = build_canonical_headers_v4(
-        headers, content_type, content_md5, date,
-    );
+    let (canonical_headers, signed_headers) =
+        build_canonical_headers_v4(headers, content_type, content_md5, date);
     result.push_str(&canonical_headers);
     result.push('\n');
 
@@ -392,7 +391,9 @@ pub fn verify_request(
         .and_then(|v| v.to_str().ok())
         .ok_or(AuthError::MissingAuth)?;
 
-    let stripped = auth_header.strip_prefix("ODPS ").ok_or(AuthError::UnsupportedScheme)?;
+    let stripped = auth_header
+        .strip_prefix("ODPS ")
+        .ok_or(AuthError::UnsupportedScheme)?;
 
     // V4 headers contain "/odps/aliyun_v4_request"
     if stripped.contains("/odps/aliyun_v4_request") {
@@ -443,7 +444,10 @@ fn verify_v2(
     );
 
     let expected = hmac_sha1_base64(config.access_key_secret.as_bytes(), canonical.as_bytes());
-    Ok(constant_time_eq(provided_sig.as_bytes(), expected.as_bytes()))
+    Ok(constant_time_eq(
+        provided_sig.as_bytes(),
+        expected.as_bytes(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -513,15 +517,14 @@ fn verify_v4(
         .unwrap_or_else(|| format!("{}T000000Z", date_yyyy_mm_dd));
 
     // Build the StringToSign
-    let string_to_sign = build_string_to_sign_v4(
-        &timestamp,
-        date_yyyy_mm_dd,
-        region,
-        &canonical_request_hash,
-    );
+    let string_to_sign =
+        build_string_to_sign_v4(&timestamp, date_yyyy_mm_dd, region, &canonical_request_hash);
 
     let expected = hmac_sha256_base64(&signing_key, string_to_sign.as_bytes());
-    Ok(constant_time_eq(provided_sig.as_bytes(), expected.as_bytes()))
+    Ok(constant_time_eq(
+        provided_sig.as_bytes(),
+        expected.as_bytes(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -754,7 +757,10 @@ mod tests {
 
     #[test]
     fn test_canonicalized_resource_no_query() {
-        assert_eq!(canonicalized_resource("/api/projects/p1", ""), "/api/projects/p1");
+        assert_eq!(
+            canonicalized_resource("/api/projects/p1", ""),
+            "/api/projects/p1"
+        );
     }
 
     #[test]
@@ -893,10 +899,7 @@ mod tests {
         let config = McAuthConfig::new_v2("correct_key", "secret");
         let mut headers = HeaderMap::new();
         headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
-        headers.insert(
-            "authorization",
-            "ODPS wrong_key:somesig".parse().unwrap(),
-        );
+        headers.insert("authorization", "ODPS wrong_key:somesig".parse().unwrap());
         let result = verify_request(&config, "GET", "/test", "", &headers, &[]);
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -914,10 +917,7 @@ mod tests {
     fn test_verify_v2_missing_date() {
         let config = McAuthConfig::new_v2("key", "secret");
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "authorization",
-            "ODPS key:somesig".parse().unwrap(),
-        );
+        headers.insert("authorization", "ODPS key:somesig".parse().unwrap());
         let result = verify_request(&config, "GET", "/", "", &headers, &[]);
         assert!(matches!(result, Err(AuthError::MissingHeader(_))));
     }
@@ -945,7 +945,14 @@ mod tests {
             format!("ODPS akey:{}", sig).parse().unwrap(),
         );
 
-        let result = verify_request(&config, "POST", "/projects/my_project/instances", "", &headers, &[]);
+        let result = verify_request(
+            &config,
+            "POST",
+            "/projects/my_project/instances",
+            "",
+            &headers,
+            &[],
+        );
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -972,11 +979,17 @@ mod tests {
         assert_eq!(lines[1], "/api/projects/test", "CanonicalURI");
         assert_eq!(lines[2], "", "CanonicalQueryString");
         // With no content-type or content-md5, the first header is "date:"
-        assert!(lines[3].starts_with("date:"), "First canonical header should be date");
+        assert!(
+            lines[3].starts_with("date:"),
+            "First canonical header should be date"
+        );
         assert!(!lines[5].is_empty(), "SignedHeaders must not be empty");
         // Last line is HashedRequestPayload
         let empty_hash = hex::encode(Sha256::digest(b""));
-        assert!(canonical.ends_with(&empty_hash), "Should end with payload hash");
+        assert!(
+            canonical.ends_with(&empty_hash),
+            "Should end with payload hash"
+        );
     }
 
     #[test]
@@ -1107,8 +1120,7 @@ mod tests {
         let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
 
         // Build the StringToSign
-        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT")
-            .unwrap();
+        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT").unwrap();
         let string_to_sign = build_string_to_sign_v4(
             &timestamp,
             "20240101",
@@ -1130,15 +1142,12 @@ mod tests {
             .unwrap(),
         );
 
-        let result = verify_request(
-            &config,
-            "GET",
-            "/api/projects/test",
-            "",
-            &headers,
-            b"",
+        let result = verify_request(&config, "GET", "/api/projects/test", "", &headers, b"");
+        assert!(
+            result.is_ok(),
+            "V4 known-good verify should succeed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "V4 known-good verify should succeed: {:?}", result.err());
         assert!(result.unwrap(), "V4 known-good signature should match");
     }
 
@@ -1165,8 +1174,7 @@ mod tests {
 
         let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
 
-        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT")
-            .unwrap();
+        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT").unwrap();
         let string_to_sign = build_string_to_sign_v4(
             &timestamp,
             "20240101",
@@ -1195,8 +1203,15 @@ mod tests {
             &headers,
             body,
         );
-        assert!(result.is_ok(), "V4 known-good verify with body should succeed: {:?}", result.err());
-        assert!(result.unwrap(), "V4 known-good signature with body should match");
+        assert!(
+            result.is_ok(),
+            "V4 known-good verify with body should succeed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap(),
+            "V4 known-good signature with body should match"
+        );
     }
 
     #[test]
@@ -1222,8 +1237,7 @@ mod tests {
 
         let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
 
-        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT")
-            .unwrap();
+        let timestamp = http_date_to_iso8601_timestamp("Mon, 01 Jan 2024 00:00:00 GMT").unwrap();
         let string_to_sign = build_string_to_sign_v4(
             &timestamp,
             "20240101",

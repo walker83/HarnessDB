@@ -72,7 +72,11 @@ impl ParquetStorage {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
         debug!("ParquetStorage opened at {}", data_dir.display());
-        Ok(Self { data_dir, max_rows: None, write_locks: RwLock::new(HashMap::new()) })
+        Ok(Self {
+            data_dir,
+            max_rows: None,
+            write_locks: RwLock::new(HashMap::new()),
+        })
     }
 
     /// Set the maximum row count for DML operations (UPDATE/DELETE/INSERT).
@@ -107,7 +111,8 @@ impl ParquetStorage {
             None => {
                 // Slow path: create under write lock
                 let mut locks = self.write_locks.write().unwrap();
-                locks.entry(key)
+                locks
+                    .entry(key)
                     .or_insert_with(|| Arc::new(Mutex::new(())))
                     .clone()
             }
@@ -129,7 +134,10 @@ impl ParquetStorage {
     fn parquet_row_count(&self, db: &str, table: &str) -> Result<u64> {
         let path = self.parquet_path(db, table);
         if !path.exists() {
-            return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
+            return Err(StorageError::TableNotFound(
+                db.to_string(),
+                table.to_string(),
+            ));
         }
         let file = std::fs::File::open(&path)?;
         let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)
@@ -182,7 +190,10 @@ impl ParquetStorage {
         let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
-            return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
+            return Err(StorageError::TableNotFound(
+                db.to_string(),
+                table.to_string(),
+            ));
         }
         self.check_dml_limit(db, table)?;
 
@@ -204,7 +215,10 @@ impl ParquetStorage {
     pub fn read(&self, db: &str, table: &str) -> Result<RecordBatch> {
         let path = self.parquet_path(db, table);
         if !path.exists() {
-            return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
+            return Err(StorageError::TableNotFound(
+                db.to_string(),
+                table.to_string(),
+            ));
         }
         self::read::read_parquet(&path)
     }
@@ -219,7 +233,10 @@ impl ParquetStorage {
     ) -> Result<RecordBatch> {
         let path = self.parquet_path(db, table);
         if !path.exists() {
-            return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
+            return Err(StorageError::TableNotFound(
+                db.to_string(),
+                table.to_string(),
+            ));
         }
         self::read::read_parquet_with_options(&path, projection, limit)
     }
@@ -232,7 +249,10 @@ impl ParquetStorage {
         let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
-            return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
+            return Err(StorageError::TableNotFound(
+                db.to_string(),
+                table.to_string(),
+            ));
         }
         self.check_dml_limit(db, table)?;
 
@@ -251,7 +271,10 @@ impl ParquetStorage {
         let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
-            return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
+            return Err(StorageError::TableNotFound(
+                db.to_string(),
+                table.to_string(),
+            ));
         }
         self.check_dml_limit(db, table)?;
 
@@ -263,7 +286,12 @@ impl ParquetStorage {
     }
 
     /// Rewrite the Parquet file by dropping a column at `col_index`.
-    pub fn rewrite_parquet_drop_column(&self, db: &str, table: &str, col_index: usize) -> Result<()> {
+    pub fn rewrite_parquet_drop_column(
+        &self,
+        db: &str,
+        table: &str,
+        col_index: usize,
+    ) -> Result<()> {
         let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
@@ -303,7 +331,12 @@ impl ParquetStorage {
         }
         // Create null array for new column
         let null_array = new_null_array(field.data_type(), existing.num_rows());
-        let mut fields: Vec<Field> = existing.schema().fields().iter().map(|f| f.as_ref().clone()).collect();
+        let mut fields: Vec<Field> = existing
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.as_ref().clone())
+            .collect();
         fields.push(field.clone());
         let mut columns: Vec<ArrayRef> = existing.columns().to_vec();
         columns.push(null_array);
@@ -367,7 +400,10 @@ mod write {
         };
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let temp_path = dir.join(format!(
-            ".tmp_{}_{}_{}_{}", pid, tid, seq,
+            ".tmp_{}_{}_{}_{}",
+            pid,
+            tid,
+            seq,
             path.file_name().unwrap_or_default().to_string_lossy()
         ));
 
@@ -409,8 +445,8 @@ mod read {
         projection: Option<&Vec<usize>>,
         limit: Option<usize>,
     ) -> Result<RecordBatch> {
-        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use parquet::arrow::ProjectionMask;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
         let file = std::fs::File::open(path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)

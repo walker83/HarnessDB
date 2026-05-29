@@ -4,16 +4,16 @@
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
 
+use lazy_static::lazy_static;
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Row, Value};
 use std::cell::RefCell;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use lazy_static::lazy_static;
 
 // === CHANGE PER FILE: use unique port ===
 const MYSQL_PORT: u16 = 29980;
@@ -38,14 +38,21 @@ impl E2eServer {
         std::fs::create_dir_all(&data_dir).unwrap();
         let binary = find_binary();
         let child = Command::new(&binary)
-            .arg("--mysql-port").arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir").arg(&meta_dir)
-            .arg("--data-dir").arg(&data_dir)
+            .arg("--mysql-port")
+            .arg(MYSQL_PORT.to_string())
+            .arg("--meta-dir")
+            .arg(&meta_dir)
+            .arg("--data-dir")
+            .arg(&data_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
-        E2eServer { child, meta_dir, data_dir }
+        E2eServer {
+            child,
+            meta_dir,
+            data_dir,
+        }
     }
 
     fn wait_ready(&self) {
@@ -78,7 +85,9 @@ fn find_binary() -> String {
         format!("{}/../../target/release/roris-fe", manifest_dir),
         format!("{}/../../target/debug/roris-fe", manifest_dir),
     ] {
-        if Path::new(p).exists() { return p.to_string(); }
+        if Path::new(p).exists() {
+            return p.to_string();
+        }
     }
     panic!("roris-fe binary not found. Build with: cargo build --release");
 }
@@ -110,7 +119,10 @@ impl TestContext {
     fn new() -> Self {
         let server = SERVER.clone();
         let conn = make_conn();
-        TestContext { server, conn: RefCell::new(conn) }
+        TestContext {
+            server,
+            conn: RefCell::new(conn),
+        }
     }
 
     /// Create a unique database name and return it
@@ -134,7 +146,8 @@ impl TestContext {
 
     fn exec(&self, sql: &str) {
         let mut conn = self.conn.borrow_mut();
-        conn.query_drop(sql).unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
+        conn.query_drop(sql)
+            .unwrap_or_else(|e| panic!("SQL failed: {} -- {}", sql, e));
     }
 
     fn exec_ignore_error(&self, sql: &str) -> Result<(), String> {
@@ -144,7 +157,8 @@ impl TestContext {
 
     fn query(&self, sql: &str) -> Vec<Row> {
         let mut conn = self.conn.borrow_mut();
-        conn.query(sql).unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
+        conn.query(sql)
+            .unwrap_or_else(|e| panic!("Query failed: {} -- {}", sql, e))
     }
 
     fn query_ignore_error(&self, sql: &str) -> Result<Vec<Row>, String> {
@@ -155,7 +169,14 @@ impl TestContext {
     /// Assert query returns expected number of rows
     fn assert_row_count(&self, sql: &str, expected: usize) {
         let rows = self.query(sql);
-        assert_eq!(rows.len(), expected, "SQL: {} expected {} rows, got {}", sql, expected, rows.len());
+        assert_eq!(
+            rows.len(),
+            expected,
+            "SQL: {} expected {} rows, got {}",
+            sql,
+            expected,
+            rows.len()
+        );
     }
 }
 
@@ -171,7 +192,8 @@ fn get_i64(row: &Row, idx: usize) -> i64 {
             if let Ok(f) = s.parse::<f64>() {
                 f as i64
             } else {
-                s.parse::<i64>().unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
+                s.parse::<i64>()
+                    .unwrap_or_else(|e| panic!("get_i64: cannot parse {:?}: {}", s, e))
             }
         }
         v => panic!("get_i64: unexpected {:?} at col {}", v, idx),
@@ -183,8 +205,15 @@ fn get_f64(row: &Row, idx: usize) -> f64 {
         Value::Float(f) => *f as f64,
         Value::Double(d) => *d,
         Value::Int(n) => *n as f64,
-        Value::Bytes(b) => String::from_utf8_lossy(b).parse::<f64>()
-            .unwrap_or_else(|e| panic!("get_f64: cannot parse {:?}: {}", String::from_utf8_lossy(b), e)),
+        Value::Bytes(b) => String::from_utf8_lossy(b)
+            .parse::<f64>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "get_f64: cannot parse {:?}: {}",
+                    String::from_utf8_lossy(b),
+                    e
+                )
+            }),
         v => panic!("get_f64: unexpected {:?} at col {}", v, idx),
     }
 }
@@ -228,15 +257,19 @@ fn test_row_number_basic() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE sales (id INT, region VARCHAR(20), product VARCHAR(20), amount DOUBLE, sale_date DATE)");
-    ctx.exec("INSERT INTO sales VALUES \
+    ctx.exec(
+        "INSERT INTO sales VALUES \
         (1,'East','Widget',100,'2024-01-15'),(2,'East','Widget',150,'2024-02-10'), \
         (3,'East','Gadget',200,'2024-03-05'),(4,'West','Widget',120,'2024-01-20'), \
         (5,'West','Gadget',180,'2024-02-15'),(6,'West','Gadget',160,'2024-03-10'), \
         (7,'North','Widget',90,'2024-01-25'),(8,'North','Widget',110,'2024-02-20'), \
-        (9,'North','Gadget',220,'2024-03-15'),(10,'South','Widget',130,'2024-01-30')");
+        (9,'North','Gadget',220,'2024-03-15'),(10,'South','Widget',130,'2024-01-30')",
+    );
 
     // ROW_NUMBER() OVER (ORDER BY id) may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM sales ORDER BY id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM sales ORDER BY id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 10, "ROW_NUMBER basic should return 10 rows");
         if !column_is_all_null(&rows, 1) {
@@ -258,12 +291,14 @@ fn test_row_number_partition() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE sales (id INT, region VARCHAR(20), product VARCHAR(20), amount DOUBLE, sale_date DATE)");
-    ctx.exec("INSERT INTO sales VALUES \
+    ctx.exec(
+        "INSERT INTO sales VALUES \
         (1,'East','Widget',100,'2024-01-15'),(2,'East','Widget',150,'2024-02-10'), \
         (3,'East','Gadget',200,'2024-03-05'),(4,'West','Widget',120,'2024-01-20'), \
         (5,'West','Gadget',180,'2024-02-15'),(6,'West','Gadget',160,'2024-03-10'), \
         (7,'North','Widget',90,'2024-01-25'),(8,'North','Widget',110,'2024-02-20'), \
-        (9,'North','Gadget',220,'2024-03-15'),(10,'South','Widget',130,'2024-01-30')");
+        (9,'North','Gadget',220,'2024-03-15'),(10,'South','Widget',130,'2024-01-30')",
+    );
 
     // ROW_NUMBER() OVER (PARTITION BY region ORDER BY id)
     // May not be supported in this DataFusion version
@@ -285,7 +320,9 @@ fn test_row_number_desc_order() {
 
     // ROW_NUMBER() OVER (ORDER BY val DESC) -- highest val gets rn=1
     // ROW_NUMBER may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, val, ROW_NUMBER() OVER (ORDER BY val DESC) AS rn FROM items ORDER BY val DESC");
+    let result = ctx.query_ignore_error(
+        "SELECT id, val, ROW_NUMBER() OVER (ORDER BY val DESC) AS rn FROM items ORDER BY val DESC",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
@@ -308,7 +345,9 @@ fn test_row_number_desc_order() {
     }
 
     // ASC ordering for comparison
-    let result_asc = ctx.query_ignore_error("SELECT id, ROW_NUMBER() OVER (ORDER BY val ASC) AS rn FROM items ORDER BY val ASC");
+    let result_asc = ctx.query_ignore_error(
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY val ASC) AS rn FROM items ORDER BY val ASC",
+    );
     if let Ok(rows_asc) = result_asc {
         assert_eq!(rows_asc.len(), 5);
         if !column_is_all_null(&rows_asc, 1) {
@@ -326,10 +365,12 @@ fn test_row_number_multiple_partitions() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE emp (id INT, dept VARCHAR(20), city VARCHAR(20), salary DOUBLE)");
-    ctx.exec("INSERT INTO emp VALUES \
+    ctx.exec(
+        "INSERT INTO emp VALUES \
         (1,'Eng','NYC',100),(2,'Eng','NYC',110),(3,'Eng','SF',120), \
         (4,'Sales','NYC',90),(5,'Sales','SF',95),(6,'Sales','SF',100), \
-        (7,'HR','NYC',80),(8,'HR','SF',85)");
+        (7,'HR','NYC',80),(8,'HR','SF',85)",
+    );
 
     // PARTITION BY dept, city
     // Eng,NYC: 1,2 -> rn 1,2
@@ -363,9 +404,11 @@ fn test_row_number_top_n_per_group() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE sales (id INT, region VARCHAR(20), amount DOUBLE)");
-    ctx.exec("INSERT INTO sales VALUES \
+    ctx.exec(
+        "INSERT INTO sales VALUES \
         (1,'East',100),(2,'East',150),(3,'East',200), \
-        (4,'West',120),(5,'West',180),(6,'West',160)");
+        (4,'West',120),(5,'West',180),(6,'West',160)",
+    );
 
     // Top 1 per region (highest amount)
     // ROW_NUMBER may not be supported in this DataFusion version
@@ -411,14 +454,18 @@ fn test_row_number_with_where() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE sales (id INT, region VARCHAR(20), amount DOUBLE)");
-    ctx.exec("INSERT INTO sales VALUES \
+    ctx.exec(
+        "INSERT INTO sales VALUES \
         (1,'East',100),(2,'East',150),(3,'East',200), \
-        (4,'West',120),(5,'West',180),(6,'West',160)");
+        (4,'West',120),(5,'West',180),(6,'West',160)",
+    );
 
     // WHERE clause before window -- filter to 'East' only
     // ROW_NUMBER may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS rn \
-        FROM sales WHERE region = 'East' ORDER BY amount DESC");
+    let result = ctx.query_ignore_error(
+        "SELECT id, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS rn \
+        FROM sales WHERE region = 'East' ORDER BY amount DESC",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 3, "East only");
         if !column_is_all_null(&rows, 2) {
@@ -429,8 +476,10 @@ fn test_row_number_with_where() {
     }
 
     // WHERE with amount filter
-    let result2 = ctx.query_ignore_error("SELECT id, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS rn \
-        FROM sales WHERE amount >= 150 ORDER BY amount DESC");
+    let result2 = ctx.query_ignore_error(
+        "SELECT id, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS rn \
+        FROM sales WHERE amount >= 150 ORDER BY amount DESC",
+    );
     if let Ok(rows) = result2 {
         // Rows with amount >= 150: id=2(150), id=3(200), id=5(180), id=6(160) = 4 rows
         assert_eq!(rows.len(), 4, "amount >= 150");
@@ -525,8 +574,10 @@ fn test_rank_vs_row_number() {
 
     // RANK and ROW_NUMBER in same query to compare
     // RANK/ROW_NUMBER may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, score, RANK() OVER (ORDER BY score DESC) AS r, \
-        ROW_NUMBER() OVER (ORDER BY score DESC) AS rn FROM scores ORDER BY score DESC, id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, score, RANK() OVER (ORDER BY score DESC) AS r, \
+        ROW_NUMBER() OVER (ORDER BY score DESC) AS rn FROM scores ORDER BY score DESC, id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
@@ -593,8 +644,10 @@ fn test_dense_rank_vs_rank() {
 
     // Show that DENSE_RANK has no gaps but RANK does
     // RANK/DENSE_RANK may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, score, RANK() OVER (ORDER BY score DESC) AS r, \
-        DENSE_RANK() OVER (ORDER BY score DESC) AS dr FROM scores ORDER BY score DESC, id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, score, RANK() OVER (ORDER BY score DESC) AS r, \
+        DENSE_RANK() OVER (ORDER BY score DESC) AS dr FROM scores ORDER BY score DESC, id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
@@ -629,8 +682,10 @@ fn test_dense_rank_with_partition() {
     // Group A: 100->1, 90->2, 90->2, 80->3
     // Group B: 95->1, 95->1, 85->2
     // DENSE_RANK may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, grp, score, DENSE_RANK() OVER (PARTITION BY grp ORDER BY score DESC) AS dr \
-        FROM scores ORDER BY grp, score DESC, id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, grp, score, DENSE_RANK() OVER (PARTITION BY grp ORDER BY score DESC) AS dr \
+        FROM scores ORDER BY grp, score DESC, id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 7);
         if !column_is_all_null(&rows, 3) {
@@ -688,7 +743,8 @@ fn test_lag_basic() {
 
     // LAG(val) OVER (ORDER BY id) — previous row value
     // id=1: NULL, id=2: 10, id=3: 20, id=4: 30, id=5: 40
-    let rows = ctx.query("SELECT id, val, LAG(val) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, val, LAG(val) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert!(is_null(&rows[0], 2), "LAG first row should be NULL");
     assert_eq!(get_f64(&rows[1], 2), 10.0, "LAG id=2");
@@ -699,13 +755,15 @@ fn test_lag_basic() {
     assert_eq!(get_f64(&rows[4], 1), 50.0, "val id=5");
 
     // LAG(val, 1) OVER (ORDER BY id) — same as LAG(val)
-    let rows = ctx.query("SELECT id, val, LAG(val, 1) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, val, LAG(val, 1) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert!(is_null(&rows[0], 2), "LAG(val,1) first row NULL");
 
     // LAG(val, 2) OVER (ORDER BY id) — 2 rows back
     // id=1: NULL, id=2: NULL, id=3: 10, id=4: 20, id=5: 30
-    let rows = ctx.query("SELECT id, LAG(val, 2) OVER (ORDER BY id) AS prev2 FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, LAG(val, 2) OVER (ORDER BY id) AS prev2 FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert!(is_null(&rows[0], 1), "LAG(val,2) id=1 NULL");
     assert!(is_null(&rows[1], 1), "LAG(val,2) id=2 NULL");
@@ -725,15 +783,21 @@ fn test_lag_with_default() {
     ctx.exec("INSERT INTO items VALUES (1,10),(2,20),(3,30)");
 
     // LAG(val, 1, 0) OVER (ORDER BY id) — default 0 for first row
-    let rows = ctx.query("SELECT id, val, LAG(val, 1, 0) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
+    let rows = ctx
+        .query("SELECT id, val, LAG(val, 1, 0) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
     assert_eq!(rows.len(), 3);
     assert!(!is_null(&rows[0], 2), "LAG with default should not be NULL");
-    assert_eq!(get_f64(&rows[0], 2), 0.0, "LAG default first row should be 0");
+    assert_eq!(
+        get_f64(&rows[0], 2),
+        0.0,
+        "LAG default first row should be 0"
+    );
     assert_eq!(get_f64(&rows[1], 2), 10.0, "LAG default id=2");
     assert_eq!(get_f64(&rows[2], 2), 20.0, "LAG default id=3");
 
     // LAG(val, 2, -1) OVER (ORDER BY id) — default -1 for first 2 rows
-    let rows = ctx.query("SELECT id, LAG(val, 2, -1) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, LAG(val, 2, -1) OVER (ORDER BY id) AS prev FROM items ORDER BY id");
     assert_eq!(rows.len(), 3);
     assert_eq!(get_f64(&rows[0], 1), -1.0, "LAG(2,-1) id=1");
     assert_eq!(get_f64(&rows[1], 1), -1.0, "LAG(2,-1) id=2");
@@ -748,15 +812,19 @@ fn test_lag_with_partition() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE sales (id INT, region VARCHAR(20), amount DOUBLE)");
-    ctx.exec("INSERT INTO sales VALUES \
+    ctx.exec(
+        "INSERT INTO sales VALUES \
         (1,'East',100),(2,'East',150),(3,'East',200), \
-        (4,'West',120),(5,'West',180),(6,'West',160)");
+        (4,'West',120),(5,'West',180),(6,'West',160)",
+    );
 
     // LAG(amount) OVER (PARTITION BY region ORDER BY id)
     // East: id=1 NULL, id=2 100, id=3 150
     // West: id=4 NULL, id=5 120, id=6 180
-    let rows = ctx.query("SELECT id, region, amount, LAG(amount) OVER (PARTITION BY region ORDER BY id) AS prev \
-        FROM sales ORDER BY id");
+    let rows = ctx.query(
+        "SELECT id, region, amount, LAG(amount) OVER (PARTITION BY region ORDER BY id) AS prev \
+        FROM sales ORDER BY id",
+    );
     assert_eq!(rows.len(), 6);
     // East
     assert!(is_null(&rows[0], 3), "East id=1 LAG NULL");
@@ -768,8 +836,10 @@ fn test_lag_with_partition() {
     assert_eq!(get_f64(&rows[5], 3), 180.0, "West id=6 LAG");
 
     // LAG with default within partition
-    let rows = ctx.query("SELECT id, region, LAG(amount, 1, 0) OVER (PARTITION BY region ORDER BY id) AS prev \
-        FROM sales ORDER BY id");
+    let rows = ctx.query(
+        "SELECT id, region, LAG(amount, 1, 0) OVER (PARTITION BY region ORDER BY id) AS prev \
+        FROM sales ORDER BY id",
+    );
     assert_eq!(rows.len(), 6);
     assert_eq!(get_f64(&rows[0], 2), 0.0, "East: LAG default 0");
     assert_eq!(get_f64(&rows[3], 2), 0.0, "West: LAG default 0");
@@ -786,7 +856,9 @@ fn test_lag_compute_difference() {
     ctx.exec("INSERT INTO items VALUES (1,10),(2,20),(3,35),(4,40),(5,55)");
 
     // Compute difference from previous row: val - LAG(val, 1, 0)
-    let rows = ctx.query("SELECT id, val, val - LAG(val, 1, 0) OVER (ORDER BY id) AS diff FROM items ORDER BY id");
+    let rows = ctx.query(
+        "SELECT id, val, val - LAG(val, 1, 0) OVER (ORDER BY id) AS diff FROM items ORDER BY id",
+    );
     assert_eq!(rows.len(), 5);
     assert_eq!(get_f64(&rows[0], 2), 10.0, "id=1 diff (10-0)");
     assert_eq!(get_f64(&rows[1], 2), 10.0, "id=2 diff (20-10)");
@@ -795,7 +867,8 @@ fn test_lag_compute_difference() {
     assert_eq!(get_f64(&rows[4], 2), 15.0, "id=5 diff (55-40)");
 
     // Without default — first row diff should be NULL (val - NULL = NULL)
-    let rows = ctx.query("SELECT id, val, val - LAG(val) OVER (ORDER BY id) AS diff FROM items ORDER BY id");
+    let rows = ctx
+        .query("SELECT id, val, val - LAG(val) OVER (ORDER BY id) AS diff FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert!(is_null(&rows[0], 2), "id=1 diff without default is NULL");
     assert_eq!(get_f64(&rows[1], 2), 10.0, "id=2 diff (20-10)");
@@ -839,7 +912,8 @@ fn test_lead_basic() {
 
     // LEAD(val) OVER (ORDER BY id) — next row value
     // id=1: 20, id=2: 30, id=3: 40, id=4: 50, id=5: NULL
-    let rows = ctx.query("SELECT id, val, LEAD(val) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, val, LEAD(val) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert_eq!(get_f64(&rows[0], 2), 20.0, "LEAD id=1");
     assert_eq!(get_f64(&rows[1], 2), 30.0, "LEAD id=2");
@@ -848,13 +922,15 @@ fn test_lead_basic() {
     assert!(is_null(&rows[4], 2), "LEAD last row should be NULL");
 
     // LEAD(val, 1) OVER (ORDER BY id) — same as LEAD(val)
-    let rows = ctx.query("SELECT id, LEAD(val, 1) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, LEAD(val, 1) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert!(is_null(&rows[4], 1), "LEAD(val,1) last row NULL");
 
     // LEAD(val, 2) OVER (ORDER BY id) — 2 rows ahead
     // id=1: 30, id=2: 40, id=3: 50, id=4: NULL, id=5: NULL
-    let rows = ctx.query("SELECT id, LEAD(val, 2) OVER (ORDER BY id) AS nxt2 FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, LEAD(val, 2) OVER (ORDER BY id) AS nxt2 FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert_eq!(get_f64(&rows[0], 1), 30.0, "LEAD(val,2) id=1");
     assert_eq!(get_f64(&rows[1], 1), 40.0, "LEAD(val,2) id=2");
@@ -874,15 +950,24 @@ fn test_lead_with_default() {
     ctx.exec("INSERT INTO items VALUES (1,10),(2,20),(3,30)");
 
     // LEAD(val, 1, 0) OVER (ORDER BY id) — default 0 for last row
-    let rows = ctx.query("SELECT id, val, LEAD(val, 1, 0) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
+    let rows = ctx
+        .query("SELECT id, val, LEAD(val, 1, 0) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
     assert_eq!(rows.len(), 3);
     assert_eq!(get_f64(&rows[0], 2), 20.0, "LEAD default id=1");
     assert_eq!(get_f64(&rows[1], 2), 30.0, "LEAD default id=2");
-    assert!(!is_null(&rows[2], 2), "LEAD with default should not be NULL");
-    assert_eq!(get_f64(&rows[2], 2), 0.0, "LEAD default last row should be 0");
+    assert!(
+        !is_null(&rows[2], 2),
+        "LEAD with default should not be NULL"
+    );
+    assert_eq!(
+        get_f64(&rows[2], 2),
+        0.0,
+        "LEAD default last row should be 0"
+    );
 
     // LEAD(val, 2, 99) OVER (ORDER BY id) — default 99 for last 2 rows
-    let rows = ctx.query("SELECT id, LEAD(val, 2, 99) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
+    let rows =
+        ctx.query("SELECT id, LEAD(val, 2, 99) OVER (ORDER BY id) AS nxt FROM items ORDER BY id");
     assert_eq!(rows.len(), 3);
     assert_eq!(get_f64(&rows[0], 1), 30.0, "LEAD(2,99) id=1");
     assert_eq!(get_f64(&rows[1], 1), 99.0, "LEAD(2,99) id=2 default");
@@ -897,15 +982,19 @@ fn test_lead_with_partition() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE sales (id INT, region VARCHAR(20), amount DOUBLE)");
-    ctx.exec("INSERT INTO sales VALUES \
+    ctx.exec(
+        "INSERT INTO sales VALUES \
         (1,'East',100),(2,'East',150),(3,'East',200), \
-        (4,'West',120),(5,'West',180),(6,'West',160)");
+        (4,'West',120),(5,'West',180),(6,'West',160)",
+    );
 
     // LEAD(amount) OVER (PARTITION BY region ORDER BY id)
     // East: id=1 150, id=2 200, id=3 NULL
     // West: id=4 180, id=5 160, id=6 NULL
-    let rows = ctx.query("SELECT id, region, amount, LEAD(amount) OVER (PARTITION BY region ORDER BY id) AS nxt \
-        FROM sales ORDER BY id");
+    let rows = ctx.query(
+        "SELECT id, region, amount, LEAD(amount) OVER (PARTITION BY region ORDER BY id) AS nxt \
+        FROM sales ORDER BY id",
+    );
     assert_eq!(rows.len(), 6);
     // East
     assert_eq!(get_f64(&rows[0], 3), 150.0, "East id=1 LEAD");
@@ -917,8 +1006,10 @@ fn test_lead_with_partition() {
     assert!(is_null(&rows[5], 3), "West id=6 LEAD NULL");
 
     // LEAD with default within partition
-    let rows = ctx.query("SELECT id, region, LEAD(amount, 1, 0) OVER (PARTITION BY region ORDER BY id) AS nxt \
-        FROM sales ORDER BY id");
+    let rows = ctx.query(
+        "SELECT id, region, LEAD(amount, 1, 0) OVER (PARTITION BY region ORDER BY id) AS nxt \
+        FROM sales ORDER BY id",
+    );
     assert_eq!(rows.len(), 6);
     assert_eq!(get_f64(&rows[2], 2), 0.0, "East: LEAD default 0");
     assert_eq!(get_f64(&rows[5], 2), 0.0, "West: LEAD default 0");
@@ -935,7 +1026,8 @@ fn test_lead_compute_forward_difference() {
     ctx.exec("INSERT INTO items VALUES (1,10),(2,20),(3,35),(4,40),(5,55)");
 
     // Compute difference to next row: LEAD(val) - val
-    let rows = ctx.query("SELECT id, val, LEAD(val) OVER (ORDER BY id) - val AS diff FROM items ORDER BY id");
+    let rows = ctx
+        .query("SELECT id, val, LEAD(val) OVER (ORDER BY id) - val AS diff FROM items ORDER BY id");
     assert_eq!(rows.len(), 5);
     assert_eq!(get_f64(&rows[0], 2), 10.0, "id=1 fwd diff (20-10)");
     assert_eq!(get_f64(&rows[1], 2), 15.0, "id=2 fwd diff (35-20)");
@@ -977,18 +1069,22 @@ fn test_window_multiple_partitions() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE emp (id INT, dept VARCHAR(20), salary DOUBLE)");
-    ctx.exec("INSERT INTO emp VALUES \
+    ctx.exec(
+        "INSERT INTO emp VALUES \
         (1,'Eng',100),(2,'Eng',110),(3,'Eng',120), \
         (4,'Sales',90),(5,'Sales',85),(6,'Sales',95), \
-        (7,'HR',80),(8,'HR',75)");
+        (7,'HR',80),(8,'HR',75)",
+    );
 
     // ROW_NUMBER per dept ORDER BY salary DESC
     // Eng: id=3(120)->1, id=2(110)->2, id=1(100)->3
     // Sales: id=6(95)->1, id=4(90)->2, id=5(85)->3
     // HR: id=7(80)->1, id=8(75)->2
     // ROW_NUMBER may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, dept, salary, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) AS rn \
-        FROM emp ORDER BY dept, rn");
+    let result = ctx.query_ignore_error(
+        "SELECT id, dept, salary, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) AS rn \
+        FROM emp ORDER BY dept, rn",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 8);
         if !column_is_all_null(&rows, 3) {
@@ -1073,11 +1169,13 @@ fn test_combined_row_number_lag_lead() {
 
     // ROW_NUMBER + LAG + LEAD in one query
     // ROW_NUMBER may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, val, \
+    let result = ctx.query_ignore_error(
+        "SELECT id, val, \
         ROW_NUMBER() OVER (ORDER BY id) AS rn, \
         LAG(val) OVER (ORDER BY id) AS prev, \
         LEAD(val) OVER (ORDER BY id) AS nxt \
-        FROM items ORDER BY id");
+        FROM items ORDER BY id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         // ROW_NUMBER may be NULL, but LAG/LEAD should work
@@ -1126,10 +1224,12 @@ fn test_combined_rank_dense_rank() {
 
     // RANK + DENSE_RANK together
     // RANK/DENSE_RANK may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, score, \
+    let result = ctx.query_ignore_error(
+        "SELECT id, score, \
         RANK() OVER (ORDER BY score DESC) AS r, \
         DENSE_RANK() OVER (ORDER BY score DESC) AS dr \
-        FROM scores ORDER BY score DESC, id");
+        FROM scores ORDER BY score DESC, id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
@@ -1158,15 +1258,19 @@ fn test_window_with_regular_aggregate() {
     let db = ctx.create_and_use_db();
 
     ctx.exec("CREATE TABLE sales (id INT, region VARCHAR(20), amount DOUBLE)");
-    ctx.exec("INSERT INTO sales VALUES \
+    ctx.exec(
+        "INSERT INTO sales VALUES \
         (1,'East',100),(2,'East',150),(3,'East',200), \
-        (4,'West',120),(5,'West',180)");
+        (4,'West',120),(5,'West',180)",
+    );
 
     // Window function (ROW_NUMBER) in same SELECT
     // ROW_NUMBER may not be supported in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT region, amount, \
+    let result = ctx.query_ignore_error(
+        "SELECT region, amount, \
         ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) AS rn \
-        FROM sales ORDER BY region, rn");
+        FROM sales ORDER BY region, rn",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
@@ -1205,11 +1309,13 @@ fn test_window_lag_lead_same_query() {
     // NOTE: LEAD(val) - LAG(val, 1, 0) OVER (ORDER BY id) may fail due to
     // DataFusion parser limitation with mixed LAG/LEAD in arithmetic expressions.
     // When it fails, the mysql crate may return Ok with unexpected rows.
-    let result = ctx.query_ignore_error("SELECT id, val, \
+    let result = ctx.query_ignore_error(
+        "SELECT id, val, \
         LAG(val) OVER (ORDER BY id) AS prev, \
         LEAD(val) OVER (ORDER BY id) AS nxt, \
         LEAD(val) - LAG(val, 1, 0) OVER (ORDER BY id) AS change \
-        FROM t ORDER BY id");
+        FROM t ORDER BY id",
+    );
     if let Ok(rows) = result {
         // Only check detailed assertions if expected row count is returned
         if rows.len() == 5 && !column_is_all_null(&rows, 2) {
@@ -1236,14 +1342,18 @@ fn test_window_lag_lead_same_query() {
         }
     }
     // Fallback: test LAG and LEAD separately (they work individually)
-    let result_prev = ctx.query_ignore_error("SELECT id, val, LAG(val) OVER (ORDER BY id) AS prev FROM t ORDER BY id");
+    let result_prev = ctx.query_ignore_error(
+        "SELECT id, val, LAG(val) OVER (ORDER BY id) AS prev FROM t ORDER BY id",
+    );
     if let Ok(rows) = result_prev {
         assert_eq!(rows.len(), 5);
         assert!(is_null(&rows[0], 2), "id=1 prev (fallback)");
         assert_eq!(get_i64(&rows[1], 2), 100, "id=2 prev (fallback)");
         assert_eq!(get_i64(&rows[4], 2), 400, "id=5 prev (fallback)");
     }
-    let result_nxt = ctx.query_ignore_error("SELECT id, val, LEAD(val) OVER (ORDER BY id) AS nxt FROM t ORDER BY id");
+    let result_nxt = ctx.query_ignore_error(
+        "SELECT id, val, LEAD(val) OVER (ORDER BY id) AS nxt FROM t ORDER BY id",
+    );
     if let Ok(rows) = result_nxt {
         assert_eq!(rows.len(), 5);
         assert_eq!(get_i64(&rows[0], 2), 200, "id=1 nxt (fallback)");
@@ -1349,18 +1459,26 @@ fn test_window_all_same_values() {
 
     // ROW_NUMBER with all same values — order is deterministic by ORDER BY
     // ROW_NUMBER may return NULL in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, ROW_NUMBER() OVER (ORDER BY val, id) AS rn FROM t ORDER BY id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY val, id) AS rn FROM t ORDER BY id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 1) {
             for i in 0..5 {
-                assert_eq!(get_i64(&rows[i], 1), (i + 1) as i64, "all same rn={}", i + 1);
+                assert_eq!(
+                    get_i64(&rows[i], 1),
+                    (i + 1) as i64,
+                    "all same rn={}",
+                    i + 1
+                );
             }
         }
     }
 
     // RANK with all same values — all should be rank 1
-    let result = ctx.query_ignore_error("SELECT id, RANK() OVER (ORDER BY val) AS r FROM t ORDER BY id");
+    let result =
+        ctx.query_ignore_error("SELECT id, RANK() OVER (ORDER BY val) AS r FROM t ORDER BY id");
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 1) {
@@ -1371,7 +1489,8 @@ fn test_window_all_same_values() {
     }
 
     // DENSE_RANK with all same values — all should be dense_rank 1
-    let result = ctx.query_ignore_error("SELECT id, DENSE_RANK() OVER (ORDER BY val) AS dr FROM t ORDER BY id");
+    let result = ctx
+        .query_ignore_error("SELECT id, DENSE_RANK() OVER (ORDER BY val) AS dr FROM t ORDER BY id");
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 1) {
@@ -1412,14 +1531,20 @@ fn test_window_nulls_in_order_by() {
     // ROW_NUMBER with NULLs in ORDER BY — NULL behavior depends on DB
     // DataFusion typically puts NULLs last for ASC by default
     // ROW_NUMBER may return NULL in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, val, ROW_NUMBER() OVER (ORDER BY val ASC) AS rn FROM t ORDER BY id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, val, ROW_NUMBER() OVER (ORDER BY val ASC) AS rn FROM t ORDER BY id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 5);
         if !column_is_all_null(&rows, 2) {
             // Just verify we get 5 rows back and rn values are 1-5 (in any order)
             let mut rn_values: Vec<i64> = rows.iter().map(|r| get_i64(r, 2)).collect();
             rn_values.sort();
-            assert_eq!(rn_values, vec![1, 2, 3, 4, 5], "ROW_NUMBER with NULLs should be 1..5");
+            assert_eq!(
+                rn_values,
+                vec![1, 2, 3, 4, 5],
+                "ROW_NUMBER with NULLs should be 1..5"
+            );
         }
     }
 
@@ -1478,7 +1603,9 @@ fn test_window_on_different_data_types() {
 
     // ROW_NUMBER with DOUBLE ordering
     // ROW_NUMBER may return NULL in this DataFusion version
-    let result = ctx.query_ignore_error("SELECT id, price, ROW_NUMBER() OVER (ORDER BY price) AS rn FROM t ORDER BY id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, price, ROW_NUMBER() OVER (ORDER BY price) AS rn FROM t ORDER BY id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 3);
         if !column_is_all_null(&rows, 2) {
@@ -1489,7 +1616,9 @@ fn test_window_on_different_data_types() {
     }
 
     // ROW_NUMBER with BIGINT ordering
-    let result = ctx.query_ignore_error("SELECT id, quantity, ROW_NUMBER() OVER (ORDER BY quantity) AS rn FROM t ORDER BY id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, quantity, ROW_NUMBER() OVER (ORDER BY quantity) AS rn FROM t ORDER BY id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 3);
         if !column_is_all_null(&rows, 2) {
@@ -1500,7 +1629,9 @@ fn test_window_on_different_data_types() {
     }
 
     // ROW_NUMBER with VARCHAR ordering
-    let result = ctx.query_ignore_error("SELECT id, name, ROW_NUMBER() OVER (ORDER BY name) AS rn FROM t ORDER BY id");
+    let result = ctx.query_ignore_error(
+        "SELECT id, name, ROW_NUMBER() OVER (ORDER BY name) AS rn FROM t ORDER BY id",
+    );
     if let Ok(rows) = result {
         assert_eq!(rows.len(), 3);
         if !column_is_all_null(&rows, 2) {

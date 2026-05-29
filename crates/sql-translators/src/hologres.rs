@@ -112,21 +112,30 @@ fn check_unsupported(sql: &str) -> Option<TranslateResult> {
     let trimmed = sql.trim();
 
     // CREATE TRIGGER -> no-op with warning
-    if Regex::new(r"(?i)^\s*CREATE\s+TRIGGER\b").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::ok(String::new())
-            .with_warning("CREATE TRIGGER is accepted but not executed (no-op in simulation mode)"));
+    if Regex::new(r"(?i)^\s*CREATE\s+TRIGGER\b")
+        .unwrap()
+        .is_match(trimmed)
+    {
+        return Some(TranslateResult::ok(String::new()).with_warning(
+            "CREATE TRIGGER is accepted but not executed (no-op in simulation mode)",
+        ));
     }
 
     // CREATE DOMAIN -> no-op with warning
-    if Regex::new(r"(?i)^\s*CREATE\s+DOMAIN\b").unwrap().is_match(trimmed) {
-        return Some(TranslateResult::ok(String::new())
-            .with_warning("CREATE DOMAIN is accepted but not executed (no-op in simulation mode)"));
+    if Regex::new(r"(?i)^\s*CREATE\s+DOMAIN\b")
+        .unwrap()
+        .is_match(trimmed)
+    {
+        return Some(TranslateResult::ok(String::new()).with_warning(
+            "CREATE DOMAIN is accepted but not executed (no-op in simulation mode)",
+        ));
     }
 
     // LISTEN / NOTIFY -> no-op with warning
     if is_listen_notify(trimmed) {
-        return Some(TranslateResult::ok(String::new())
-            .with_warning("LISTEN/NOTIFY is accepted but not executed (no-op in simulation mode)"));
+        return Some(TranslateResult::ok(String::new()).with_warning(
+            "LISTEN/NOTIFY is accepted but not executed (no-op in simulation mode)",
+        ));
     }
 
     // The following features are now passed through instead of blocked:
@@ -272,7 +281,9 @@ fn strip_partition_by_list(sql: &str) -> (String, Vec<String>) {
             // Check if what follows starts with '(' (partition value definitions)
             if after.starts_with('(') {
                 let global_paren_start = masked.len() - after.len();
-                if let Some((_content, sub_paren_end)) = extract_paren_content(&masked, global_paren_start) {
+                if let Some((_content, sub_paren_end)) =
+                    extract_paren_content(&masked, global_paren_start)
+                {
                     warnings.push(format!(
                         "PARTITION value definitions stripped: '{}'",
                         &masked[global_paren_start..sub_paren_end + 1]
@@ -285,11 +296,8 @@ fn strip_partition_by_list(sql: &str) -> (String, Vec<String>) {
                 "PARTITION BY LIST clause stripped: '{}'",
                 &masked[part_match.start()..final_end]
             ));
-            let mut result_masked = format!(
-                "{}{}",
-                &masked[..part_match.start()],
-                &masked[final_end..]
-            );
+            let mut result_masked =
+                format!("{}{}", &masked[..part_match.start()], &masked[final_end..]);
             result_masked = result_masked.trim().to_string();
             let result = crate::restore_string_literals(&result_masked, &original_strings);
             return (result, warnings);
@@ -393,10 +401,8 @@ fn strip_for_update(sql: &str) -> (String, Vec<String>) {
     let (masked, original_strings) = crate::mask_string_literals(trimmed);
 
     // Match FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE, FOR KEY SHARE
-    let for_re = Regex::new(
-        r"(?i)\bFOR\s+(?:UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b",
-    )
-    .unwrap();
+    let for_re =
+        Regex::new(r"(?i)\bFOR\s+(?:UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b").unwrap();
 
     if let Some(m) = for_re.find(&masked) {
         let start = m.start();
@@ -424,10 +430,13 @@ fn strip_for_update(sql: &str) -> (String, Vec<String>) {
         let result_masked = format!("{}{}", &masked[..start], &masked[end..]);
         let result_masked = result_masked.trim().to_string();
         let result = crate::restore_string_literals(&result_masked, &original_strings);
-        return (result, vec![format!(
-            "FOR UPDATE clause stripped: '{}'",
-            &masked[start..end]
-        )]);
+        return (
+            result,
+            vec![format!(
+                "FOR UPDATE clause stripped: '{}'",
+                &masked[start..end]
+            )],
+        );
     }
 
     (trimmed.to_string(), Vec::new())
@@ -487,16 +496,10 @@ fn handle_ctas_with(sql: &str) -> (String, Vec<String>) {
         let with_start = with_match.start();
         let paren_pos = with_start + with_match.len() - 1;
         if let Some((_content, paren_end)) = extract_paren_content(&masked, paren_pos) {
-            let result_masked = format!(
-                "{}{}",
-                &masked[..with_start],
-                &masked[paren_end + 1..]
-            );
+            let result_masked = format!("{}{}", &masked[..with_start], &masked[paren_end + 1..]);
             let result_masked = result_masked.trim().to_string();
             let multi_space = Regex::new(r"\s{2,}").unwrap();
-            let result_masked = multi_space
-                .replace_all(&result_masked, " ")
-                .to_string();
+            let result_masked = multi_space.replace_all(&result_masked, " ").to_string();
             let result = crate::restore_string_literals(&result_masked, &original_strings);
             return (
                 result,
@@ -724,7 +727,8 @@ fn translate_pg_catalog(sql: &str) -> (String, Vec<String>) {
 
     // Handle simple pg_tables queries
     if pg_tables_re.is_match(trimmed) {
-        let simple_select_re = Regex::new(r"(?i)^\s*SELECT\s+\*\s+FROM\s+pg_tables\s*;?\s*$").unwrap();
+        let simple_select_re =
+            Regex::new(r"(?i)^\s*SELECT\s+\*\s+FROM\s+pg_tables\s*;?\s*$").unwrap();
         if simple_select_re.is_match(trimmed) {
             warnings.push("pg_tables query translated to SHOW TABLES".to_string());
             return ("SHOW TABLES".to_string(), warnings);
@@ -741,9 +745,8 @@ fn translate_pg_catalog(sql: &str) -> (String, Vec<String>) {
         let simple_select_re =
             Regex::new(r"(?i)^\s*SELECT\s+\*\s+FROM\s+pg_class\s*;?\s*$").unwrap();
         if simple_select_re.is_match(trimmed) {
-            warnings.push(
-                "pg_class query translated to information_schema.tables query".to_string(),
-            );
+            warnings
+                .push("pg_class query translated to information_schema.tables query".to_string());
             return (
                 "SELECT * FROM information_schema.tables".to_string(),
                 warnings,
@@ -763,7 +766,8 @@ fn translate_pg_catalog(sql: &str) -> (String, Vec<String>) {
     // Map common pg_catalog tables to information_schema
     // For pg_type, pg_database, pg_roles - these don't have exact equivalents
     // We'll do our best with information_schema
-    let result = trimmed.to_string()
+    let result = trimmed
+        .to_string()
         .replace("pg_catalog.", "information_schema.")
         .replace("pg_tables", "information_schema.tables")
         .replace("pg_class", "information_schema.tables")
@@ -824,8 +828,9 @@ impl DialectTranslator for HologresTranslator {
         }
 
         if is_create_policy(cleaned) {
-            return TranslateResult::ok(String::new())
-                .with_warning("CREATE/ALTER POLICY stripped (RorisDB does not support row-level security)");
+            return TranslateResult::ok(String::new()).with_warning(
+                "CREATE/ALTER POLICY stripped (RorisDB does not support row-level security)",
+            );
         }
 
         // Check for unsupported features
@@ -880,7 +885,10 @@ impl DialectTranslator for HologresTranslator {
         }
 
         // Step 7: Handle CREATE TABLE transformations
-        if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b").unwrap().is_match(&result) {
+        if Regex::new(r"(?i)^\s*CREATE\s+TABLE\b")
+            .unwrap()
+            .is_match(&result)
+        {
             // Strip WITH clause
             {
                 let (r, w) = strip_with_clause(&result);
@@ -998,7 +1006,11 @@ mod tests {
 
     fn assert_error(sql: &str, expected_msg: &str) {
         let result = translator().translate(sql);
-        assert!(!result.success, "Expected error but got success for: {}", sql);
+        assert!(
+            !result.success,
+            "Expected error but got success for: {}",
+            sql
+        );
         let err = result.error.as_ref().unwrap();
         assert!(
             err.contains(expected_msg),
@@ -1098,13 +1110,15 @@ mod tests {
 
     #[test]
     fn test_create_table_partition_by_list() {
-        let result = translator().translate(
-            "CREATE TABLE t (col1 TEXT, col2 BIGINT) PARTITION BY LIST (col1)",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (col1 TEXT, col2 BIGINT) PARTITION BY LIST (col1)");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING, col2 BIGINT)");
         assert!(
-            result.warnings.iter().any(|w| w.contains("PARTITION BY LIST")),
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("PARTITION BY LIST")),
             "Expected warning about PARTITION BY LIST, got: {:?}",
             result.warnings
         );
@@ -1124,16 +1138,12 @@ mod tests {
 
     #[test]
     fn test_create_partition_of() {
-        assert_noop(
-            "CREATE TABLE child PARTITION OF parent FOR VALUES IN ('2024-01-01')",
-        );
+        assert_noop("CREATE TABLE child PARTITION OF parent FOR VALUES IN ('2024-01-01')");
     }
 
     #[test]
     fn test_create_partition_of_with_default() {
-        assert_noop(
-            "CREATE TABLE child_default PARTITION OF parent DEFAULT",
-        );
+        assert_noop("CREATE TABLE child_default PARTITION OF parent DEFAULT");
     }
 
     // ── CREATE EXTENSION (no-op) ──
@@ -1152,10 +1162,7 @@ mod tests {
 
     #[test]
     fn test_text_to_string() {
-        assert_translated(
-            "CREATE TABLE t (col1 TEXT)",
-            "CREATE TABLE t (col1 STRING)",
-        );
+        assert_translated("CREATE TABLE t (col1 TEXT)", "CREATE TABLE t (col1 STRING)");
     }
 
     #[test]
@@ -1168,10 +1175,7 @@ mod tests {
 
     #[test]
     fn test_serial_to_int() {
-        assert_translated(
-            "CREATE TABLE t (col1 SERIAL)",
-            "CREATE TABLE t (col1 INT)",
-        );
+        assert_translated("CREATE TABLE t (col1 SERIAL)", "CREATE TABLE t (col1 INT)");
     }
 
     #[test]
@@ -1184,10 +1188,7 @@ mod tests {
 
     #[test]
     fn test_bytea_to_blob() {
-        assert_translated(
-            "CREATE TABLE t (col1 BYTEA)",
-            "CREATE TABLE t (col1 BLOB)",
-        );
+        assert_translated("CREATE TABLE t (col1 BYTEA)", "CREATE TABLE t (col1 BLOB)");
     }
 
     #[test]
@@ -1226,10 +1227,7 @@ mod tests {
 
     #[test]
     fn test_json_type_passthrough() {
-        assert_translated(
-            "CREATE TABLE t (col1 JSON)",
-            "CREATE TABLE t (col1 STRING)",
-        );
+        assert_translated("CREATE TABLE t (col1 JSON)", "CREATE TABLE t (col1 STRING)");
     }
 
     #[test]
@@ -1250,10 +1248,7 @@ mod tests {
 
     #[test]
     fn test_int_array_type_passthrough() {
-        assert_translated(
-            "CREATE TABLE t (col1 INT[])",
-            "CREATE TABLE t (col1 INT)",
-        );
+        assert_translated("CREATE TABLE t (col1 INT[])", "CREATE TABLE t (col1 INT)");
     }
 
     // ── Features That Now Pass Through ──
@@ -1276,9 +1271,7 @@ mod tests {
     #[test]
     fn test_create_domain_error() {
         // CREATE DOMAIN is now a no-op (accepted but not executed)
-        let result = translator().translate(
-            "CREATE DOMAIN positive_int AS INT CHECK (VALUE > 0)",
-        );
+        let result = translator().translate("CREATE DOMAIN positive_int AS INT CHECK (VALUE > 0)");
         assert!(result.success, "CREATE DOMAIN should succeed as no-op");
         assert_eq!(result.sql, "", "CREATE DOMAIN should return empty SQL");
         assert!(
@@ -1294,7 +1287,11 @@ mod tests {
         let result = translator().translate(
             "CREATE OR REPLACE FUNCTION add(a INT, b INT) RETURNS INT LANGUAGE plpgsql AS $$ BEGIN RETURN a + b; END; $$",
         );
-        assert!(result.success, "CREATE FUNCTION should pass through now: {:?}", result.error);
+        assert!(
+            result.success,
+            "CREATE FUNCTION should pass through now: {:?}",
+            result.error
+        );
         assert!(
             result.sql.contains("CREATE OR REPLACE FUNCTION"),
             "CREATE FUNCTION SQL should be preserved, got: {}",
@@ -1308,7 +1305,11 @@ mod tests {
         let result = translator().translate(
             "WITH RECURSIVE cte AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM cte WHERE n < 10) SELECT * FROM cte",
         );
-        assert!(result.success, "WITH RECURSIVE should pass through now: {:?}", result.error);
+        assert!(
+            result.success,
+            "WITH RECURSIVE should pass through now: {:?}",
+            result.error
+        );
         assert!(
             result.sql.contains("WITH RECURSIVE"),
             "WITH RECURSIVE should be preserved in SQL, got: {}",
@@ -1319,10 +1320,13 @@ mod tests {
     #[test]
     fn test_distinct_on_passes_through() {
         // DISTINCT ON is now passed through (may be supported by DataFusion)
-        let result = translator().translate(
-            "SELECT DISTINCT ON (col1) col1, col2 FROM t ORDER BY col1, col2",
+        let result = translator()
+            .translate("SELECT DISTINCT ON (col1) col1, col2 FROM t ORDER BY col1, col2");
+        assert!(
+            result.success,
+            "DISTINCT ON should pass through now: {:?}",
+            result.error
         );
-        assert!(result.success, "DISTINCT ON should pass through now: {:?}", result.error);
         assert!(
             result.sql.contains("DISTINCT ON"),
             "DISTINCT ON should be preserved in SQL, got: {}",
@@ -1364,7 +1368,10 @@ mod tests {
         assert!(result.success);
         assert_eq!(result.sql, "EXPLAIN SELECT * FROM t");
         assert!(
-            result.warnings.iter().any(|w| w.contains("EXPLAIN ANALYZE")),
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("EXPLAIN ANALYZE")),
             "Expected warning about EXPLAIN ANALYZE, got: {:?}",
             result.warnings
         );
@@ -1379,9 +1386,7 @@ mod tests {
 
     #[test]
     fn test_insert_on_conflict_do_nothing() {
-        let result = translator().translate(
-            "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING",
-        );
+        let result = translator().translate("INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING");
         assert!(result.success);
         assert_eq!(result.sql, "INSERT INTO t VALUES (1, 'a')");
         assert!(
@@ -1438,9 +1443,8 @@ mod tests {
 
     #[test]
     fn test_select_from_pg_catalog_class() {
-        let result = translator().translate(
-            "SELECT relname FROM pg_catalog.pg_class WHERE relkind = 'r'",
-        );
+        let result =
+            translator().translate("SELECT relname FROM pg_catalog.pg_class WHERE relkind = 'r'");
         assert!(result.success);
         assert!(result.sql.contains("information_schema"));
     }
@@ -1456,9 +1460,8 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_create() {
-        let result = translator().translate(
-            "create table t (col1 text) with (orientation='column')",
-        );
+        let result =
+            translator().translate("create table t (col1 text) with (orientation='column')");
         assert!(result.success);
         // Type names are normalized to uppercase by the type mapper
         assert_eq!(result.sql, "create table t (col1 STRING)");
@@ -1474,9 +1477,7 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_on_conflict() {
-        let result = translator().translate(
-            "insert into t values (1) on conflict do nothing",
-        );
+        let result = translator().translate("insert into t values (1) on conflict do nothing");
         assert!(result.success);
         assert_eq!(result.sql, "insert into t values (1)");
     }
@@ -1616,9 +1617,8 @@ mod tests {
 
     #[test]
     fn test_create_table_empty_cols_with_with_clause() {
-        let result = translator().translate(
-            "CREATE TABLE t (id BIGINT) WITH (orientation='column')",
-        );
+        let result =
+            translator().translate("CREATE TABLE t (id BIGINT) WITH (orientation='column')");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (id BIGINT)");
     }
@@ -1643,10 +1643,7 @@ mod tests {
 
     #[test]
     fn test_delete_with_condition() {
-        assert_translated(
-            "DELETE FROM t WHERE id = 1",
-            "DELETE FROM t WHERE id = 1",
-        );
+        assert_translated("DELETE FROM t WHERE id = 1", "DELETE FROM t WHERE id = 1");
     }
 
     #[test]
@@ -1668,10 +1665,7 @@ mod tests {
 
     #[test]
     fn test_create_table_single_column() {
-        assert_translated(
-            "CREATE TABLE t (a TEXT)",
-            "CREATE TABLE t (a STRING)",
-        );
+        assert_translated("CREATE TABLE t (a TEXT)", "CREATE TABLE t (a STRING)");
     }
 
     #[test]
@@ -1686,9 +1680,8 @@ mod tests {
     #[test]
     fn test_on_conflict_inside_string_literal_not_stripped() {
         // ON CONFLICT inside a string literal must NOT be stripped
-        let result = translator().translate(
-            "INSERT INTO t VALUES (1, 'ON CONFLICT should remain')",
-        );
+        let result =
+            translator().translate("INSERT INTO t VALUES (1, 'ON CONFLICT should remain')");
         assert!(result.success);
         assert_eq!(
             result.sql,
@@ -1699,9 +1692,7 @@ mod tests {
     #[test]
     fn test_partition_by_list_inside_string_literal_not_stripped() {
         // PARTITION BY LIST inside a string literal must NOT be stripped
-        let result = translator().translate(
-            "INSERT INTO t VALUES (1, 'PARTITION BY LIST (col1)')",
-        );
+        let result = translator().translate("INSERT INTO t VALUES (1, 'PARTITION BY LIST (col1)')");
         assert!(result.success);
         assert_eq!(
             result.sql,
@@ -1712,9 +1703,8 @@ mod tests {
     #[test]
     fn test_comment_before_with_in_create_table() {
         // COMMENT clause before WITH must still strip the WITH clause
-        let result = translator().translate(
-            "CREATE TABLE t (col1 TEXT) COMMENT 'a table' WITH (orientation='column')",
-        );
+        let result = translator()
+            .translate("CREATE TABLE t (col1 TEXT) COMMENT 'a table' WITH (orientation='column')");
         assert!(result.success);
         assert_eq!(result.sql, "CREATE TABLE t (col1 STRING) COMMENT 'a table'");
         assert!(
@@ -1727,9 +1717,7 @@ mod tests {
     #[test]
     fn test_sql_comment_before_column_defs() {
         // SQL comments before column definitions should not interfere
-        let result = translator().translate(
-            "CREATE TABLE t /* comment */ (col1 TEXT)",
-        );
+        let result = translator().translate("CREATE TABLE t /* comment */ (col1 TEXT)");
         assert!(result.success);
         // Comments are preserved in output
         assert_eq!(result.sql, "CREATE TABLE t /* comment */ (col1 STRING)");
@@ -1738,9 +1726,7 @@ mod tests {
     #[test]
     fn test_sql_line_comment_before_column_defs() {
         // SQL line comments before column definitions
-        let result = translator().translate(
-            "CREATE TABLE t -- line comment\n(col1 TEXT)",
-        );
+        let result = translator().translate("CREATE TABLE t -- line comment\n(col1 TEXT)");
         assert!(result.success);
         // Line comments are preserved in output
         assert_eq!(result.sql, "CREATE TABLE t -- line comment\n(col1 STRING)");
@@ -1749,9 +1735,7 @@ mod tests {
     #[test]
     fn test_type_mapping_inside_string_survives() {
         // Type keywords inside string literals must not be translated
-        let result = translator().translate(
-            "SELECT * FROM t WHERE col1 = 'TEXT'",
-        );
+        let result = translator().translate("SELECT * FROM t WHERE col1 = 'TEXT'");
         assert!(result.success);
         assert_eq!(result.sql, "SELECT * FROM t WHERE col1 = 'TEXT'");
     }
@@ -1759,9 +1743,8 @@ mod tests {
     #[test]
     fn test_on_conflict_with_following_clause_preserved() {
         // ON CONFLICT should not destroy following clauses like RETURNING
-        let result = translator().translate(
-            "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING RETURNING id",
-        );
+        let result = translator()
+            .translate("INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING RETURNING id");
         assert!(result.success);
         assert_eq!(result.sql, "INSERT INTO t VALUES (1, 'a') RETURNING id");
     }
@@ -1783,10 +1766,7 @@ mod tests {
         // Table name with 63 chars (PG max identifier length)
         let long_name = "a".repeat(63);
         let sql = format!("CREATE TABLE {} (col1 TEXT)", long_name);
-        assert_translated(
-            &sql,
-            &format!("CREATE TABLE {} (col1 STRING)", long_name),
-        );
+        assert_translated(&sql, &format!("CREATE TABLE {} (col1 STRING)", long_name));
     }
 
     #[test]
@@ -1806,9 +1786,8 @@ mod tests {
     #[test]
     fn test_multiple_on_conflict_patterns() {
         // INSERT ... ON CONFLICT DO NOTHING
-        let result1 = translator().translate(
-            "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING",
-        );
+        let result1 =
+            translator().translate("INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING");
         assert!(result1.success);
         assert_eq!(result1.sql, "INSERT INTO t VALUES (1, 'a')");
 
@@ -1896,7 +1875,10 @@ mod tests {
                  PRIMARY KEY (event_id, ds))"
             );
             assert!(
-                result.warnings.iter().any(|w| w.contains("PARTITION BY LIST")),
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("PARTITION BY LIST")),
                 "Expected warning about PARTITION BY LIST, got: {:?}",
                 result.warnings
             );
@@ -1962,16 +1944,18 @@ mod tests {
 
         #[test]
         fn test_data_lake_explain() {
-            let result = translator().translate(
-                "EXPLAIN ANALYZE SELECT * FROM metrics WHERE metric_id = 1",
-            );
+            let result =
+                translator().translate("EXPLAIN ANALYZE SELECT * FROM metrics WHERE metric_id = 1");
             assert!(result.success, "Failed: {:?}", result.error);
             assert_eq!(
                 result.sql,
                 "EXPLAIN SELECT * FROM metrics WHERE metric_id = 1"
             );
             assert!(
-                result.warnings.iter().any(|w| w.contains("EXPLAIN ANALYZE")),
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("EXPLAIN ANALYZE")),
                 "Expected warning about EXPLAIN ANALYZE, got: {:?}",
                 result.warnings
             );
@@ -2059,607 +2043,584 @@ mod tests {
 
             // Step 5: EXPLAIN ANALYZE -> EXPLAIN
             {
-                let result = translator().translate(
-                    "EXPLAIN ANALYZE SELECT * FROM user_profiles WHERE user_id = 42",
-                );
+                let result = translator()
+                    .translate("EXPLAIN ANALYZE SELECT * FROM user_profiles WHERE user_id = 42");
                 assert!(result.success, "EXPLAIN failed: {:?}", result.error);
                 assert_eq!(
                     result.sql,
                     "EXPLAIN SELECT * FROM user_profiles WHERE user_id = 42"
                 );
                 assert!(
-                    result.warnings.iter().any(|w| w.contains("EXPLAIN ANALYZE")),
+                    result
+                        .warnings
+                        .iter()
+                        .any(|w| w.contains("EXPLAIN ANALYZE")),
                     "Expected EXPLAIN ANALYZE warning"
                 );
             }
         }
 
-    // ── JSON/JSONB/Array Type Pass-Through ──
+        // ── JSON/JSONB/Array Type Pass-Through ──
 
-    #[test]
-    fn test_json_type_passes_through() {
-        assert_translated(
-            "CREATE TABLE t (col1 JSON)",
-            "CREATE TABLE t (col1 STRING)",
-        );
-    }
+        #[test]
+        fn test_json_type_passes_through() {
+            assert_translated("CREATE TABLE t (col1 JSON)", "CREATE TABLE t (col1 STRING)");
+        }
 
-    #[test]
-    fn test_jsonb_type_passes_through() {
-        assert_translated(
-            "CREATE TABLE t (col1 JSONB)",
-            "CREATE TABLE t (col1 STRING)",
-        );
-    }
+        #[test]
+        fn test_jsonb_type_passes_through() {
+            assert_translated(
+                "CREATE TABLE t (col1 JSONB)",
+                "CREATE TABLE t (col1 STRING)",
+            );
+        }
 
-    #[test]
-    fn test_array_type_passes_through() {
-        assert_translated(
-            "CREATE TABLE t (col1 TEXT[])",
-            "CREATE TABLE t (col1 STRING)",
-        );
-    }
+        #[test]
+        fn test_array_type_passes_through() {
+            assert_translated(
+                "CREATE TABLE t (col1 TEXT[])",
+                "CREATE TABLE t (col1 STRING)",
+            );
+        }
 
-    #[test]
-    fn test_int_array_type_passes_through() {
-        assert_translated(
-            "CREATE TABLE t (col1 INT[])",
-            "CREATE TABLE t (col1 INT)",
-        );
-    }
+        #[test]
+        fn test_int_array_type_passes_through() {
+            assert_translated("CREATE TABLE t (col1 INT[])", "CREATE TABLE t (col1 INT)");
+        }
 
-    // ── Additional Type Pass-Through ──
+        // ── Additional Type Pass-Through ──
 
-    #[test]
-    fn test_time_type() {
-        assert_translated(
-            "CREATE TABLE t (col1 TIME)",
-            "CREATE TABLE t (col1 TIME)",
-        );
-    }
+        #[test]
+        fn test_time_type() {
+            assert_translated("CREATE TABLE t (col1 TIME)", "CREATE TABLE t (col1 TIME)");
+        }
 
-    #[test]
-    fn test_timetz_type() {
-        assert_translated(
-            "CREATE TABLE t (col1 TIMETZ)",
-            "CREATE TABLE t (col1 TIMETZ)",
-        );
-    }
+        #[test]
+        fn test_timetz_type() {
+            assert_translated(
+                "CREATE TABLE t (col1 TIMETZ)",
+                "CREATE TABLE t (col1 TIMETZ)",
+            );
+        }
 
-    #[test]
-    fn test_interval_type() {
-        assert_translated(
-            "CREATE TABLE t (col1 INTERVAL)",
-            "CREATE TABLE t (col1 INTERVAL)",
-        );
-    }
+        #[test]
+        fn test_interval_type() {
+            assert_translated(
+                "CREATE TABLE t (col1 INTERVAL)",
+                "CREATE TABLE t (col1 INTERVAL)",
+            );
+        }
 
-    #[test]
-    fn test_uuid_type() {
-        assert_translated(
-            "CREATE TABLE t (col1 UUID)",
-            "CREATE TABLE t (col1 UUID)",
-        );
-    }
+        #[test]
+        fn test_uuid_type() {
+            assert_translated("CREATE TABLE t (col1 UUID)", "CREATE TABLE t (col1 UUID)");
+        }
 
-    #[test]
-    fn test_money_type() {
-        assert_translated(
-            "CREATE TABLE t (col1 MONEY)",
-            "CREATE TABLE t (col1 MONEY)",
-        );
-    }
+        #[test]
+        fn test_money_type() {
+            assert_translated("CREATE TABLE t (col1 MONEY)", "CREATE TABLE t (col1 MONEY)");
+        }
 
-    #[test]
-    fn test_bit_type() {
-        assert_translated(
-            "CREATE TABLE t (col1 BIT(8))",
-            "CREATE TABLE t (col1 BIT(8))",
-        );
-    }
+        #[test]
+        fn test_bit_type() {
+            assert_translated(
+                "CREATE TABLE t (col1 BIT(8))",
+                "CREATE TABLE t (col1 BIT(8))",
+            );
+        }
 
-    #[test]
-    fn test_varbit_type() {
-        assert_translated(
-            "CREATE TABLE t (col1 VARBIT)",
-            "CREATE TABLE t (col1 VARBIT)",
-        );
-    }
+        #[test]
+        fn test_varbit_type() {
+            assert_translated(
+                "CREATE TABLE t (col1 VARBIT)",
+                "CREATE TABLE t (col1 VARBIT)",
+            );
+        }
 
-    #[test]
-    fn test_network_types() {
-        assert_translated(
-            "CREATE TABLE t (a INET, b CIDR, c MACADDR, d MACADDR8)",
-            "CREATE TABLE t (a INET, b CIDR, c MACADDR, d MACADDR8)",
-        );
-    }
+        #[test]
+        fn test_network_types() {
+            assert_translated(
+                "CREATE TABLE t (a INET, b CIDR, c MACADDR, d MACADDR8)",
+                "CREATE TABLE t (a INET, b CIDR, c MACADDR, d MACADDR8)",
+            );
+        }
 
-    #[test]
-    fn test_geometric_types() {
-        assert_translated(
-            "CREATE TABLE t (a POINT, b LINE, c LSEG, d BOX, e PATH, f POLYGON, g CIRCLE)",
-            "CREATE TABLE t (a POINT, b LINE, c LSEG, d BOX, e PATH, f POLYGON, g CIRCLE)",
-        );
-    }
+        #[test]
+        fn test_geometric_types() {
+            assert_translated(
+                "CREATE TABLE t (a POINT, b LINE, c LSEG, d BOX, e PATH, f POLYGON, g CIRCLE)",
+                "CREATE TABLE t (a POINT, b LINE, c LSEG, d BOX, e PATH, f POLYGON, g CIRCLE)",
+            );
+        }
 
-    #[test]
-    fn test_text_search_types() {
-        assert_translated(
-            "CREATE TABLE t (a TSVECTOR, b TSQUERY)",
-            "CREATE TABLE t (a TSVECTOR, b TSQUERY)",
-        );
-    }
+        #[test]
+        fn test_text_search_types() {
+            assert_translated(
+                "CREATE TABLE t (a TSVECTOR, b TSQUERY)",
+                "CREATE TABLE t (a TSVECTOR, b TSQUERY)",
+            );
+        }
 
-    #[test]
-    fn test_hologres_native_types() {
-        assert_translated(
-            "CREATE TABLE t (a HLL, b ROARINGBITMAP)",
-            "CREATE TABLE t (a HLL, b ROARINGBITMAP)",
-        );
-    }
+        #[test]
+        fn test_hologres_native_types() {
+            assert_translated(
+                "CREATE TABLE t (a HLL, b ROARINGBITMAP)",
+                "CREATE TABLE t (a HLL, b ROARINGBITMAP)",
+            );
+        }
 
-    // ── QUALIFY Clause ──
+        // ── QUALIFY Clause ──
 
-    #[test]
-    fn test_qualify_pass_through() {
-        assert_translated(
-            "SELECT col1, col2, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
-            "SELECT col1, col2, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
-        );
-    }
+        #[test]
+        fn test_qualify_pass_through() {
+            assert_translated(
+                "SELECT col1, col2, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
+                "SELECT col1, col2, ROW_NUMBER() OVER (PARTITION BY col1 ORDER BY col2) AS rn FROM t QUALIFY rn = 1",
+            );
+        }
 
-    // ── TABLESAMPLE ──
+        // ── TABLESAMPLE ──
 
-    #[test]
-    fn test_tablesample_bernoulli() {
-        assert_translated(
-            "SELECT * FROM t TABLESAMPLE BERNOULLI(10)",
-            "SELECT * FROM t TABLESAMPLE BERNOULLI(10)",
-        );
-    }
+        #[test]
+        fn test_tablesample_bernoulli() {
+            assert_translated(
+                "SELECT * FROM t TABLESAMPLE BERNOULLI(10)",
+                "SELECT * FROM t TABLESAMPLE BERNOULLI(10)",
+            );
+        }
 
-    #[test]
-    fn test_tablesample_system() {
-        assert_translated(
-            "SELECT * FROM t TABLESAMPLE SYSTEM(25)",
-            "SELECT * FROM t TABLESAMPLE SYSTEM(25)",
-        );
-    }
+        #[test]
+        fn test_tablesample_system() {
+            assert_translated(
+                "SELECT * FROM t TABLESAMPLE SYSTEM(25)",
+                "SELECT * FROM t TABLESAMPLE SYSTEM(25)",
+            );
+        }
 
-    // ── CTAS WITH Clause ──
+        // ── CTAS WITH Clause ──
 
-    #[test]
-    fn test_ctas_with_clause() {
-        let result = translator().translate(
-            "CREATE TABLE t WITH (orientation='column') AS SELECT * FROM src",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "CREATE TABLE t AS SELECT * FROM src");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("CTAS")),
-            "Expected CTAS warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_ctas_with_clause() {
+            let result = translator()
+                .translate("CREATE TABLE t WITH (orientation='column') AS SELECT * FROM src");
+            assert!(result.success);
+            assert_eq!(result.sql, "CREATE TABLE t AS SELECT * FROM src");
+            assert!(
+                result.warnings.iter().any(|w| w.contains("CTAS")),
+                "Expected CTAS warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_ctas_with_clause_if_not_exists() {
-        let result = translator().translate(
-            "CREATE TABLE IF NOT EXISTS t WITH (orientation='column') AS SELECT * FROM src",
-        );
-        assert!(result.success);
-        assert_eq!(
-            result.sql,
-            "CREATE TABLE IF NOT EXISTS t AS SELECT * FROM src"
-        );
-    }
+        #[test]
+        fn test_ctas_with_clause_if_not_exists() {
+            let result = translator().translate(
+                "CREATE TABLE IF NOT EXISTS t WITH (orientation='column') AS SELECT * FROM src",
+            );
+            assert!(result.success);
+            assert_eq!(
+                result.sql,
+                "CREATE TABLE IF NOT EXISTS t AS SELECT * FROM src"
+            );
+        }
 
-    #[test]
-    fn test_ctas_with_column_defs_and_with() {
-        // This case has column defs - handled by regular strip_with_clause
-        let result = translator().translate(
-            "CREATE TABLE t (col1 TEXT) WITH (orientation='column') AS SELECT * FROM src",
-        );
-        assert!(result.success);
-        assert_eq!(
-            result.sql,
-            "CREATE TABLE t (col1 STRING) AS SELECT * FROM src"
-        );
-    }
+        #[test]
+        fn test_ctas_with_column_defs_and_with() {
+            // This case has column defs - handled by regular strip_with_clause
+            let result = translator().translate(
+                "CREATE TABLE t (col1 TEXT) WITH (orientation='column') AS SELECT * FROM src",
+            );
+            assert!(result.success);
+            assert_eq!(
+                result.sql,
+                "CREATE TABLE t (col1 STRING) AS SELECT * FROM src"
+            );
+        }
 
-    // ── INSERT OVERWRITE ──
+        // ── INSERT OVERWRITE ──
 
-    #[test]
-    fn test_insert_overwrite_with_table_keyword() {
-        let result = translator().translate(
-            "INSERT OVERWRITE TABLE t SELECT * FROM src",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "INSERT INTO t SELECT * FROM src");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("INSERT OVERWRITE")),
-            "Expected INSERT OVERWRITE warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_insert_overwrite_with_table_keyword() {
+            let result = translator().translate("INSERT OVERWRITE TABLE t SELECT * FROM src");
+            assert!(result.success);
+            assert_eq!(result.sql, "INSERT INTO t SELECT * FROM src");
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("INSERT OVERWRITE")),
+                "Expected INSERT OVERWRITE warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_insert_overwrite_without_table_keyword() {
-        let result = translator().translate(
-            "INSERT OVERWRITE t SELECT * FROM src",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "INSERT INTO t SELECT * FROM src");
-    }
+        #[test]
+        fn test_insert_overwrite_without_table_keyword() {
+            let result = translator().translate("INSERT OVERWRITE t SELECT * FROM src");
+            assert!(result.success);
+            assert_eq!(result.sql, "INSERT INTO t SELECT * FROM src");
+        }
 
-    #[test]
-    fn test_insert_overwrite_keep_on_conflict() {
-        let result = translator().translate(
-            "INSERT OVERWRITE TABLE t VALUES (1, 'a') ON CONFLICT DO NOTHING",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "INSERT INTO t VALUES (1, 'a')");
-    }
+        #[test]
+        fn test_insert_overwrite_keep_on_conflict() {
+            let result = translator()
+                .translate("INSERT OVERWRITE TABLE t VALUES (1, 'a') ON CONFLICT DO NOTHING");
+            assert!(result.success);
+            assert_eq!(result.sql, "INSERT INTO t VALUES (1, 'a')");
+        }
 
-    // ── CREATE INDEX ──
+        // ── CREATE INDEX ──
 
-    #[test]
-    fn test_create_index_using_bitmap() {
-        let result = translator().translate(
-            "CREATE INDEX idx ON t USING bitmap(col)",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "CREATE INDEX idx ON t(col)");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("CREATE INDEX")),
-            "Expected CREATE INDEX warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_create_index_using_bitmap() {
+            let result = translator().translate("CREATE INDEX idx ON t USING bitmap(col)");
+            assert!(result.success);
+            assert_eq!(result.sql, "CREATE INDEX idx ON t(col)");
+            assert!(
+                result.warnings.iter().any(|w| w.contains("CREATE INDEX")),
+                "Expected CREATE INDEX warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_create_index_with_bitmap_columns() {
-        let result = translator().translate(
-            "CREATE INDEX idx ON t(col) WITH (bitmap_columns='col')",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "CREATE INDEX idx ON t(col)");
-    }
+        #[test]
+        fn test_create_index_with_bitmap_columns() {
+            let result =
+                translator().translate("CREATE INDEX idx ON t(col) WITH (bitmap_columns='col')");
+            assert!(result.success);
+            assert_eq!(result.sql, "CREATE INDEX idx ON t(col)");
+        }
 
-    #[test]
-    fn test_create_index_regular() {
-        assert_translated(
-            "CREATE INDEX idx ON t(col1, col2)",
-            "CREATE INDEX idx ON t(col1, col2)",
-        );
-    }
+        #[test]
+        fn test_create_index_regular() {
+            assert_translated(
+                "CREATE INDEX idx ON t(col1, col2)",
+                "CREATE INDEX idx ON t(col1, col2)",
+            );
+        }
 
-    // ── CALL set_table_group (no-op) ──
+        // ── CALL set_table_group (no-op) ──
 
-    #[test]
-    fn test_set_table_group() {
-        let result = translator().translate(
-            "CALL set_table_group('my_table', 'group1')",
-        );
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-        assert!(
-            result.warnings.iter().any(|w| w.contains("set_table_group")),
-            "Expected set_table_group warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_set_table_group() {
+            let result = translator().translate("CALL set_table_group('my_table', 'group1')");
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("set_table_group")),
+                "Expected set_table_group warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    // ── ALTER TABLE SET ──
+        // ── ALTER TABLE SET ──
 
-    #[test]
-    fn test_alter_table_set() {
-        let result = translator().translate(
-            "ALTER TABLE t SET (orientation='column')",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "ALTER TABLE t");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("ALTER TABLE SET")),
-            "Expected ALTER TABLE SET warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_alter_table_set() {
+            let result = translator().translate("ALTER TABLE t SET (orientation='column')");
+            assert!(result.success);
+            assert_eq!(result.sql, "ALTER TABLE t");
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("ALTER TABLE SET")),
+                "Expected ALTER TABLE SET warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_alter_table_normal() {
-        assert_translated(
-            "ALTER TABLE t ADD COLUMN col1 TEXT",
-            "ALTER TABLE t ADD COLUMN col1 STRING",
-        );
-    }
+        #[test]
+        fn test_alter_table_normal() {
+            assert_translated(
+                "ALTER TABLE t ADD COLUMN col1 TEXT",
+                "ALTER TABLE t ADD COLUMN col1 STRING",
+            );
+        }
 
-    // ── COPY Command ──
+        // ── COPY Command ──
 
-    #[test]
-    fn test_copy_from_stdin() {
-        let result = translator().translate("COPY t FROM STDIN");
-        assert!(result.success);
-        assert_eq!(result.sql, "COPY t FROM STDIN");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("COPY")),
-            "Expected COPY warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_copy_from_stdin() {
+            let result = translator().translate("COPY t FROM STDIN");
+            assert!(result.success);
+            assert_eq!(result.sql, "COPY t FROM STDIN");
+            assert!(
+                result.warnings.iter().any(|w| w.contains("COPY")),
+                "Expected COPY warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_copy_to_stdout() {
-        let result = translator().translate("COPY t TO STDOUT");
-        assert!(result.success);
-        assert_eq!(result.sql, "COPY t TO STDOUT");
-    }
+        #[test]
+        fn test_copy_to_stdout() {
+            let result = translator().translate("COPY t TO STDOUT");
+            assert!(result.success);
+            assert_eq!(result.sql, "COPY t TO STDOUT");
+        }
 
-    // ── CREATE FOREIGN TABLE ──
+        // ── CREATE FOREIGN TABLE ──
 
-    #[test]
-    fn test_create_foreign_table() {
-        let result = translator().translate(
+        #[test]
+        fn test_create_foreign_table() {
+            let result = translator().translate(
             "CREATE FOREIGN TABLE t (col1 TEXT, col2 BIGINT) SERVER s OPTIONS (schema 'public')",
         );
-        assert!(result.success);
-        assert_eq!(
-            result.sql,
-            "CREATE FOREIGN TABLE t (col1 STRING, col2 BIGINT) SERVER s OPTIONS (schema 'public')"
-        );
-        assert!(
-            result.warnings.iter().any(|w| w.contains("CREATE FOREIGN TABLE")),
-            "Expected CREATE FOREIGN TABLE warning, got: {:?}",
-            result.warnings
-        );
-    }
+            assert!(result.success);
+            assert_eq!(
+                result.sql,
+                "CREATE FOREIGN TABLE t (col1 STRING, col2 BIGINT) SERVER s OPTIONS (schema 'public')"
+            );
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("CREATE FOREIGN TABLE")),
+                "Expected CREATE FOREIGN TABLE warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    // ── Combined Feature Tests ──
+        // ── Combined Feature Tests ──
 
-    #[test]
-    fn test_insert_overwrite_with_text_types_mapped() {
-        let result = translator().translate(
-            "INSERT OVERWRITE TABLE t (col1 TEXT, col2 BIGINT)",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "INSERT INTO t (col1 STRING, col2 BIGINT)");
-    }
+        #[test]
+        fn test_insert_overwrite_with_text_types_mapped() {
+            let result =
+                translator().translate("INSERT OVERWRITE TABLE t (col1 TEXT, col2 BIGINT)");
+            assert!(result.success);
+            assert_eq!(result.sql, "INSERT INTO t (col1 STRING, col2 BIGINT)");
+        }
 
-    #[test]
-    fn test_create_foreign_table_with_all_types() {
-        let result = translator().translate(
+        #[test]
+        fn test_create_foreign_table_with_all_types() {
+            let result = translator().translate(
             "CREATE FOREIGN TABLE t (a TEXT, b TIMESTAMPTZ, c SERIAL, d JSON) SERVER s OPTIONS (schema 'public')",
         );
-        assert!(result.success);
-        assert_eq!(
-            result.sql,
-            "CREATE FOREIGN TABLE t (a STRING, b TIMESTAMP, c INT, d STRING) SERVER s OPTIONS (schema 'public')"
-        );
-    }
+            assert!(result.success);
+            assert_eq!(
+                result.sql,
+                "CREATE FOREIGN TABLE t (a STRING, b TIMESTAMP, c INT, d STRING) SERVER s OPTIONS (schema 'public')"
+            );
+        }
 
-    // ── FOR UPDATE Stripping Tests ──
+        // ── FOR UPDATE Stripping Tests ──
 
-    #[test]
-    fn test_for_update_stripped() {
-        let result = translator().translate("SELECT * FROM t WHERE id = 1 FOR UPDATE");
-        assert!(result.success, "FOR UPDATE should be stripped: {:?}", result.error);
-        assert_eq!(result.sql, "SELECT * FROM t WHERE id = 1");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("FOR UPDATE")),
-            "Expected FOR UPDATE warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_for_update_stripped() {
+            let result = translator().translate("SELECT * FROM t WHERE id = 1 FOR UPDATE");
+            assert!(
+                result.success,
+                "FOR UPDATE should be stripped: {:?}",
+                result.error
+            );
+            assert_eq!(result.sql, "SELECT * FROM t WHERE id = 1");
+            assert!(
+                result.warnings.iter().any(|w| w.contains("FOR UPDATE")),
+                "Expected FOR UPDATE warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_for_share_stripped() {
-        let result = translator().translate("SELECT * FROM t FOR SHARE");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT * FROM t");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("FOR UPDATE")),
-            "Expected FOR UPDATE warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_for_share_stripped() {
+            let result = translator().translate("SELECT * FROM t FOR SHARE");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT * FROM t");
+            assert!(
+                result.warnings.iter().any(|w| w.contains("FOR UPDATE")),
+                "Expected FOR UPDATE warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_for_no_key_update_stripped() {
-        let result = translator().translate("SELECT * FROM t WHERE id = 1 FOR NO KEY UPDATE");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT * FROM t WHERE id = 1");
-    }
+        #[test]
+        fn test_for_no_key_update_stripped() {
+            let result = translator().translate("SELECT * FROM t WHERE id = 1 FOR NO KEY UPDATE");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT * FROM t WHERE id = 1");
+        }
 
-    #[test]
-    fn test_for_key_share_stripped() {
-        let result = translator().translate("SELECT * FROM t FOR KEY SHARE");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT * FROM t");
-    }
+        #[test]
+        fn test_for_key_share_stripped() {
+            let result = translator().translate("SELECT * FROM t FOR KEY SHARE");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT * FROM t");
+        }
 
-    #[test]
-    fn test_for_update_with_of_clause() {
-        let result = translator().translate("SELECT t.* FROM t JOIN s ON t.id = s.id FOR UPDATE OF t");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT t.* FROM t JOIN s ON t.id = s.id");
-    }
+        #[test]
+        fn test_for_update_with_of_clause() {
+            let result =
+                translator().translate("SELECT t.* FROM t JOIN s ON t.id = s.id FOR UPDATE OF t");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT t.* FROM t JOIN s ON t.id = s.id");
+        }
 
-    #[test]
-    fn test_for_update_with_nowait() {
-        let result = translator().translate("SELECT * FROM t FOR UPDATE NOWAIT");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT * FROM t");
-    }
+        #[test]
+        fn test_for_update_with_nowait() {
+            let result = translator().translate("SELECT * FROM t FOR UPDATE NOWAIT");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT * FROM t");
+        }
 
-    #[test]
-    fn test_for_update_with_skip_locked() {
-        let result = translator().translate("SELECT * FROM t FOR UPDATE SKIP LOCKED");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT * FROM t");
-    }
+        #[test]
+        fn test_for_update_with_skip_locked() {
+            let result = translator().translate("SELECT * FROM t FOR UPDATE SKIP LOCKED");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT * FROM t");
+        }
 
-    #[test]
-    fn test_for_update_with_of_and_nowait() {
-        let result = translator().translate("SELECT t.* FROM t FOR UPDATE OF t NOWAIT");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT t.* FROM t");
-    }
+        #[test]
+        fn test_for_update_with_of_and_nowait() {
+            let result = translator().translate("SELECT t.* FROM t FOR UPDATE OF t NOWAIT");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT t.* FROM t");
+        }
 
-    #[test]
-    fn test_for_update_only_on_select() {
-        // FOR UPDATE on INSERT should NOT be affected (it won't match our SELECT check)
-        let result = translator().translate("SELECT * FROM t ORDER BY id FOR UPDATE");
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT * FROM t ORDER BY id");
-    }
+        #[test]
+        fn test_for_update_only_on_select() {
+            // FOR UPDATE on INSERT should NOT be affected (it won't match our SELECT check)
+            let result = translator().translate("SELECT * FROM t ORDER BY id FOR UPDATE");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT * FROM t ORDER BY id");
+        }
 
-    #[test]
-    fn test_for_update_multiple_tables() {
-        let result = translator().translate(
-            "SELECT a.*, b.* FROM a, b WHERE a.id = b.id FOR UPDATE OF a, b SKIP LOCKED",
-        );
-        assert!(result.success);
-        assert_eq!(result.sql, "SELECT a.*, b.* FROM a, b WHERE a.id = b.id");
-    }
+        #[test]
+        fn test_for_update_multiple_tables() {
+            let result = translator().translate(
+                "SELECT a.*, b.* FROM a, b WHERE a.id = b.id FOR UPDATE OF a, b SKIP LOCKED",
+            );
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT a.*, b.* FROM a, b WHERE a.id = b.id");
+        }
 
-    // ── GRANT/REVOKE Tests ──
+        // ── GRANT/REVOKE Tests ──
 
-    #[test]
-    fn test_grant_noop() {
-        let result = translator().translate("GRANT SELECT ON t TO user1");
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-        assert!(
-            result.warnings.iter().any(|w| w.contains("GRANT/REVOKE")),
-            "Expected GRANT/REVOKE warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_grant_noop() {
+            let result = translator().translate("GRANT SELECT ON t TO user1");
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+            assert!(
+                result.warnings.iter().any(|w| w.contains("GRANT/REVOKE")),
+                "Expected GRANT/REVOKE warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_revoke_noop() {
-        let result = translator().translate("REVOKE SELECT ON t FROM user1");
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-        assert!(
-            result.warnings.iter().any(|w| w.contains("GRANT/REVOKE")),
-            "Expected GRANT/REVOKE warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_revoke_noop() {
+            let result = translator().translate("REVOKE SELECT ON t FROM user1");
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+            assert!(
+                result.warnings.iter().any(|w| w.contains("GRANT/REVOKE")),
+                "Expected GRANT/REVOKE warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_grant_all_privileges_noop() {
-        let result = translator().translate("GRANT ALL PRIVILEGES ON DATABASE mydb TO user1");
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-    }
+        #[test]
+        fn test_grant_all_privileges_noop() {
+            let result = translator().translate("GRANT ALL PRIVILEGES ON DATABASE mydb TO user1");
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+        }
 
-    // ── CREATE/ALTER POLICY Tests ──
+        // ── CREATE/ALTER POLICY Tests ──
 
-    #[test]
-    fn test_create_policy_noop() {
-        let result = translator().translate(
-            "CREATE POLICY user_policy ON t FOR SELECT USING (user_id = current_user)",
-        );
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-        assert!(
-            result.warnings.iter().any(|w| w.contains("POLICY")),
-            "Expected POLICY warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_create_policy_noop() {
+            let result = translator().translate(
+                "CREATE POLICY user_policy ON t FOR SELECT USING (user_id = current_user)",
+            );
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+            assert!(
+                result.warnings.iter().any(|w| w.contains("POLICY")),
+                "Expected POLICY warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_alter_policy_noop() {
-        let result = translator().translate(
-            "ALTER POLICY user_policy ON t USING (user_id = current_user)",
-        );
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-        assert!(
-            result.warnings.iter().any(|w| w.contains("POLICY")),
-            "Expected POLICY warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_alter_policy_noop() {
+            let result = translator()
+                .translate("ALTER POLICY user_policy ON t USING (user_id = current_user)");
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+            assert!(
+                result.warnings.iter().any(|w| w.contains("POLICY")),
+                "Expected POLICY warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    // ── CALL refresh_materialized_view (no-op) ──
+        // ── CALL refresh_materialized_view (no-op) ──
 
-    #[test]
-    fn test_refresh_materialized_view_noop() {
-        let result = translator().translate(
-            "CALL refresh_materialized_view('my_mv')",
-        );
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-        assert!(
-            result.warnings.iter().any(|w| w.contains("refresh_materialized_view")),
-            "Expected refresh_materialized_view warning, got: {:?}",
-            result.warnings
-        );
-    }
+        #[test]
+        fn test_refresh_materialized_view_noop() {
+            let result = translator().translate("CALL refresh_materialized_view('my_mv')");
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("refresh_materialized_view")),
+                "Expected refresh_materialized_view warning, got: {:?}",
+                result.warnings
+            );
+        }
 
-    #[test]
-    fn test_refresh_materialized_view_case_insensitive() {
-        let result = translator().translate(
-            "call REFRESH_MATERIALIZED_VIEW('my_mv')",
-        );
-        assert!(result.success);
-        assert!(result.sql.is_empty());
-    }
+        #[test]
+        fn test_refresh_materialized_view_case_insensitive() {
+            let result = translator().translate("call REFRESH_MATERIALIZED_VIEW('my_mv')");
+            assert!(result.success);
+            assert!(result.sql.is_empty());
+        }
 
-    // ── Additional Type Pass-Through Tests ──
+        // ── Additional Type Pass-Through Tests ──
 
-    #[test]
-    fn test_xml_type_passthrough() {
-        assert_translated(
-            "CREATE TABLE t (col1 XML)",
-            "CREATE TABLE t (col1 XML)",
-        );
-    }
+        #[test]
+        fn test_xml_type_passthrough() {
+            assert_translated("CREATE TABLE t (col1 XML)", "CREATE TABLE t (col1 XML)");
+        }
 
-    #[test]
-    fn test_pg_lsn_type_passthrough() {
-        assert_translated(
-            "CREATE TABLE t (col1 PG_LSN)",
-            "CREATE TABLE t (col1 PG_LSN)",
-        );
-    }
+        #[test]
+        fn test_pg_lsn_type_passthrough() {
+            assert_translated(
+                "CREATE TABLE t (col1 PG_LSN)",
+                "CREATE TABLE t (col1 PG_LSN)",
+            );
+        }
 
-    #[test]
-    fn test_money_type_passthrough() {
-        assert_translated(
-            "CREATE TABLE t (col1 MONEY)",
-            "CREATE TABLE t (col1 MONEY)",
-        );
-    }
+        #[test]
+        fn test_money_type_passthrough() {
+            assert_translated("CREATE TABLE t (col1 MONEY)", "CREATE TABLE t (col1 MONEY)");
+        }
 
-    // ── FOR UPDATE inside string literal not stripped ──
+        // ── FOR UPDATE inside string literal not stripped ──
 
-    #[test]
-    fn test_for_update_inside_string_literal_not_stripped() {
-        // FOR UPDATE inside a string literal must NOT be stripped
-        let result = translator().translate(
-            "SELECT * FROM t WHERE col1 = 'FOR UPDATE test'",
-        );
-        assert!(result.success);
-        assert_eq!(
-            result.sql,
-            "SELECT * FROM t WHERE col1 = 'FOR UPDATE test'"
-        );
-    }
+        #[test]
+        fn test_for_update_inside_string_literal_not_stripped() {
+            // FOR UPDATE inside a string literal must NOT be stripped
+            let result = translator().translate("SELECT * FROM t WHERE col1 = 'FOR UPDATE test'");
+            assert!(result.success);
+            assert_eq!(result.sql, "SELECT * FROM t WHERE col1 = 'FOR UPDATE test'");
+        }
 
-    // ── Combined: WITH RECURSIVE pass-through ──
+        // ── Combined: WITH RECURSIVE pass-through ──
 
-    #[test]
-    fn test_with_recursive_non_recursive_cte_unchanged() {
-        // Non-recursive CTE still passes through fine
-        assert_translated(
-            "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte",
-            "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte",
-        );
-    }
+        #[test]
+        fn test_with_recursive_non_recursive_cte_unchanged() {
+            // Non-recursive CTE still passes through fine
+            assert_translated(
+                "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte",
+                "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte",
+            );
+        }
     }
 }

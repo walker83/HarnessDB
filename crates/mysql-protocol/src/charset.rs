@@ -3,8 +3,8 @@
 pub const CHARSET_BINARY: u8 = 63;
 pub const CHARSET_LATIN1: u8 = 8;
 pub const CHARSET_GBK: u8 = 28;
-pub const CHARSET_UTF8: u8 = 33;      // utf8 (MySQL's 3-byte utf8)
-pub const CHARSET_UTF8MB4: u8 = 45;   // utf8mb4 (true UTF-8)
+pub const CHARSET_UTF8: u8 = 33; // utf8 (MySQL's 3-byte utf8)
+pub const CHARSET_UTF8MB4: u8 = 45; // utf8mb4 (true UTF-8)
 
 /// Default charset used in server greeting.
 pub const DEFAULT_CHARSET: u8 = CHARSET_UTF8MB4;

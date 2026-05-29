@@ -1,9 +1,9 @@
 //! Backup manager - handles backup and restore operations
 
+use crate::repository::RepositoryManager;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use parking_lot::RwLock;
-use crate::repository::RepositoryManager;
 
 /// Information about a backed-up table
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,7 +76,8 @@ impl BackupManager {
             .map_err(|e| format!("Failed to create backup directory: {}", e))?;
 
         // Get tables from catalog
-        let tables = catalog.list_tables(database)
+        let tables = catalog
+            .list_tables(database)
             .ok_or_else(|| format!("Database '{}' not found", database))?;
 
         let mut table_infos = Vec::new();
@@ -142,7 +143,11 @@ impl BackupManager {
 
         Ok(format!(
             "BACKUP DATABASE `{}` TO `{}` AS `{}` completed. {} tables backed up, {} bytes.",
-            database, repository, backup_name, manifest.tables.len(), total_size
+            database,
+            repository,
+            backup_name,
+            manifest.tables.len(),
+            total_size
         ))
     }
 
@@ -158,7 +163,10 @@ impl BackupManager {
         let backup_dir = repo_path.join(backup_name);
 
         if !backup_dir.exists() {
-            return Err(format!("Backup '{}' not found in repository '{}'", backup_name, repository));
+            return Err(format!(
+                "Backup '{}' not found in repository '{}'",
+                backup_name, repository
+            ));
         }
 
         // Read manifest
@@ -170,7 +178,8 @@ impl BackupManager {
 
         // Create database if not exists
         if catalog.get_database(database).is_none() {
-            catalog.create_database(database)
+            catalog
+                .create_database(database)
                 .map_err(|e| format!("Failed to create database: {}", e))?;
         }
 

@@ -1,16 +1,21 @@
 //! REST API routes for the SQL Editor
 
-use std::sync::Arc;
-use std::time::Instant;
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use mysql_protocol::QueryHandler;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
-use crate::web::{WebState, QueryHistoryEntry};
+use crate::web::{QueryHistoryEntry, WebState};
+
+/// Atomic counter for unique web editor connection IDs.
+/// Offset at 1_000_000_000 to avoid collision with MySQL protocol conn_ids.
+static WEB_CONN_COUNTER: AtomicU32 = AtomicU32::new(1_000_000_000);
 
 // ---- Response types ----
 
@@ -61,7 +66,10 @@ const EDITOR_HTML: &str = include_str!("editor.html");
 pub async fn serve_editor() -> (StatusCode, [(String, String); 2], String) {
     (
         StatusCode::OK,
-        [("Content-Type".to_string(), "text/html".to_string()), ("Charset".to_string(), "utf-8".to_string())],
+        [
+            ("Content-Type".to_string(), "text/html".to_string()),
+            ("Charset".to_string(), "utf-8".to_string()),
+        ],
         EDITOR_HTML.to_string(),
     )
 }
@@ -72,9 +80,11 @@ pub async fn metrics_handler() -> (StatusCode, [(&'static str, &'static str); 1]
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = vec![];
-    encoder.encode(&metric_families, &mut buffer).unwrap_or_else(|e| {
-        tracing::warn!("Prometheus encode error: {}", e);
-    });
+    encoder
+        .encode(&metric_families, &mut buffer)
+        .unwrap_or_else(|e| {
+            tracing::warn!("Prometheus encode error: {}", e);
+        });
     let body = String::from_utf8(buffer).unwrap_or_default();
     (
         StatusCode::OK,
@@ -89,8 +99,9 @@ pub async fn api_query(
     State(state): State<Arc<WebState>>,
     Json(req): Json<QueryRequest>,
 ) -> Json<QueryResponse> {
-    // Use conn_id=0 for web editor (single-user context)
-    let web_conn_id = 0u32;
+    // Assign unique conn_id per request to avoid session collision between browser tabs/users.
+    // Offset at 1B to avoid collision with MySQL protocol conn_ids.
+    let web_conn_id = WEB_CONN_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     // Switch database if specified
     if let Some(ref db) = req.database {
@@ -103,15 +114,23 @@ pub async fn api_query(
 
     let has_error = result.columns.iter().any(|c| c.name == "Error");
     let error = if has_error {
-        result.rows.first().and_then(|r| r.first()).and_then(|v| v.clone())
+        result
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|v| v.clone())
     } else {
         None
     };
 
-    let columns: Vec<ColumnInfo> = result.columns.iter().map(|c| ColumnInfo {
-        name: c.name.clone(),
-        col_type: format!("{:?}", c.col_type),
-    }).collect();
+    let columns: Vec<ColumnInfo> = result
+        .columns
+        .iter()
+        .map(|c| ColumnInfo {
+            name: c.name.clone(),
+            col_type: format!("{:?}", c.col_type),
+        })
+        .collect();
 
     let row_count = result.rows.len();
 
@@ -136,9 +155,7 @@ pub async fn api_query(
     })
 }
 
-pub async fn api_databases(
-    State(state): State<Arc<WebState>>,
-) -> Json<Vec<String>> {
+pub async fn api_databases(State(state): State<Arc<WebState>>) -> Json<Vec<String>> {
     let dbs = state.handler.catalog.list_databases();
     Json(dbs)
 }
@@ -157,29 +174,36 @@ pub async fn api_schema(
     State(state): State<Arc<WebState>>,
     Path((db, table)): Path<(String, String)>,
 ) -> Result<Json<Vec<ColumnSchema>>, StatusCode> {
-    let tbl = state.handler.catalog.get_table(&db, &table)
+    let tbl = state
+        .handler
+        .catalog
+        .get_table(&db, &table)
         .ok_or(StatusCode::NOT_FOUND)?;
-    let columns = tbl.columns.iter().map(|c| ColumnSchema {
-        name: c.name.clone(),
-        data_type: format!("{:?}", c.data_type),
-        nullable: c.nullable,
-        default_value: c.default_value.as_ref().map(|v| format!("{:?}", v)),
-        comment: c.comment.clone(),
-    }).collect();
+    let columns = tbl
+        .columns
+        .iter()
+        .map(|c| ColumnSchema {
+            name: c.name.clone(),
+            data_type: format!("{:?}", c.data_type),
+            nullable: c.nullable,
+            default_value: c.default_value.as_ref().map(|v| format!("{:?}", v)),
+            comment: c.comment.clone(),
+        })
+        .collect();
     Ok(Json(columns))
 }
 
-pub async fn api_history(
-    State(state): State<Arc<WebState>>,
-) -> Json<Vec<QueryHistoryEntry>> {
+pub async fn api_history(State(state): State<Arc<WebState>>) -> Json<Vec<QueryHistoryEntry>> {
     let history = state.query_history.read().await;
     Json(history.clone())
 }
 
-pub async fn api_status(
-    State(state): State<Arc<WebState>>,
-) -> Json<StatusResponse> {
-    let version = state.handler.sys_vars.get("version", None).unwrap_or_else(|| "0.3.0".to_string());
+pub async fn api_status(State(state): State<Arc<WebState>>) -> Json<StatusResponse> {
+    let version = state
+        .handler
+        .sys_vars
+        .get("version", None)
+        .unwrap_or_else(|| "0.3.0".to_string());
     let db_count = state.handler.catalog.list_databases().len();
 
     Json(StatusResponse {

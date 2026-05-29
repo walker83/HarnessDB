@@ -52,10 +52,7 @@ pub enum PartitionState {
 }
 
 impl PartitionSpec {
-    pub fn new_range(
-        columns: Vec<String>,
-        partitions: Vec<PartitionEntry>,
-    ) -> Self {
+    pub fn new_range(columns: Vec<String>, partitions: Vec<PartitionEntry>) -> Self {
         Self {
             partition_type: PartitionType::Range,
             columns,
@@ -63,10 +60,7 @@ impl PartitionSpec {
         }
     }
 
-    pub fn new_list(
-        columns: Vec<String>,
-        partitions: Vec<PartitionEntry>,
-    ) -> Self {
+    pub fn new_list(columns: Vec<String>, partitions: Vec<PartitionEntry>) -> Self {
         Self {
             partition_type: PartitionType::List,
             columns,
@@ -74,10 +68,7 @@ impl PartitionSpec {
         }
     }
 
-    pub fn new_hash(
-        columns: Vec<String>,
-        num_partitions: usize,
-    ) -> Self {
+    pub fn new_hash(columns: Vec<String>, num_partitions: usize) -> Self {
         let partitions: Vec<PartitionEntry> = (0..num_partitions)
             .map(|i| PartitionEntry {
                 id: i as u64,
