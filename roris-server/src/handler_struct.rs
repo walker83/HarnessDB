@@ -40,6 +40,8 @@ pub(crate) struct RorisQueryHandler {
     pub(crate) query_semaphore: Arc<tokio::sync::Semaphore>,
     // MySQL user credentials (shared with MySQL auth layer)
     pub(crate) mysql_credentials: Credentials,
+    // Shared Tokio runtime for DataFusion async operations (avoids per-query Runtime::new())
+    pub(crate) tokio_runtime: Arc<tokio::runtime::Runtime>,
 }
 
 #[derive(Clone)]
@@ -124,6 +126,18 @@ impl RorisQueryHandler {
 
         let max_concurrent = config.query.max_concurrent_queries.max(1) as usize;
 
+        // Create a single shared Tokio runtime for all DataFusion queries.
+        // This avoids the overhead and resource exhaustion of creating a new
+        // runtime per query (each Runtime::new() creates its own thread pool).
+        let tokio_runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(max_concurrent.max(2))
+                .thread_name("roris-df-worker")
+                .build()
+                .expect("Failed to create shared Tokio runtime"),
+        );
+
         Self {
             catalog,
             views: Arc::new(PlRwLock::new(Vec::new())),
@@ -137,6 +151,7 @@ impl RorisQueryHandler {
             backup_manager,
             query_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent)),
             mysql_credentials,
+            tokio_runtime,
         }
     }
 

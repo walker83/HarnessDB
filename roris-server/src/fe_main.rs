@@ -88,8 +88,8 @@ impl QueryHandler for RorisQueryHandler {
                     let catalog = self.catalog.clone();
                     let storage = self.storage.clone();
                     let sql = trimmed.to_string();
+                    let rt = self.tokio_runtime.clone();
                     move || {
-                        let rt = tokio::runtime::Runtime::new().unwrap();
                         rt.block_on(async {
                             let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog, storage));
                             let df_config = SessionConfig::new()

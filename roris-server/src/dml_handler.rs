@@ -122,8 +122,8 @@ impl RorisQueryHandler {
         let result = self.run_datafusion({
             let catalog = self.catalog.clone();
             let storage = self.storage.clone();
+            let rt = self.tokio_runtime.clone();
             move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
                     let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog, storage));
                     let df_config = SessionConfig::new()
@@ -514,8 +514,8 @@ impl RorisQueryHandler {
         let sql = format!("SELECT __row_index FROM __tmp WHERE {}", where_sql);
 
         // Execute with concurrency-limited thread
+        let rt = self.tokio_runtime.clone();
         let matching_batches = self.run_datafusion(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
                 let df = ctx.sql(&sql).await.map_err(|e| e.to_string())?;
                 let batches = df.collect().await.map_err(|e| e.to_string())?;
@@ -569,8 +569,8 @@ impl RorisQueryHandler {
         let sql = format!("SELECT {} AS __new_val FROM __tmp", expr_sql);
 
         // Execute with concurrency-limited thread
+        let rt = self.tokio_runtime.clone();
         let result_batches = self.run_datafusion(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
                 let df = ctx.sql(&sql).await.map_err(|e| e.to_string())?;
                 let batches = df.collect().await.map_err(|e| e.to_string())?;
