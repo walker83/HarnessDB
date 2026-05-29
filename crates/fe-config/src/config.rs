@@ -85,6 +85,32 @@ pub struct LoggingConfig {
 pub struct SecurityConfig {
     #[serde(default)]
     pub auth_enabled: bool,
+    /// JWT secret key for token-based authentication.
+    /// If not set, reads from RORIS_JWT_SECRET environment variable.
+    /// If neither is set, a random key is generated at startup.
+    #[serde(default = "default_jwt_secret")]
+    pub jwt_secret: String,
+}
+
+fn default_jwt_secret() -> String {
+    std::env::var("RORIS_JWT_SECRET").unwrap_or_else(|_| {
+        // Generate a pseudo-random key from process start time + PID.
+        // This is not cryptographically secure but avoids a fixed default.
+        // For production, set RORIS_JWT_SECRET environment variable.
+        use std::sync::OnceLock;
+        static KEY: OnceLock<String> = OnceLock::new();
+        KEY.get_or_init(|| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let pid = std::process::id() as u128;
+            let seed = now ^ (pid << 64);
+            let key = format!("{:032x}{:032x}", seed, seed.wrapping_mul(6364136223846793005));
+            tracing::warn!("RORIS_JWT_SECRET not set — using generated JWT key. Set RORIS_JWT_SECRET for production use.");
+            key
+        }).clone()
+    })
 }
 
 // Default value functions
@@ -173,6 +199,7 @@ impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             auth_enabled: false,
+            jwt_secret: default_jwt_secret(),
         }
     }
 }

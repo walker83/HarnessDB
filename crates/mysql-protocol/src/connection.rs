@@ -193,8 +193,13 @@ impl Connection {
                 auth.authenticate(username, auth_response, &self.auth_salt).await
             }
             "auth_token" => {
+                let jwt_secret = std::env::var("RORIS_JWT_SECRET")
+                    .unwrap_or_else(|_| {
+                        tracing::warn!("RORIS_JWT_SECRET not set — token auth using fallback key");
+                        "rorisdb_dev_fallback_key".to_string()
+                    });
                 let config = TokenConfig::new(
-                    "default_secret_key".to_string(),
+                    jwt_secret,
                     3600,
                     "rorisdb".to_string(),
                 );
