@@ -1,56 +1,94 @@
 use crate::ast::*;
 use crate::error::ParseError;
 
+/// Case-insensitive search for an ASCII-only needle in a potentially non-ASCII haystack.
+/// Returns the byte offset of the first match, or None.
+/// Safe for use with Unicode haystacks — never splits multi-byte characters.
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    debug_assert!(needle.is_ascii(), "find_ascii_ci requires ASCII needle");
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    let nlen = n.len();
+    if nlen == 0 || h.len() < nlen {
+        return None;
+    }
+    let n_upper: Vec<u8> = n.iter().map(|b| b.to_ascii_uppercase()).collect();
+    for i in 0..=(h.len() - nlen) {
+        // Ensure we don't start inside a multi-byte character
+        if !haystack.is_char_boundary(i) {
+            continue;
+        }
+        let matched = (0..nlen).all(|j| {
+            h[i + j].to_ascii_uppercase() == n_upper[j]
+        });
+        if matched {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Like `find_ascii_ci` but returns the LAST match.
+fn rfind_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    debug_assert!(needle.is_ascii(), "rfind_ascii_ci requires ASCII needle");
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    let nlen = n.len();
+    if nlen == 0 || h.len() < nlen {
+        return None;
+    }
+    let n_upper: Vec<u8> = n.iter().map(|b| b.to_ascii_uppercase()).collect();
+    for i in (0..=(h.len() - nlen)).rev() {
+        if !haystack.is_char_boundary(i) {
+            continue;
+        }
+        let matched = (0..nlen).all(|j| {
+            h[i + j].to_ascii_uppercase() == n_upper[j]
+        });
+        if matched {
+            return Some(i);
+        }
+    }
+    None
+}
+
 /// Workaround for sqlparser: it doesn't support `INSERT ... SELECT ... ON DUPLICATE KEY`.
 /// MySQL requires `FROM DUAL` in this case. This function auto-injects DUAL.
 /// E.g.: `INSERT INTO t SELECT ... ON DUPLICATE KEY UPDATE ...`
 /// Becomes: `INSERT INTO t SELECT ... FROM DUAL ON DUPLICATE KEY UPDATE ...`
 fn fixup_insert_select_on_duplicate(sql: &str) -> String {
-    let upper = sql.trim().to_uppercase();
+    let trimmed = sql.trim();
 
-    // Check if this is an INSERT statement
-    if !upper.starts_with("INSERT") {
+    // Use case-insensitive search on original string to avoid Unicode offset bugs
+    let upper_check = trimmed.to_uppercase();
+
+    // Quick checks using uppercased copy (no slicing, just contains/starts_with)
+    if !upper_check.starts_with("INSERT") {
+        return sql.to_string();
+    }
+    if !upper_check.contains("ON DUPLICATE KEY") {
+        return sql.to_string();
+    }
+    if upper_check.contains("FROM DUAL") {
         return sql.to_string();
     }
 
-    // Check if it has ON DUPLICATE KEY
-    if !upper.contains("ON DUPLICATE KEY") {
-        return sql.to_string();
-    }
-
-    // Already has FROM DUAL
-    if upper.contains("FROM DUAL") {
-        return sql.to_string();
-    }
-
-    // Check if it has SELECT (not just VALUES)
-    // INSERT ... VALUES: has VALUES but no SELECT before ON DUPLICATE KEY
-    // INSERT ... SELECT: has SELECT before ON DUPLICATE KEY
-    let Some(on_dup_pos) = upper.find("ON DUPLICATE KEY") else {
+    // Find positions in the ORIGINAL string using case-insensitive search
+    let Some(on_dup_pos) = find_ascii_ci(trimmed, "ON DUPLICATE KEY") else {
         return sql.to_string();
     };
-    let before_on_dup = &upper[..on_dup_pos];
+    let before_on_dup = &trimmed[..on_dup_pos];
 
-    if !before_on_dup.contains("SELECT") {
-        // This is INSERT ... VALUES ... ON DUPLICATE KEY (which works without FROM DUAL)
+    // Check for SELECT keyword before ON DUPLICATE KEY (case-insensitive)
+    if !find_ascii_ci(before_on_dup, "SELECT").is_some() {
         return sql.to_string();
     }
 
-    // Find the pattern: INSERT ... SELECT ... ON DUPLICATE KEY
-    // and inject " FROM DUAL" after the SELECT
-    let sql_lower = sql.to_lowercase();
-    let on_dup_pos_lower = on_dup_pos; // same byte position
-
-    // Find SELECT keyword before ON DUPLICATE KEY
-    if let Some(_select_pos) = sql_lower[..on_dup_pos_lower].rfind("select") {
-        // Insert " FROM DUAL" right before ON DUPLICATE KEY
-        let mut result = sql[..on_dup_pos_lower].to_string();
-        result.push_str(" FROM DUAL ");
-        result.push_str(&sql[on_dup_pos_lower..]);
-        return result;
-    }
-
-    sql.to_string()
+    // Insert " FROM DUAL" right before ON DUPLICATE KEY in the original string
+    let mut result = trimmed[..on_dup_pos].to_string();
+    result.push_str(" FROM DUAL ");
+    result.push_str(&trimmed[on_dup_pos..]);
+    result
 }
 
 pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
@@ -685,7 +723,7 @@ fn parse_show_partitions(sql: &str) -> Result<Vec<Statement>, ParseError> {
         })?
         .trim();
 
-    let from_pos = after_show.to_uppercase().find(" FROM ");
+    let from_pos = find_ascii_ci(after_show, " FROM ");
     let table_name = if let Some(pos) = from_pos {
         let after_from = after_show[pos + 6..].trim();
         let (name, _) = extract_identifier(after_from)
@@ -802,7 +840,7 @@ fn try_parse_set_variable(sql: &str) -> Result<Option<Statement>, ParseError> {
         let name = rest[..eq_pos].trim().trim_matches('`').trim_matches('"');
         let val = rest[eq_pos + 1..].trim();
         (name, val)
-    } else if let Some(to_pos) = rest.to_uppercase().find(" TO ") {
+    } else if let Some(to_pos) = find_ascii_ci(&rest, " TO ") {
         let name = rest[..to_pos].trim().trim_matches('`').trim_matches('"');
         let val = rest[to_pos + 4..].trim();
         (name, val)
@@ -1021,7 +1059,7 @@ fn parse_show_view(sql: &str) -> Result<Vec<Statement>, ParseError> {
         })?
         .trim();
 
-    let from_pos = after_show.to_uppercase().find(" FROM ");
+    let from_pos = find_ascii_ci(after_show, " FROM ");
     let table_name = if let Some(pos) = from_pos {
         let after_from = after_show[pos + 6..].trim();
         let (name, _) = extract_identifier(after_from)
@@ -1233,14 +1271,14 @@ fn parse_create_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErro
             query = rest[end + 1..].trim().to_string();
         }
     } else {
-        let as_pos = rest.to_uppercase().find(" AS ");
+        let as_pos = find_ascii_ci(&rest, " AS ");
         if let Some(pos) = as_pos {
             let after_as = &rest[pos + 4..];
             query = after_as.trim().to_string();
         }
     }
 
-    if let Some(refresh_pos) = query.to_uppercase().find("REFRESH") {
+    if let Some(refresh_pos) = find_ascii_ci(&query, "REFRESH") {
         let before_refresh = query[..refresh_pos].trim();
         if !before_refresh.is_empty() && before_refresh != "AS" {
             query = before_refresh.to_string();
@@ -1396,7 +1434,6 @@ struct PreprocessedCreateTable {
 }
 
 fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
-    let sql_upper = sql.to_uppercase();
     let mut clean_sql = sql.to_string();
     let mut distribution: Option<DistributionDef> = None;
     let mut partition: Option<PartitionDef> = None;
@@ -1414,39 +1451,31 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
             // For standalone "UNIQUE", find it only after a comma or opening paren
             // to avoid matching "UNIQUE" inside table names like "test_unique"
             let mut search_pos = 0;
-            while let Some(key_pos) = sql_upper[search_pos..].find("UNIQUE") {
+            while let Some(key_pos) = find_ascii_ci(&sql[search_pos..], "UNIQUE") {
                 let abs_pos = search_pos + key_pos;
-                let rest = &sql_upper[abs_pos..];
-                if rest.starts_with("UNIQUE KEY") {
-                    search_pos = abs_pos + 1;
-                    continue;  // This is "UNIQUE KEY" - will be handled separately
+                let rest = &sql[abs_pos..];
+                // Check this isn't actually "UNIQUE KEY" (handled by another iteration)
+                if find_ascii_ci(rest, "UNIQUE KEY") == Some(0) {
+                    search_pos = abs_pos + "UNIQUE".len();
+                    continue;
                 }
 
                 // Check valid context: "UNIQUE" should be preceded by ',' or '('
-                // But there might be whitespace, so scan backwards past spaces/tabs
-                // This prevents matching "UNIQUE" inside identifiers like `test_unique`
+                let bytes = sql.as_bytes();
                 let mut valid_context = false;
                 if abs_pos >= 1 {
-                    let mut scan_pos = abs_pos;
-                    while scan_pos > 0 {
-                        if let Some(c) = sql_upper.chars().nth(scan_pos - 1) {
-                            if c == ' ' || c == '\t' {
-                                scan_pos -= 1;
-                                continue;
-                            } else if c == ',' || c == '(' {
-                                valid_context = true;
-                                break;
-                            } else {
-                                break;  // Not a valid context character
-                            }
-                        } else {
-                            break;
-                        }
+                    let mut scan = abs_pos - 1;
+                    // Skip whitespace bytes
+                    while scan > 0 && (bytes[scan] == b' ' || bytes[scan] == b'\t') {
+                        scan -= 1;
+                    }
+                    if bytes[scan] == b',' || bytes[scan] == b'(' {
+                        valid_context = true;
                     }
                 }
 
                 if !valid_context {
-                    search_pos = abs_pos + 1;
+                    search_pos = abs_pos + "UNIQUE".len();
                     continue;
                 }
 
@@ -1481,7 +1510,7 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
                 }
                 break;  // Only process one standalone "UNIQUE" per iteration
             }
-        } else if let Some(key_pos) = sql_upper.find(key_type) {
+        } else if let Some(key_pos) = find_ascii_ci(&sql, key_type) {
             // Find the opening parenthesis after the key type
             let after_key = &sql[key_pos..];
             if let Some(paren_pos) = after_key.find('(') {
@@ -1558,36 +1587,26 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
     for type_kw in &sql_types {
         for agg in &agg_types {
             let pattern = format!("{} {}", type_kw.to_uppercase(), agg.to_uppercase());
-            let clean_sql_upper = clean_sql.to_uppercase();
-            let mut search_start = 0;
-            while let Some(pos) = clean_sql_upper[search_start..].find(&pattern) {
-                let abs_pos = search_start + pos;
-                // abs_pos is where TYPE starts in the original string
-                // We want to remove only the AGG part (after the type), not the type itself
+            if let Some(abs_pos) = find_ascii_ci(&clean_sql, &pattern) {
                 let type_len = type_kw.len();
                 let agg_len = agg.len();
-                // Remove from abs_pos + type_len (space after TYPE) through end of AGG
-                let remove_start = abs_pos + type_len; // space before AGG
-                let remove_end = abs_pos + type_len + 1 + agg_len; // end of "AGG"
-                // Skip trailing whitespace after AGG
+                let remove_start = abs_pos + type_len;
+                let remove_end = abs_pos + type_len + 1 + agg_len;
                 let mut end_pos = remove_end;
                 while end_pos < clean_sql.len() && clean_sql.as_bytes()[end_pos] == b' ' {
                     end_pos += 1;
                 }
-                let new_clean = format!("{}{}", &clean_sql[..remove_start], &clean_sql[end_pos..]);
-                clean_sql = new_clean;
-                search_start = 0;
-                break; // Break inner loop, re-evaluate outer loops with new clean_sql
+                clean_sql = format!("{}{}", &clean_sql[..remove_start], &clean_sql[end_pos..]);
+                break; // re-evaluate with updated clean_sql
             }
         }
     }
 
     // Extract DISTRIBUTED BY HASH(col1, col2) BUCKETS N
-    if let Some(dist_pos) = clean_sql.to_uppercase().find("DISTRIBUTED BY") {
+    if let Some(dist_pos) = find_ascii_ci(&clean_sql, "DISTRIBUTED BY") {
         let dist_clause = &clean_sql[dist_pos..];
-        let dist_upper = dist_clause.to_uppercase();
 
-        if let Some(hash_pos) = dist_upper.find("HASH") {
+        if let Some(hash_pos) = find_ascii_ci(dist_clause, "HASH") {
             let after_hash = dist_clause[hash_pos + 4..].trim_start();
             if after_hash.starts_with('(') {
                 if let Some(end_paren) = after_hash.find(')') {
@@ -1596,7 +1615,7 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
                         .map(|s| s.trim().to_string())
                         .collect();
                     let remaining = after_hash[end_paren + 1..].trim();
-                    let buckets = if remaining.to_uppercase().starts_with("BUCKETS") {
+                    let buckets = if find_ascii_ci(remaining, "BUCKETS") == Some(0) {
                         remaining[7..].trim().split_whitespace().next()
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(1)
@@ -1616,14 +1635,14 @@ fn preprocess_create_table(sql: &str) -> PreprocessedCreateTable {
     }
 
     // Extract PROPERTIES (...) from clean_sql
-    if let Some(prop_pos) = clean_sql.to_uppercase().rfind("PROPERTIES") {
+    if let Some(prop_pos) = rfind_ascii_ci(&clean_sql, "PROPERTIES") {
         let props_part = &clean_sql[prop_pos..];
         properties = parse_properties(props_part);
         clean_sql = clean_sql[..prop_pos].trim().to_string();
     }
 
     // Extract PARTITION BY RANGE/LIST/HASH (...) from clean_sql
-    if let Some(part_pos) = clean_sql.to_uppercase().find("PARTITION BY") {
+    if let Some(part_pos) = find_ascii_ci(&clean_sql, "PARTITION BY") {
         clean_sql = clean_sql[..part_pos].trim().to_string();
         // Partition parsing can be enhanced later
         partition = None;
@@ -2611,24 +2630,33 @@ fn parse_create_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let mut password = None;
     let mut identified_by_password = false;
 
-    let rest_upper = rest.to_uppercase();
-    if rest_upper.contains("IDENTIFIED BY") {
+    // Use case-insensitive search on original string to preserve password casing
+    if let Some(id_pos) = find_ascii_ci(&rest, "IDENTIFIED BY") {
         identified_by_password = true;
-        if let Some(pwd_part) = rest_upper.split("IDENTIFIED BY").nth(1) {
-            let pwd = pwd_part.trim().trim_end_matches('\'').trim_end_matches('"');
+        // Extract password from the ORIGINAL string (not uppercased)
+        let after_id_by = &rest[id_pos + "IDENTIFIED BY".len()..];
+        let pwd = after_id_by.trim().trim_matches(|c| c == '\'' || c == '"');
+        // Stop at next keyword boundary (WITH, etc.)
+        let pwd = if let Some(with_off) = find_ascii_ci(pwd, " WITH ") {
+            pwd[..with_off].trim()
+        } else {
+            pwd
+        };
+        if !pwd.is_empty() {
             password = Some(pwd.to_string());
         }
-        if rest_upper.contains("WITH") {
-            if let Some(with_part) = rest_upper.split("WITH").nth(1) {
-                let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
-                auth_plugin = plugin.to_string();
+        // Extract auth plugin from original string too
+        if let Some(with_pos) = find_ascii_ci(&rest, "WITH") {
+            if with_pos > id_pos {
+                let after_with = &rest[with_pos + "WITH".len()..];
+                let plugin = after_with.trim().split_whitespace().next().unwrap_or("mysql_native_password");
+                auth_plugin = plugin.to_lowercase();
             }
         }
-    } else if rest_upper.contains("IDENTIFIED WITH") {
-        if let Some(with_part) = rest_upper.split("IDENTIFIED WITH").nth(1) {
-            let plugin = with_part.trim().split_whitespace().next().unwrap_or("mysql_native_password");
-            auth_plugin = plugin.to_string();
-        }
+    } else if let Some(id_with_pos) = find_ascii_ci(&rest, "IDENTIFIED WITH") {
+        let after_with = &rest[id_with_pos + "IDENTIFIED WITH".len()..];
+        let plugin = after_with.trim().split_whitespace().next().unwrap_or("mysql_native_password");
+        auth_plugin = plugin.to_lowercase();
     }
 
     Ok(vec![Statement::CreateUser(CreateUserStmt {
@@ -2817,7 +2845,7 @@ fn parse_create_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
                     index_type = Some(t.to_string());
                 }
             }
-            if let Some(prop_start) = after_paren.to_uppercase().find("PROPERTIES") {
+            if let Some(prop_start) = find_ascii_ci(&after_paren, "PROPERTIES") {
                 properties = parse_properties(&after_paren[prop_start..]);
             }
         }
@@ -2844,7 +2872,7 @@ fn parse_cancel_alter_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let after = sql.trim().strip_prefix("CANCEL ALTER TABLE")
         .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected CANCEL ALTER TABLE".to_string() })?
         .trim();
-    let (database, rest) = if let Some(from_pos) = after.to_uppercase().find("FROM") {
+    let (database, rest) = if let Some(from_pos) = find_ascii_ci(&after, "FROM") {
         let after_from = after[from_pos + 4..].trim();
         let (db, remaining) = extract_identifier(after_from).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected database name".to_string() })?;
         (Some(db.to_string()), remaining.trim())
@@ -3006,7 +3034,7 @@ fn parse_alter_table_doris(sql: &str) -> Result<Vec<Statement>, ParseError> {
         let after_table = if after_replace.to_uppercase().starts_with("TABLE") { after_replace.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim() } else { after_replace };
         let (old_table, remaining) = extract_identifier(after_table).ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected table name".to_string() })?;
         let swap = remaining.trim().to_uppercase().starts_with("SWAP");
-        let properties = if let Some(s) = remaining.to_uppercase().find("PROPERTIES").map(|s| s) { parse_properties(&remaining[s..]) } else { vec![] };
+        let properties = if let Some(s) = find_ascii_ci(&remaining, "PROPERTIES") { parse_properties(&remaining[s..]) } else { vec![] };
         AlterOperation::Replace { old_table: old_table.to_string(), swap, properties }
     } else if rest_upper.starts_with("ADD GENERATED COLUMN") {
         let after_add = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
@@ -3039,16 +3067,14 @@ fn parse_export_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected EXPORT TABLE".to_string() })?
         .trim();
     // Extract qualified table name (db.table or just table)
-    let after_upper = after.to_uppercase();
-    let to_pos = after_upper.find(" TO ").ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected TO".to_string() })?;
+    let to_pos = find_ascii_ci(&after, " TO ").ok_or_else(|| ParseError::SyntaxError { position: 0, message: "Expected TO".to_string() })?;
     let table_part = after[..to_pos].trim();
     let rest = after[to_pos + 4..].trim();
     let parts: Vec<&str> = table_part.split('.').collect();
     let (database, table) = if parts.len() == 2 { (Some(parts[0].to_string()), parts[1].to_string()) } else { (None, table_part.to_string()) };
     let path = rest.trim_start_matches(|c: char| c != ' ').trim_start().split_whitespace().next().unwrap_or("").trim_matches('\'').trim_matches('"').to_string();
     let mut properties = vec![];
-    let rest_upper = rest.to_uppercase();
-    if let Some(idx) = rest_upper.find("PROPERTIES") {
+    if let Some(idx) = find_ascii_ci(&rest, "PROPERTIES") {
         properties = parse_properties(&rest[idx..]);
     }
     Ok(vec![Statement::ExportTable(ExportTableStmt { database, table, path, properties })])
@@ -3082,7 +3108,7 @@ fn parse_create_function(sql: &str) -> Result<Vec<Statement>, ParseError> {
                 let after_returns = after_paren.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c == ' ').trim();
                 if let Some((t, _)) = extract_identifier(after_returns) { returns = Some(t.to_string()); }
             }
-            if let Some(idx) = after_paren.to_uppercase().find("PROPERTIES") {
+            if let Some(idx) = find_ascii_ci(&after_paren, "PROPERTIES") {
                 properties = parse_properties(&after_paren[idx..]);
             }
         }
@@ -3131,12 +3157,11 @@ fn parse_analyze_table(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let rest = rest.trim();
     let mut columns = vec![];
     let mut sample_rate = None;
-    let rest_upper = rest.to_uppercase();
-    if let Some(idx) = rest_upper.find("UPDATE COLUMNS") {
+    if let Some(idx) = find_ascii_ci(&rest, "UPDATE COLUMNS") {
         let after_cols = rest[idx + 14..].trim();
         if after_cols.starts_with('(') { if let Some(end) = after_cols.find(')') { columns = after_cols[1..end].split(',').map(|c| c.trim().to_string()).collect(); } }
     }
-    if let Some(idx) = rest_upper.find("SAMPLE RATE") {
+    if let Some(idx) = find_ascii_ci(&rest, "SAMPLE RATE") {
         let rate_str = rest[idx + 11..].trim().split_whitespace().next().unwrap_or("0.1");
         sample_rate = rate_str.parse().ok();
     }
@@ -3262,7 +3287,7 @@ fn parse_create_job(sql: &str) -> Result<Vec<Statement>, ParseError> {
             inner.trim_matches('\'').trim_matches('"').to_string()
         } else { after_schedule.to_string() }
     } else { String::new() };
-    let execute = if let Some(idx) = rest.to_uppercase().find("EXECUTE") {
+    let execute = if let Some(idx) = find_ascii_ci(&rest, "EXECUTE") {
         let after_exec = rest[idx + 7..].trim();
         after_exec.trim_matches('\'').trim_matches('"').to_string()
     } else { String::new() };
