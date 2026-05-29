@@ -110,7 +110,7 @@ impl RorisQueryHandler {
     ) -> Self {
         let storage = Arc::new(
             ParquetStorage::open(&config.storage.data_dir)
-                .unwrap()
+                .expect("Failed to open ParquetStorage — check data_dir permissions and path")
                 .with_max_rows(config.query.max_dml_rows),
         );
         let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog.clone(), storage.clone()));

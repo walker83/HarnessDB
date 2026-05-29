@@ -72,7 +72,9 @@ pub async fn metrics_handler() -> (StatusCode, [(&'static str, &'static str); 1]
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = vec![];
-    encoder.encode(&metric_families, &mut buffer).unwrap();
+    encoder.encode(&metric_families, &mut buffer).unwrap_or_else(|e| {
+        tracing::warn!("Prometheus encode error: {}", e);
+    });
     let body = String::from_utf8(buffer).unwrap_or_default();
     (
         StatusCode::OK,

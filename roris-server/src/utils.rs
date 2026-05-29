@@ -8,6 +8,38 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::QueryResult;
 use ::types::DataType;
 
+/// Like safe_downcast! but for void functions — returns early on failure.
+macro_rules! safe_downcast_void {
+    ($col:expr, $ty:ty) => {
+        match $col.as_any().downcast_ref::<$ty>() {
+            Some(arr) => arr,
+            None => return,
+        }
+    };
+}
+
+/// Safely downcast an Arrow array reference, returning a fallback string on failure
+/// instead of panicking. Used in SELECT result formatting where a panic would
+/// crash the connection handler thread.
+macro_rules! safe_downcast {
+    ($col:expr, $ty:ty, $idx:expr) => {
+        match $col.as_any().downcast_ref::<$ty>() {
+            Some(arr) => arr,
+            None => return Some(format!("<type mismatch: expected {}>", stringify!($ty))),
+        }
+    };
+}
+
+/// Like safe_downcast! but for functions returning Result<T, String>.
+macro_rules! safe_downcast_result {
+    ($col:expr, $ty:ty) => {
+        match $col.as_any().downcast_ref::<$ty>() {
+            Some(arr) => arr,
+            None => return Err(format!("Type mismatch: expected {}", stringify!($ty))),
+        }
+    };
+}
+
 pub(crate) fn literal_to_string(lit: &fe_sql_parser::ast::LiteralValue) -> String {
     match lit {
         fe_sql_parser::ast::LiteralValue::Null => "NULL".to_string(),
@@ -145,88 +177,88 @@ pub(crate) fn arrow_value_to_string(col: &datafusion::arrow::array::ArrayRef, id
 
     match col.data_type() {
         ADT::Boolean => {
-            let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+            let arr = safe_downcast!(col, BooleanArray, idx);
             Some(if arr.value(idx) { "1" } else { "0" }.to_string())
         }
         ADT::Int8 => {
-            let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+            let arr = safe_downcast!(col, Int8Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Int16 => {
-            let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
+            let arr = safe_downcast!(col, Int16Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Int32 => {
-            let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
+            let arr = safe_downcast!(col, Int32Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Int64 => {
-            let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+            let arr = safe_downcast!(col, Int64Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::UInt8 => {
-            let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+            let arr = safe_downcast!(col, UInt8Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::UInt16 => {
-            let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+            let arr = safe_downcast!(col, UInt16Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::UInt32 => {
-            let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+            let arr = safe_downcast!(col, UInt32Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::UInt64 => {
-            let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+            let arr = safe_downcast!(col, UInt64Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Float32 => {
-            let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
+            let arr = safe_downcast!(col, Float32Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Float64 => {
-            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+            let arr = safe_downcast!(col, Float64Array, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Utf8 => {
-            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            let arr = safe_downcast!(col, StringArray, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::LargeUtf8 => {
-            let arr = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            let arr = safe_downcast!(col, LargeStringArray, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Utf8View => {
-            let arr = col.as_any().downcast_ref::<StringViewArray>().unwrap();
+            let arr = safe_downcast!(col, StringViewArray, idx);
             Some(arr.value(idx).to_string())
         }
         ADT::Date32 => {
-            let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+            let arr = safe_downcast!(col, Date32Array, idx);
             let days = arr.value(idx);
             let base = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
             let date = base + chrono::Duration::days(days as i64);
             Some(date.format("%Y-%m-%d").to_string())
         }
         ADT::Timestamp(TimeUnit::Second, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            let arr = safe_downcast!(col, TimestampSecondArray, idx);
             let ts = arr.value(idx);
             let dt = chrono::DateTime::from_timestamp(ts, 0).unwrap_or_default();
             Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
         }
         ADT::Timestamp(TimeUnit::Millisecond, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            let arr = safe_downcast!(col, TimestampMillisecondArray, idx);
             let ts = arr.value(idx);
             let dt = chrono::DateTime::from_timestamp_millis(ts).unwrap_or_default();
             Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
         }
         ADT::Timestamp(TimeUnit::Microsecond, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let arr = safe_downcast!(col, TimestampMicrosecondArray, idx);
             let ts = arr.value(idx);
             let dt = chrono::DateTime::from_timestamp_micros(ts).unwrap_or_default();
             Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
         }
         ADT::Timestamp(TimeUnit::Nanosecond, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            let arr = safe_downcast!(col, TimestampNanosecondArray, idx);
             let ts = arr.value(idx);
             let secs = ts / 1_000_000_000;
             let nsecs = (ts % 1_000_000_000) as u32;
@@ -276,83 +308,83 @@ pub(crate) fn update_column_in_batch(
     let col = batch.column(col_idx);
     let new_col: ArrayRef = match col.data_type() {
         ADT::Int32 => {
-            let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
+            let arr = safe_downcast_result!(col, Int32Array);
             let val = val_str.parse::<i32>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(Int32Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Int64 => {
-            let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+            let arr = safe_downcast_result!(col, Int64Array);
             let val = val_str.parse::<i64>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(Int64Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Float32 => {
-            let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
+            let arr = safe_downcast_result!(col, Float32Array);
             let val = val_str.parse::<f32>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(Float32Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Float64 => {
-            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+            let arr = safe_downcast_result!(col, Float64Array);
             let val = val_str.parse::<f64>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(Float64Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Utf8 => {
-            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            let arr = safe_downcast_result!(col, StringArray);
             Arc::new(StringArray::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val_str) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Int8 => {
-            let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+            let arr = safe_downcast_result!(col, Int8Array);
             let val = val_str.parse::<i8>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(Int8Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Int16 => {
-            let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
+            let arr = safe_downcast_result!(col, Int16Array);
             let val = val_str.parse::<i16>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(Int16Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::UInt8 => {
-            let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+            let arr = safe_downcast_result!(col, UInt8Array);
             let val = val_str.parse::<u8>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(UInt8Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::UInt16 => {
-            let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+            let arr = safe_downcast_result!(col, UInt16Array);
             let val = val_str.parse::<u16>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(UInt16Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::UInt32 => {
-            let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+            let arr = safe_downcast_result!(col, UInt32Array);
             let val = val_str.parse::<u32>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(UInt32Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::UInt64 => {
-            let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+            let arr = safe_downcast_result!(col, UInt64Array);
             let val = val_str.parse::<u64>().map_err(|e| format!("Parse error: {}", e))?;
             Arc::new(UInt64Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Boolean => {
-            let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+            let arr = safe_downcast_result!(col, BooleanArray);
             let val = match val_str.to_lowercase().as_str() {
                 "true" | "1" | "yes" => true,
                 _ => false,
@@ -362,21 +394,21 @@ pub(crate) fn update_column_in_batch(
             ))
         }
         ADT::Date32 => {
-            let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+            let arr = safe_downcast_result!(col, Date32Array);
             let val = parse_date_to_days(val_str).ok_or_else(|| format!("Invalid date: {}", val_str))?;
             Arc::new(Date32Array::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Timestamp(TimeUnit::Second, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            let arr = safe_downcast_result!(col, TimestampSecondArray);
             let val = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
             Arc::new(TimestampSecondArray::from_iter(
                 (0..arr.len()).map(|i| if update_mask[i] { Some(val) } else { Some(arr.value(i)) })
             ))
         }
         ADT::Timestamp(TimeUnit::Millisecond, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            let arr = safe_downcast_result!(col, TimestampMillisecondArray);
             let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
             let val = seconds * 1000;
             Arc::new(TimestampMillisecondArray::from_iter(
@@ -384,7 +416,7 @@ pub(crate) fn update_column_in_batch(
             ))
         }
         ADT::Timestamp(TimeUnit::Microsecond, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let arr = safe_downcast_result!(col, TimestampMicrosecondArray);
             let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
             let val = seconds * 1_000_000;
             Arc::new(TimestampMicrosecondArray::from_iter(
@@ -392,7 +424,7 @@ pub(crate) fn update_column_in_batch(
             ))
         }
         ADT::Timestamp(TimeUnit::Nanosecond, _) => {
-            let arr = col.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            let arr = safe_downcast_result!(col, TimestampNanosecondArray);
             let seconds = parse_datetime_to_seconds(val_str).ok_or_else(|| format!("Invalid datetime: {}", val_str))?;
             let val = seconds * 1_000_000_000;
             Arc::new(TimestampNanosecondArray::from_iter(
@@ -400,7 +432,7 @@ pub(crate) fn update_column_in_batch(
             ))
         }
         ADT::Decimal128(precision, scale) => {
-            let arr = col.as_any().downcast_ref::<Decimal128Array>().unwrap();
+            let arr = safe_downcast_result!(col, Decimal128Array);
             let scale_factor = 10i128.pow(*scale as u32);
             let val_f: f64 = val_str.parse().map_err(|e| format!("Parse error: {}", e))?;
             let val = (val_f * scale_factor as f64) as i128;
@@ -800,7 +832,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
 
     let result: BooleanArray = match col.data_type() {
         ADT::Int8 => {
-            let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+            let arr = safe_downcast_void!(col, Int8Array);
             let fv: i8 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -809,7 +841,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::Int16 => {
-            let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
+            let arr = safe_downcast_void!(col, Int16Array);
             let fv: i16 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -818,7 +850,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::Int32 => {
-            let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
+            let arr = safe_downcast_void!(col, Int32Array);
             let fv: i32 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -827,7 +859,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::Int64 => {
-            let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+            let arr = safe_downcast_void!(col, Int64Array);
             let fv: i64 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -836,7 +868,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::UInt8 => {
-            let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+            let arr = safe_downcast_void!(col, UInt8Array);
             let fv: u8 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -845,7 +877,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::UInt16 => {
-            let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+            let arr = safe_downcast_void!(col, UInt16Array);
             let fv: u16 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -854,7 +886,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::UInt32 => {
-            let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+            let arr = safe_downcast_void!(col, UInt32Array);
             let fv: u32 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -863,7 +895,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::UInt64 => {
-            let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+            let arr = safe_downcast_void!(col, UInt64Array);
             let fv: u64 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -872,7 +904,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::Float32 => {
-            let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
+            let arr = safe_downcast_void!(col, Float32Array);
             let fv: f32 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -881,7 +913,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::Float64 => {
-            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+            let arr = safe_downcast_void!(col, Float64Array);
             let fv: f64 = match val.parse() {
                 Ok(v) => v,
                 Err(_) => return,
@@ -890,7 +922,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::Date32 => {
-            let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+            let arr = safe_downcast_void!(col, Date32Array);
             let days = match parse_date_to_days(val) {
                 Some(d) => d,
                 None => return,
@@ -899,7 +931,7 @@ fn apply_cmp(mask: &mut [bool], col: &ArrayRef, val: &str, op: &BinaryOp) {
             cmp_op!(arr, fa, op)
         }
         ADT::Utf8 => {
-            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            let arr = safe_downcast_void!(col, StringArray);
             let fa: StringArray = std::iter::repeat(Some(val)).take(arr.len()).collect();
             cmp_op!(arr, fa, op)
         }

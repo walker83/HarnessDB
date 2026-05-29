@@ -164,7 +164,12 @@ impl RorisQueryHandler {
                     )
                 }).collect();
                 let arrow_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
-                let df_cat = self.session_ctx.catalog("roris").unwrap();
+                let Some(df_cat) = self.session_ctx.catalog("roris") else {
+                    return Ok(QueryResult::with_rows(
+                        vec![ColumnDef { name: "Error".to_string(), col_type: ColumnType::String }],
+                        vec![vec![Some("Internal error: catalog 'roris' not found".to_string())]],
+                    ));
+                };
                 if let Some(parquet_cat) = df_cat.as_any().downcast_ref::<fe_storage::ParquetCatalogProvider>() {
                     if let Err(e) = parquet_cat.create_table(db, &stmt.name, arrow_schema) {
                         tracing::error!("Failed to create table storage: {}", e);
