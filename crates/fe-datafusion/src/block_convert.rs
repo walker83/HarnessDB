@@ -139,9 +139,9 @@ fn convert_arrow_data_type(dt: &ArrowDataType) -> types::DataType {
         ArrowDataType::Int16 => types::DataType::Int16,
         ArrowDataType::Int32 => types::DataType::Int32,
         ArrowDataType::Int64 => types::DataType::Int64,
-        ArrowDataType::UInt8 => types::DataType::Int8,
-        ArrowDataType::UInt16 => types::DataType::Int16,
-        ArrowDataType::UInt32 => types::DataType::Int32,
+        ArrowDataType::UInt8 => types::DataType::Int16,
+        ArrowDataType::UInt16 => types::DataType::Int32,
+        ArrowDataType::UInt32 => types::DataType::Int64,
         ArrowDataType::UInt64 => types::DataType::Int64,
         ArrowDataType::Float32 => types::DataType::Float32,
         ArrowDataType::Float64 => types::DataType::Float64,
@@ -210,12 +210,15 @@ fn convert_array_to_vector(array: &Arc<dyn Array>, data_type: &types::DataType) 
             Vector::DateTime(DateTimeVector::from_nullable_vec(data))
         }
         _ => {
-            // Fallback: try to convert to String
+            // Fallback: extract individual elements as strings via ScalarValue
+            use datafusion::scalar::ScalarValue;
             let data: Vec<Option<String>> = (0..array.len()).map(|i| {
                 if array.is_null(i) {
                     None
                 } else {
-                    Some(format!("{:?}", array))
+                    ScalarValue::try_from_array(array, i)
+                        .ok()
+                        .map(|s| format!("{:?}", s))
                 }
             }).collect();
             Vector::String(StringVector::from_nullable_vec(data))
@@ -273,10 +276,35 @@ fn convert_array_to_vector_by_type(array: &Arc<dyn Array>, arrow_dt: &arrow_sche
             let data: Vec<Option<f64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i))).collect();
             Vector::Float64(Float64Vector::from_nullable_vec(data))
         }
-        ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 => {
+        ArrowDataType::Utf8 => {
             let arr = array.as_any().downcast_ref::<StringArray>().ok_or("Not StringArray")?;
             let data: Vec<Option<String>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i).to_string())).collect();
             Vector::String(StringVector::from_nullable_vec(data))
+        }
+        ArrowDataType::LargeUtf8 => {
+            let arr = array.as_any().downcast_ref::<LargeStringArray>().ok_or("Not LargeStringArray")?;
+            let data: Vec<Option<String>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i).to_string())).collect();
+            Vector::String(StringVector::from_nullable_vec(data))
+        }
+        ArrowDataType::UInt8 => {
+            let arr = array.as_any().downcast_ref::<UInt8Array>().ok_or("Not UInt8Array")?;
+            let data: Vec<Option<i16>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i) as i16)).collect();
+            Vector::Int16(Int16Vector::from_nullable_vec(data))
+        }
+        ArrowDataType::UInt16 => {
+            let arr = array.as_any().downcast_ref::<UInt16Array>().ok_or("Not UInt16Array")?;
+            let data: Vec<Option<i32>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i) as i32)).collect();
+            Vector::Int32(Int32Vector::from_nullable_vec(data))
+        }
+        ArrowDataType::UInt32 => {
+            let arr = array.as_any().downcast_ref::<UInt32Array>().ok_or("Not UInt32Array")?;
+            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i) as i64)).collect();
+            Vector::Int64(Int64Vector::from_nullable_vec(data))
+        }
+        ArrowDataType::UInt64 => {
+            let arr = array.as_any().downcast_ref::<UInt64Array>().ok_or("Not UInt64Array")?;
+            let data: Vec<Option<i64>> = (0..arr.len()).map(|i| (!arr.is_null(i)).then(|| arr.value(i) as i64)).collect();
+            Vector::Int64(Int64Vector::from_nullable_vec(data))
         }
         ArrowDataType::Date32 => {
             let arr = array.as_any().downcast_ref::<Date32Array>().ok_or("Not Date32Array")?;
@@ -289,12 +317,15 @@ fn convert_array_to_vector_by_type(array: &Arc<dyn Array>, arrow_dt: &arrow_sche
             Vector::DateTime(DateTimeVector::from_nullable_vec(data))
         }
         _ => {
-            // Fallback: try to convert to String
+            // Fallback: extract individual elements as strings via ScalarValue
+            use datafusion::scalar::ScalarValue;
             let data: Vec<Option<String>> = (0..array.len()).map(|i| {
                 if array.is_null(i) {
                     None
                 } else {
-                    Some(format!("{:?}", array))
+                    ScalarValue::try_from_array(array, i)
+                        .ok()
+                        .map(|s| format!("{:?}", s))
                 }
             }).collect();
             Vector::String(StringVector::from_nullable_vec(data))
