@@ -6,14 +6,31 @@ pub use catalog::{ParquetCatalogProvider, ParquetSchemaProvider};
 pub use information_schema::InformationSchemaProvider;
 pub use table_provider::ParquetTableProvider;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::{Mutex, MutexGuard, RwLock};
 
 use arrow_array::RecordBatch;
 use arrow_array::{ArrayRef, new_null_array};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use thiserror::Error;
 use tracing::debug;
+
+/// Guard that holds a per-table write lock.
+/// Drops the MutexGuard before the Arc to satisfy borrow checker.
+pub struct TableWriteGuard {
+    guard: Option<MutexGuard<'static, ()>>,
+    _lock: Arc<Mutex<()>>,
+}
+
+impl Drop for TableWriteGuard {
+    fn drop(&mut self) {
+        // Drop guard FIRST (it borrows from _lock's Mutex)
+        self.guard.take();
+        // Then _lock (Arc) is dropped, potentially freeing the Mutex
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -40,9 +57,14 @@ pub type Result<T> = std::result::Result<T, StorageError>;
 /// Lightweight Parquet storage backend.
 ///
 /// Data layout: `{data_dir}/{database}/{table}/data.parquet`
+///
+/// Write operations (insert/update/delete/truncate) are serialized per-table
+/// using internal write locks to prevent concurrent write data loss.
 pub struct ParquetStorage {
     data_dir: PathBuf,
     max_rows: Option<u64>,
+    /// Per-table write locks: key = "{db}.{table}"
+    write_locks: RwLock<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl ParquetStorage {
@@ -50,7 +72,7 @@ impl ParquetStorage {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
         debug!("ParquetStorage opened at {}", data_dir.display());
-        Ok(Self { data_dir, max_rows: None })
+        Ok(Self { data_dir, max_rows: None, write_locks: RwLock::new(HashMap::new()) })
     }
 
     /// Set the maximum row count for DML operations (UPDATE/DELETE/INSERT).
@@ -70,6 +92,37 @@ impl ParquetStorage {
 
     pub fn table_exists(&self, db: &str, table: &str) -> bool {
         self.parquet_path(db, table).exists()
+    }
+
+    /// Acquire the per-table write lock. Returns a guard that releases on drop.
+    fn lock_table(&self, db: &str, table: &str) -> TableWriteGuard {
+        let key = format!("{}.{}", db, table);
+        // Fast path: read lock to get the Arc, then drop the read lock
+        let lock = {
+            let locks = self.write_locks.read().unwrap();
+            locks.get(&key).cloned()
+        };
+        let lock = match lock {
+            Some(l) => l,
+            None => {
+                // Slow path: create under write lock
+                let mut locks = self.write_locks.write().unwrap();
+                locks.entry(key)
+                    .or_insert_with(|| Arc::new(Mutex::new(())))
+                    .clone()
+            }
+        };
+        // Acquire the per-table mutex (blocks if another thread holds it).
+        // Safety: we transmute the guard to 'static because we keep the Arc
+        // alive in TableWriteGuard._lock, ensuring the Mutex outlives the guard.
+        let raw_guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let static_guard = unsafe {
+            std::mem::transmute::<MutexGuard<'_, ()>, MutexGuard<'static, ()>>(raw_guard)
+        };
+        TableWriteGuard {
+            guard: Some(static_guard),
+            _lock: lock,
+        }
     }
 
     /// Read row count from Parquet footer metadata without loading data.
@@ -127,6 +180,7 @@ impl ParquetStorage {
 
     /// Insert rows: read existing data, concatenate, write back atomically.
     pub fn insert(&self, db: &str, table: &str, new_batch: RecordBatch) -> Result<()> {
+        let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
             return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
@@ -176,6 +230,7 @@ impl ParquetStorage {
     where
         F: FnOnce(RecordBatch) -> Result<(RecordBatch, usize)>,
     {
+        let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
             return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
@@ -194,6 +249,7 @@ impl ParquetStorage {
     where
         F: FnOnce(RecordBatch) -> Result<(RecordBatch, usize)>,
     {
+        let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
             return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
@@ -209,6 +265,7 @@ impl ParquetStorage {
 
     /// Rewrite the Parquet file by dropping a column at `col_index`.
     pub fn rewrite_parquet_drop_column(&self, db: &str, table: &str, col_index: usize) -> Result<()> {
+        let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
             return Ok(());
@@ -236,6 +293,7 @@ impl ParquetStorage {
 
     /// Rewrite the Parquet file by appending a NULL column for existing rows.
     pub fn rewrite_parquet_add_column(&self, db: &str, table: &str, field: &Field) -> Result<()> {
+        let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if !path.exists() {
             return Ok(());
@@ -258,6 +316,7 @@ impl ParquetStorage {
 
     /// Truncate a table: delete data file and recreate empty.
     pub fn truncate(&self, db: &str, table: &str, schema: Arc<ArrowSchema>) -> Result<()> {
+        let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
         if path.exists() {
             std::fs::remove_file(&path)?;
@@ -288,6 +347,9 @@ mod write {
         use parquet::arrow::ArrowWriter;
         use parquet::basic::Compression;
         use parquet::file::properties::{EnabledStatistics, WriterProperties};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
 
         let dir = path.parent().ok_or_else(|| {
             StorageError::Io(std::io::Error::new(
@@ -296,8 +358,19 @@ mod write {
             ))
         })?;
 
+        // Unique temp file: PID + thread-ID + monotonic counter
+        let pid = std::process::id();
+        let tid = {
+            // Use a thread-local counter as a lightweight thread identifier
+            std::thread_local! { static TID: u64 = {
+                static NEXT: AtomicU64 = AtomicU64::new(0);
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            }};
+            TID.with(|t| *t)
+        };
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let temp_path = dir.join(format!(
-            ".tmp_{}",
+            ".tmp_{}_{}_{}_{}", pid, tid, seq,
             path.file_name().unwrap_or_default().to_string_lossy()
         ));
 

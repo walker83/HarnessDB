@@ -330,6 +330,11 @@ impl FrontendMessage {
                     if value_len == -1 {
                         // NULL value
                         values.push(None);
+                    } else if value_len < 0 {
+                        return Err(PgProtocolError::ProtocolViolation(format!(
+                            "bind value length {} is negative (expected -1 for NULL or >= 0)",
+                            value_len
+                        )));
                     } else if value_len > buf.remaining() as i32 {
                         return Err(PgProtocolError::ProtocolViolation(format!(
                             "bind value length {} exceeds remaining buffer {}",
