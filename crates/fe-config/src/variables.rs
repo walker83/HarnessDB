@@ -68,6 +68,7 @@ pub static SYSTEM_VARIABLE_DEFS: &[VarDef] = &[
     VarDef { name: "lower_case_table_names", default_value: "0", scope: VarScope::Global, kind: VarKind::Int, description: "Lowercase table names (0=case sensitive, 1=lowercase)" },
     VarDef { name: "init_connect", default_value: "", scope: VarScope::Global, kind: VarKind::String, description: "SQL executed on each client connect" },
     VarDef { name: "max_concurrent_queries", default_value: "50", scope: VarScope::Global, kind: VarKind::Int, description: "Maximum number of concurrent query executions" },
+    VarDef { name: "max_dml_rows", default_value: "10000000", scope: VarScope::Global, kind: VarKind::Int, description: "Maximum rows for UPDATE/DELETE operations (prevents OOM on large tables)" },
 ];
 
 /// Global system variables storage

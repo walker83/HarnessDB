@@ -22,6 +22,7 @@ use fe_config::RorisConfig;
 use fe_config::SystemVariableManager;
 use fe_backup::BackupManager;
 use mysql_protocol::{auth::AuthPluginType, MysqlServer, QueryHandler, QueryResult, ServerConfig};
+use mysql_protocol::auth::default_credentials;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use maxcompute_protocol::{start_mc_server, McServerConfig, McServerState};
 use pg_protocol::{PgServer, PgServerConfig};
@@ -277,6 +278,8 @@ async fn main() -> Result<()> {
     let _ = sys_vars.set_global("max_allowed_packet", &config.query.max_allowed_packet.to_string());
     let _ = sys_vars.set_global("sql_mode", &config.query.sql_mode);
     let _ = sys_vars.set_global("time_zone", &config.query.time_zone);
+    let _ = sys_vars.set_global("max_dml_rows", &config.query.max_dml_rows.to_string());
+    let _ = sys_vars.set_global("max_concurrent_queries", &config.query.max_concurrent_queries.to_string());
 
     let catalog = Arc::new(CatalogManager::with_path(&args.meta_dir));
     {
@@ -317,6 +320,9 @@ async fn main() -> Result<()> {
     // Create backup manager
     let backup_manager = Arc::new(BackupManager::new(&args.meta_dir, &config.storage.data_dir));
 
+    // Create MySQL credentials (shared between auth and DDL handler)
+    let mysql_credentials = default_credentials();
+
     let query_handler = Arc::new(RorisQueryHandler::new(
         catalog.clone(),
         config.clone(),
@@ -324,6 +330,7 @@ async fn main() -> Result<()> {
         audit_logger.clone(),
         connection_tracker.clone(),
         backup_manager,
+        mysql_credentials.clone(),
     ));
 
     let mysql_config = ServerConfig {
@@ -332,6 +339,7 @@ async fn main() -> Result<()> {
         default_auth_plugin: AuthPluginType::NativePassword,
         auth_timeout_secs: 30,
         max_connections: config.server.max_connections,
+        credentials: mysql_credentials.clone(),
     };
     let mysql_server = MysqlServer::new(mysql_config, query_handler.clone());
 

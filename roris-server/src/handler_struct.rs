@@ -9,6 +9,7 @@ use fe_config::{RorisConfig, SystemVariableManager, SessionVariables};
 use fe_monitor::audit_log::AuditLogger;
 use fe_backup::BackupManager;
 use parking_lot::RwLock as PlRwLock;
+use mysql_protocol::auth::Credentials;
 use mysql_protocol::QueryResult;
 
 use crate::connection_tracker::ConnectionTracker;
@@ -37,6 +38,8 @@ pub(crate) struct RorisQueryHandler {
     pub(crate) backup_manager: Arc<BackupManager>,
     // Concurrency control: limits concurrent DataFusion query threads
     pub(crate) query_semaphore: Arc<tokio::sync::Semaphore>,
+    // MySQL user credentials (shared with MySQL auth layer)
+    pub(crate) mysql_credentials: Credentials,
 }
 
 #[derive(Clone)]
@@ -101,8 +104,13 @@ impl RorisQueryHandler {
         audit_logger: Arc<AuditLogger>,
         connection_tracker: Arc<ConnectionTracker>,
         backup_manager: Arc<BackupManager>,
+        mysql_credentials: Credentials,
     ) -> Self {
-        let storage = Arc::new(ParquetStorage::open(&config.storage.data_dir).unwrap());
+        let storage = Arc::new(
+            ParquetStorage::open(&config.storage.data_dir)
+                .unwrap()
+                .with_max_rows(config.query.max_dml_rows),
+        );
         let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog.clone(), storage.clone()));
         let df_config = SessionConfig::new()
             .with_default_catalog_and_schema("roris", "information_schema")
@@ -128,6 +136,7 @@ impl RorisQueryHandler {
             connection_tracker,
             backup_manager,
             query_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent)),
+            mysql_credentials,
         }
     }
 

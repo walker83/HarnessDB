@@ -728,14 +728,25 @@ impl RorisQueryHandler {
 
     // ---- User DDL ----
 
-    pub(crate) fn create_user(&self, conn_id: u32, stmt: &fe_sql_parser::ast::CreateUserStmt) -> Result<QueryResult, String> {
+    pub(crate) fn create_user(&self, _conn_id: u32, stmt: &fe_sql_parser::ast::CreateUserStmt) -> Result<QueryResult, String> {
+        use mysql_protocol::auth::double_sha1;
+
+        let password = stmt.password.as_deref().unwrap_or("");
+        let hash = double_sha1(password.as_bytes());
+        self.mysql_credentials.insert(stmt.username.clone(), hash);
+
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(format!("CREATE USER {} OK", stmt.username))]],
         ))
     }
 
-    pub(crate) fn drop_user(&self, conn_id: u32, stmt: &fe_sql_parser::ast::DropUserStmt) -> Result<QueryResult, String> {
+    pub(crate) fn drop_user(&self, _conn_id: u32, stmt: &fe_sql_parser::ast::DropUserStmt) -> Result<QueryResult, String> {
+        let existed = self.mysql_credentials.remove(&stmt.username).is_some();
+        if !existed && !stmt.if_exists {
+            return Err(format!("User '{}' does not exist", stmt.username));
+        }
+
         Ok(QueryResult::with_rows(
             vec![ColumnDef { name: "Status".to_string(), col_type: ColumnType::String }],
             vec![vec![Some(if stmt.if_exists { format!("DROP USER {} OK (if exists)", stmt.username) } else { format!("DROP USER {} OK", stmt.username) })]],

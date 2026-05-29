@@ -195,17 +195,38 @@ fn extract_simple_filter(expr: &Expr) -> Option<(String, Operator, ScalarValue)>
     }
 }
 
+/// Recursively decompose AND expressions into simple `col op literal` filters.
+/// Returns false if any sub-expression cannot be decomposed.
+fn extract_filters(expr: &Expr, out: &mut Vec<(String, Operator, ScalarValue)>) -> bool {
+    if let Some(filter) = extract_simple_filter(expr) {
+        out.push(filter);
+        return true;
+    }
+    // Try to decompose AND expressions
+    if let Expr::BinaryExpr(BinaryExpr { left, op: Operator::And, right }) = expr {
+        return extract_filters(left, out) && extract_filters(right, out);
+    }
+    false
+}
+
 /// Best-effort filter pushdown for simple `col op literal` comparisons.
 ///
-/// Returns `Some(filtered_batch)` on success. Returns `None` if any filter
-/// cannot be evaluated (caller falls back to unfiltered data).
+/// Supports AND-composed filters by recursively decomposing `a = 1 AND b = 2`
+/// into individual column predicates. Returns `Some(filtered_batch)` on success.
+/// Returns `None` if any filter cannot be evaluated (caller falls back to unfiltered data).
 fn apply_filters(batch: &RecordBatch, filters: &[Expr]) -> Option<RecordBatch> {
     let num_rows = batch.num_rows();
-    let mut combined_mask: Option<BooleanArray> = None;
+    let mut simple_filters = Vec::new();
 
     for expr in filters {
-        let (col_name, op, scalar) = extract_simple_filter(expr)?;
+        if !extract_filters(expr, &mut simple_filters) {
+            return None;
+        }
+    }
 
+    let mut combined_mask: Option<BooleanArray> = None;
+
+    for (col_name, op, scalar) in simple_filters {
         // Find the column in the (potentially projected) batch
         let col_idx = batch.schema().index_of(&col_name).ok()?;
         let array = batch.column(col_idx);

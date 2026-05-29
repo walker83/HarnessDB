@@ -717,10 +717,13 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
     };
     use std::collections::HashSet;
 
+    const MAX_BITMAP_DISTINCT: usize = 1_000_000;
+
     #[derive(Debug)]
     struct BitmapCountAccumulator {
         values: HashSet<ScalarValue>,
         data_type: Option<DataType>,
+        max_distinct: usize,
     }
 
     impl BitmapCountAccumulator {
@@ -728,6 +731,7 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
             Self {
                 values: HashSet::new(),
                 data_type: None,
+                max_distinct: MAX_BITMAP_DISTINCT,
             }
         }
     }
@@ -746,6 +750,13 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
                 if !arr.is_null(i) {
                     let scalar = ScalarValue::try_from_array(arr, i)?;
                     self.values.insert(scalar);
+                    if self.values.len() > self.max_distinct {
+                        return Err(DataFusionError::Execution(format!(
+                            "bitmap_count: distinct count {} exceeds limit of {}. \
+                             Consider using a more selective query.",
+                            self.values.len(), self.max_distinct
+                        )));
+                    }
                 }
             }
             Ok(())
@@ -780,6 +791,12 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
                     }
                     let val = ScalarValue::try_from_array(inner.as_ref(), j)?;
                     self.values.insert(val);
+                    if self.values.len() > self.max_distinct {
+                        return Err(DataFusionError::Execution(format!(
+                            "bitmap_count: distinct count {} exceeds limit of {}.",
+                            self.values.len(), self.max_distinct
+                        )));
+                    }
                 }
             }
             Ok(())
@@ -806,7 +823,9 @@ pub fn create_bitmap_count_udf() -> AggregateUDF {
         }
 
         fn size(&self) -> usize {
-            self.values.len() * 16
+            // Each ScalarValue ~128 bytes average (enum + heap allocation for strings)
+            // Plus HashSet bucket overhead (~48 bytes per entry)
+            self.values.len() * 176
         }
     }
 

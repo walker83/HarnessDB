@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
-use crate::auth::{AuthError, AuthUser};
+use crate::auth::{AuthError, AuthUser, Credentials};
 use crate::packet::{
     self, command, column_type, CapabilityFlags, Column, HandshakeResponse, HandshakeV10,
 };
@@ -43,10 +43,12 @@ pub struct Connection {
     read_buf: BytesMut,
     /// Authentication timeout in seconds
     auth_timeout_secs: u64,
+    /// User credentials for password verification
+    credentials: Credentials,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, conn_id: u32, handler: Arc<dyn QueryHandler>, auth_timeout_secs: u64) -> Self {
+    pub fn new(stream: TcpStream, conn_id: u32, handler: Arc<dyn QueryHandler>, auth_timeout_secs: u64, credentials: Credentials) -> Self {
         Self {
             stream,
             conn_id,
@@ -63,6 +65,7 @@ impl Connection {
             next_stmt_id: 1,
             read_buf: BytesMut::with_capacity(16 * 1024),
             auth_timeout_secs,
+            credentials,
         }
     }
 
@@ -186,7 +189,7 @@ impl Connection {
 
         match plugin_name {
             "mysql_native_password" => {
-                let auth = NativePasswordAuth::new();
+                let auth = NativePasswordAuth::with_credentials(self.credentials.clone());
                 auth.authenticate(username, auth_response, &self.auth_salt).await
             }
             "auth_token" => {

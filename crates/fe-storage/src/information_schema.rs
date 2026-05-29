@@ -127,19 +127,23 @@ impl TableProvider for InformationSchemaTables {
             if let Some(db) = self.catalog.get_database(&db_name) {
                 let table_names: Vec<String> = db.table_names().into_iter().map(|s| s.to_string()).collect();
                 for tbl_name in table_names {
-                    // Get actual row count by reading the table
-                    let row_count = match self.storage.read(&db_name, &tbl_name) {
-                        Ok(batch) => batch.num_rows() as u64,
-                        Err(_) => 0u64,
+                    // Read row count from Parquet footer metadata (no data scan)
+                    let parquet_path = self.storage.table_dir(&db_name, &tbl_name).join("data.parquet");
+                    let row_count = if parquet_path.exists() {
+                        std::fs::File::open(&parquet_path).ok()
+                            .and_then(|f| {
+                                parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(f).ok()
+                            })
+                            .map(|b| b.metadata().file_metadata().num_rows() as u64)
+                            .unwrap_or(0)
+                    } else {
+                        0u64
                     };
 
                     // Get actual file size
-                    let file_size = {
-                        let parquet_path = self.storage.table_dir(&db_name, &tbl_name).join("data.parquet");
-                        std::fs::metadata(&parquet_path)
-                            .map(|m| m.len())
-                            .unwrap_or(0u64)
-                    };
+                    let file_size = std::fs::metadata(&parquet_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0u64);
 
                     table_catalog.push(Some("roris".to_string()));
                     table_schema.push(Some(db_name.clone()));

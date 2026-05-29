@@ -42,6 +42,7 @@ pub type Result<T> = std::result::Result<T, StorageError>;
 /// Data layout: `{data_dir}/{database}/{table}/data.parquet`
 pub struct ParquetStorage {
     data_dir: PathBuf,
+    max_rows: Option<u64>,
 }
 
 impl ParquetStorage {
@@ -49,7 +50,14 @@ impl ParquetStorage {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
         debug!("ParquetStorage opened at {}", data_dir.display());
-        Ok(Self { data_dir })
+        Ok(Self { data_dir, max_rows: None })
+    }
+
+    /// Set the maximum row count for DML operations (UPDATE/DELETE/INSERT).
+    /// Operations on tables exceeding this limit will be rejected to prevent OOM.
+    pub fn with_max_rows(mut self, max_rows: u64) -> Self {
+        self.max_rows = Some(max_rows);
+        self
     }
 
     pub fn table_dir(&self, db: &str, table: &str) -> PathBuf {
@@ -62,6 +70,34 @@ impl ParquetStorage {
 
     pub fn table_exists(&self, db: &str, table: &str) -> bool {
         self.parquet_path(db, table).exists()
+    }
+
+    /// Read row count from Parquet footer metadata without loading data.
+    fn parquet_row_count(&self, db: &str, table: &str) -> Result<u64> {
+        let path = self.parquet_path(db, table);
+        if !path.exists() {
+            return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
+        }
+        let file = std::fs::File::open(&path)?;
+        let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|e| StorageError::Parquet(e.to_string()))?;
+        Ok(builder.metadata().file_metadata().num_rows() as u64)
+    }
+
+    /// Check if the table row count exceeds the DML limit. Returns error if exceeded.
+    fn check_dml_limit(&self, db: &str, table: &str) -> Result<()> {
+        if let Some(max) = self.max_rows {
+            let row_count = self.parquet_row_count(db, table)?;
+            if row_count > max {
+                return Err(StorageError::Other(format!(
+                    "Table {}.{} has {} rows, exceeds DML limit of {}. \
+                     Operation rejected to prevent excessive memory usage. \
+                     Adjust max_dml_rows to increase the limit.",
+                    db, table, row_count, max
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Create a new table: creates directory and writes an empty schema-only Parquet file.
@@ -95,6 +131,7 @@ impl ParquetStorage {
         if !path.exists() {
             return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
         }
+        self.check_dml_limit(db, table)?;
 
         let num_new_rows = new_batch.num_rows();
         let existing = self::read::read_parquet(&path)?;
@@ -143,6 +180,7 @@ impl ParquetStorage {
         if !path.exists() {
             return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
         }
+        self.check_dml_limit(db, table)?;
 
         let existing = self::read::read_parquet(&path)?;
         let (updated, count) = update_fn(existing)?;
@@ -160,6 +198,7 @@ impl ParquetStorage {
         if !path.exists() {
             return Err(StorageError::TableNotFound(db.to_string(), table.to_string()));
         }
+        self.check_dml_limit(db, table)?;
 
         let existing = self::read::read_parquet(&path)?;
         let (kept, deleted_count) = filter_fn(existing)?;

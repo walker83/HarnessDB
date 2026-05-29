@@ -4,7 +4,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info, info_span, warn, Instrument};
 
-use crate::auth::AuthPluginType;
+use crate::auth::{AuthPluginType, Credentials, default_credentials};
 use crate::connection::Connection;
 use crate::packet::Column;
 
@@ -19,6 +19,8 @@ pub struct ServerConfig {
     pub auth_timeout_secs: u64,
     /// Maximum concurrent connections. Default: 100.
     pub max_connections: u32,
+    /// User credentials: username → SHA1(SHA1(password)).
+    pub credentials: Credentials,
 }
 
 impl Default for ServerConfig {
@@ -29,6 +31,7 @@ impl Default for ServerConfig {
             default_auth_plugin: AuthPluginType::NativePassword,
             auth_timeout_secs: 30,
             max_connections: 100,
+            credentials: default_credentials(),
         }
     }
 }
@@ -121,11 +124,13 @@ impl MysqlServer {
 
         let auth_timeout_secs = self.config.auth_timeout_secs;
         let semaphore = self.connection_semaphore.clone();
+        let credentials = self.config.credentials.clone();
 
         loop {
             let (stream, peer_addr) = listener.accept().await?;
             let conn_id = self.connection_counter.fetch_add(1, Ordering::Relaxed);
             let handler = self.handler.clone();
+            let creds = credentials.clone();
 
             // Try to acquire a connection semaphore permit
             match semaphore.clone().try_acquire_owned() {
@@ -134,7 +139,7 @@ impl MysqlServer {
 
                     tokio::spawn(
                         async move {
-                            if let Err(e) = handle_connection(stream, conn_id, handler, auth_timeout_secs, permit).await {
+                            if let Err(e) = handle_connection(stream, conn_id, handler, auth_timeout_secs, permit, creds).await {
                                 error!("Connection {} error: {}", conn_id, e);
                             }
                             info!("Connection {} closed", conn_id);
@@ -159,10 +164,11 @@ async fn handle_connection(
     handler: Arc<dyn QueryHandler>,
     auth_timeout_secs: u64,
     _permit: OwnedSemaphorePermit,
+    credentials: Credentials,
 ) -> std::io::Result<()> {
     let peer_addr = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
     handler.on_connect(conn_id, "root", &peer_addr);
-    let mut conn = Connection::new(stream, conn_id, handler.clone(), auth_timeout_secs);
+    let mut conn = Connection::new(stream, conn_id, handler.clone(), auth_timeout_secs, credentials);
     let result = conn.run().await;
     handler.on_disconnect(conn_id);
     result
