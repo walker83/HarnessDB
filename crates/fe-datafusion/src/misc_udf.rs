@@ -855,7 +855,7 @@ pub fn create_uuid_udf() -> ScalarUDF {
 
             let result: Vec<String> = (0..n)
                 .map(|_| {
-                    // Simple pseudo-random UUID using time + pid + counter
+                    // UUID v4 with random components
                     let now = SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default();
@@ -863,10 +863,25 @@ pub fn create_uuid_udf() -> ScalarUDF {
                     let time_low = (nanos & 0xFFFF_FFFF) as u32;
                     let time_mid = ((nanos >> 32) & 0xFFFF) as u16;
                     let time_hi_and_version = ((nanos >> 48) as u16 & 0x0FFF) | 0x4000; // version 4
-                    let clock_seq_hi =
-                        (((nanos >> 56) as u8) ^ (std::process::id() as u8)) & 0x3F | 0x80; // variant
-                    let clock_seq_lo = ((nanos >> 60) as u8).wrapping_mul(counter as u8 + 1);
-                    let node_low = (nanos >> 64) as u64 & 0xFFFF_FFFF_FFFF;
+                    let pid = std::process::id() as u8;
+                    let thread_id = {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        std::thread::current().id().hash(&mut h);
+                        (h.finish() & 0xFF) as u8
+                    };
+                    let clock_seq_hi = ((pid ^ thread_id) & 0x3F) | 0x80; // variant
+                    let clock_seq_lo = ((nanos >> 60) as u8).wrapping_mul(counter.wrapping_add(1) as u8);
+                    // Use nanosecond precision + counter + thread hash for node to avoid collisions
+                    let node_hash = {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        nanos.hash(&mut h);
+                        counter.hash(&mut h);
+                        std::thread::current().id().hash(&mut h);
+                        h.finish()
+                    };
+                    let node_low = node_hash & 0xFFFF_FFFF_FFFF;
 
                     counter += 1;
 

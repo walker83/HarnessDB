@@ -263,12 +263,19 @@ impl RorisConfig {
 
     /// Load configuration from a file, or return default if file doesn't exist
     pub fn load_or_default(path: impl AsRef<Path>) -> Self {
-        match Self::load(&path) {
+        let path = path.as_ref();
+        if !path.exists() {
+            // Config file doesn't exist — use defaults (normal for first-time setup)
+            return Self::default();
+        }
+        match Self::load(path) {
             Ok(config) => config,
             Err(e) => {
-                tracing::warn!(
-                    "Failed to parse config file {}: {}. Using defaults.",
-                    path.as_ref().display(),
+                // Config file exists but has errors — this is dangerous, log prominently
+                tracing::error!(
+                    "CRITICAL: Failed to parse config file {}: {}. \
+                     Check syntax and try again. Using defaults (this may not be what you want).",
+                    path.display(),
                     e
                 );
                 Self::default()
