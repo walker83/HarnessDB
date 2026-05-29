@@ -159,11 +159,10 @@ impl ParquetStorage {
         std::fs::create_dir_all(&dir)?;
 
         let path = dir.join("data.parquet");
-        if !path.exists() {
-            // Write an empty RecordBatch to establish schema
-            let empty = self::write::empty_batch(&schema);
-            self::write::write_parquet_atomic(&path, &empty)?;
-        }
+        // Write an empty RecordBatch to establish schema (idempotent — write lock serializes
+        // concurrent creates and write_parquet_atomic is atomic).
+        let empty = self::write::empty_batch(&schema);
+        self::write::write_parquet_atomic(&path, &empty)?;
         debug!("Created table {}.{}", db, table);
         Ok(())
     }
@@ -314,13 +313,11 @@ impl ParquetStorage {
         Ok(())
     }
 
-    /// Truncate a table: delete data file and recreate empty.
+    /// Truncate a table: atomically replace with an empty Parquet file (write temp + rename).
     pub fn truncate(&self, db: &str, table: &str, schema: Arc<ArrowSchema>) -> Result<()> {
         let _guard = self.lock_table(db, table);
         let path = self.parquet_path(db, table);
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-        }
+        // Write empty batch atomically — no separate delete step to avoid data loss on crash.
         let empty = self::write::empty_batch(&schema);
         self::write::write_parquet_atomic(&path, &empty)?;
         debug!("Truncated table {}.{}", db, table);

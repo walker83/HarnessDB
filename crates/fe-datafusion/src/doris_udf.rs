@@ -178,7 +178,11 @@ pub fn create_days_add_udf() -> ScalarUDF {
                 .iter()
                 .zip(days_to_add.iter())
                 .map(|(d, n)| match (d, n) {
-                    (Some(date), Some(n)) => Some(date + n as i32),
+                    (Some(date), Some(n)) => {
+                        // Clamp to i32 range to avoid truncation of large i64 values
+                        let clamped = n.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+                        Some(date + clamped)
+                    }
                     _ => None,
                 })
                 .collect();
@@ -269,12 +273,15 @@ pub fn create_months_add_udf() -> ScalarUDF {
 
 /// Add months to a date using correct calendar arithmetic.
 /// Clamps the day to the last valid day of the target month (e.g. Jan 31 + 1 month = Feb 28/29).
+/// Uses Euclidean division to correctly handle negative month deltas (months must stay 1-12).
 fn add_months(days_since_epoch: i32, months: i64) -> Option<i32> {
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)?;
     let date = epoch.checked_add_signed(chrono::TimeDelta::days(days_since_epoch as i64))?;
     let total_months = date.year() as i64 * 12 + (date.month() as i64 - 1) + months;
-    let new_year = (total_months / 12) as i32;
-    let new_month = (total_months % 12 + 1) as u32;
+    // Euclidean division ensures new_month is always 0-11 and new_year adjusts correctly
+    // even when total_months is negative (prevents month=0).
+    let new_year = total_months.div_euclid(12) as i32;
+    let new_month = (total_months.rem_euclid(12) + 1) as u32;
     let new_day = date.day().min(max_day_of_month(new_year, new_month));
 
     let result = NaiveDate::from_ymd_opt(new_year, new_month, new_day)?;

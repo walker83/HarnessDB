@@ -215,10 +215,10 @@ impl RorisConfig {
 
     /// Load configuration from a file, or return default if file doesn't exist
     pub fn load_or_default(path: impl AsRef<Path>) -> Self {
-        match Self::load(path) {
+        match Self::load(&path) {
             Ok(config) => config,
             Err(e) => {
-                tracing::warn!("Using default config: {}", e);
+                tracing::warn!("Failed to parse config file {}: {}. Using defaults.", path.as_ref().display(), e);
                 Self::default()
             }
         }

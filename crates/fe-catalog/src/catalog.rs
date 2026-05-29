@@ -618,6 +618,10 @@ impl CatalogManager {
         if self.databases.contains_key(name) {
             return Err(DrorisError::catalog(CatalogError::DatabaseAlreadyExists, format!("database '{}' already exists", name)));
         }
+        // Use create_dir_all (idempotent) to avoid TOCTOU race between checking
+        // and creating the metadata directory.
+        std::fs::create_dir_all(&self.catalog_path)
+            .map_err(|e| DrorisError::Internal(format!("Failed to create catalog directory: {}", e)))?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let db = Database::new(id, name);
         self.backend.put_database(name, &db)?;
@@ -647,6 +651,13 @@ impl CatalogManager {
     pub fn create_table(&self, db_name: &str, table: Table) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name)
             .ok_or_else(|| DrorisError::catalog(CatalogError::DatabaseNotFound, format!("database '{}' not found", db_name)))?;
+        // Check for duplicate to prevent silent overwrite
+        if db_ref.get_table(&table.name).is_some() {
+            return Err(DrorisError::catalog(
+                CatalogError::TableAlreadyExists,
+                format!("table '{}.{}' already exists", db_name, table.name),
+            ));
+        }
         self.backend.put_table(db_name, &table.name, &table)?;
         db_ref.add_table(table);
         Ok(())
