@@ -4,7 +4,9 @@
 
 ### The Universal Database Chameleon
 
-**Doris SQL compatible. Multiple protocols. Zero infrastructure.**
+**One binary. Three protocols. Zero infrastructure.**
+
+**✅ Alibaba Cloud Compatible — MaxCompute & Hologres**
 
 [![Apache-2.0 License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024--edition-orange.svg)](https://www.rust-lang.org)
@@ -21,6 +23,10 @@
 
 RorisDB is a **universal database simulation platform** built in Rust with Apache DataFusion. The core SQL engine is **Doris-compatible** — accepting all four Doris table model syntaxes, Doris-specific functions, and the full Doris DDL/DML grammar. On top of this foundation, RorisDB simultaneously speaks **MaxCompute (ODPS)** and **Hologres (PostgreSQL)** protocols, translating their vendor-specific syntax into the common Doris-based engine.
 
+**Alibaba Cloud Compatible:**
+- **MaxCompute (ODPS)** — Full protocol support with HMAC-SHA1/SHA256 authentication, SQL submission, instance management
+- **Hologres** — PostgreSQL v3 wire protocol with `pg_catalog` system tables and Hologres-specific DDL
+
 **One binary replaces your entire dependency matrix:**
 
 - Replace a Doris cluster for local development with native Doris SQL
@@ -35,6 +41,7 @@ No containers. No clusters. No cloud bills. Just `./roris-fe` and go.
 | Capability | Description |
 |------------|-------------|
 | **Doris SQL Compatible** | Full Doris grammar: `DUPLICATE/AGGREGATE/UNIQUE/PRIMARY KEY`, `DISTRIBUTED BY HASH`, 35 Doris UDFs |
+| **Alibaba Cloud Compatible** | Full MaxCompute (ODPS) and Hologres protocol support |
 | **Multi-Protocol** | MySQL (:9030), MaxCompute (:9031), Hologres (:15432) — simultaneously on a single instance |
 | **Columnar Engine** | Apache DataFusion query engine with Parquet storage, ZSTD compression |
 | **Protocol Fidelity** | Real wire protocols — works with `mysql`, `psql`, `pyodps`, JDBC, and BI tools |
@@ -56,7 +63,7 @@ mysql -h 127.0.0.1 -P 9030 -uroot
 
 ### MaxCompute (ODPS) REST API — Port 9031
 
-Simulate Alibaba Cloud MaxCompute for data pipeline development. Supports HMAC-SHA1 (V2) and HMAC-SHA256 (V4) authentication, SQL job submission, instance management, and the full ODPS type system.
+**✅ Alibaba Cloud MaxCompute Compatible** — Simulate Alibaba Cloud MaxCompute for data pipeline development. Supports HMAC-SHA1 (V2) and HMAC-SHA256 (V4) authentication, SQL job submission, instance management, and the full ODPS type system.
 
 ```python
 from odps import ODPS
@@ -67,7 +74,7 @@ o.execute_sql('SELECT * FROM my_table').wait_for_success()
 
 ### Hologres (PostgreSQL) — Port 15432
 
-Simulate Alibaba Cloud Hologres with PostgreSQL v3 wire protocol. Supports Simple Query, Extended Query (Parse/Bind/Execute), `pg_catalog` system tables, and Hologres-specific DDL (`WITH (orientation='column', ...)`, `CALL set_table_property`).
+**✅ Alibaba Cloud Hologres Compatible** — Simulate Alibaba Cloud Hologres with PostgreSQL v3 wire protocol. Supports Simple Query, Extended Query (Parse/Bind/Execute), `pg_catalog` system tables, and Hologres-specific DDL (`WITH (orientation='column', ...)`, `CALL set_table_property`).
 
 ```bash
 psql -h 127.0.0.1 -p 15432 -U roris -d default
@@ -257,9 +264,15 @@ Hologres:    CREATE TABLE ... WITH (orientation='column')  →  CREATE TABLE ...
 
 ## Use Cases
 
-### Data Pipeline Development
+### Alibaba Cloud Data Pipeline Development
 
 Develop and test MaxCompute / Hologres pipelines locally before deploying to Alibaba Cloud. RorisDB accepts the same SQL dialect and protocols, so your `pyodps` scripts and Hologres queries work without modification.
+
+**Key Benefits:**
+- Test MaxCompute SQL jobs locally without cloud costs
+- Validate Hologres queries before deployment
+- Mock Alibaba Cloud APIs for CI/CD pipelines
+- Development and debugging without internet access
 
 ### Application Integration Testing
 
