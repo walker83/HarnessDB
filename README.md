@@ -4,7 +4,9 @@
 
 ### The Universal Database Chameleon
 
-**One binary. Three protocols. Zero infrastructure.**
+**One binary. Multiple protocols. Zero infrastructure.**
+
+**✅ Multi-Database Protocol Compatible — MySQL | MaxCompute | Hologres**
 
 **✅ Alibaba Cloud Compatible — MaxCompute & Hologres**
 
@@ -13,7 +15,7 @@
 [![Version](https://img.shields.io/badge/Version-0.3.0-green.svg)]()
 [![Stars](https://img.shields.io/github/stars/walker83/RorisDB.svg?style=social&label=Star)](https://github.com/walker83/RorisDB)
 
-[Quick Start](#-quick-start) · [Supported Protocols](#-supported-protocols) · [Architecture](#-architecture) · [Documentation](#-documentation) · [Contributing](#-contributing)
+[English](README.md) · [中文文档](docs/zh/README.md) · [Quick Start](#-quick-start) · [Supported Protocols](#-supported-protocols) · [Architecture](#-architecture) · [Documentation](#-documentation) · [Contributing](#-contributing)
 
 </div>
 
@@ -23,9 +25,10 @@
 
 RorisDB is a **universal database simulation platform** built in Rust with Apache DataFusion. The core SQL engine is **Doris-compatible** — accepting all four Doris table model syntaxes, Doris-specific functions, and the full Doris DDL/DML grammar. On top of this foundation, RorisDB simultaneously speaks **MaxCompute (ODPS)** and **Hologres (PostgreSQL)** protocols, translating their vendor-specific syntax into the common Doris-based engine.
 
-**Alibaba Cloud Compatible:**
-- **MaxCompute (ODPS)** — Full protocol support with HMAC-SHA1/SHA256 authentication, SQL submission, instance management
-- **Hologres** — PostgreSQL v3 wire protocol with `pg_catalog` system tables and Hologres-specific DDL
+**Multi-Database Protocol Compatible:**
+- **MySQL** — Full Doris SQL grammar, wire protocol, all table models
+- **MaxCompute (ODPS)** — Alibaba Cloud compatible with HMAC-SHA1/SHA256 authentication
+- **Hologres** — Alibaba Cloud compatible with PostgreSQL v3 wire protocol
 
 **One binary replaces your entire dependency matrix:**
 
@@ -40,6 +43,7 @@ No containers. No clusters. No cloud bills. Just `./roris-fe` and go.
 
 | Capability | Description |
 |------------|-------------|
+| **Multi-Database Protocol** | MySQL, MaxCompute, Hologres — all three protocols simultaneously |
 | **Doris SQL Compatible** | Full Doris grammar: `DUPLICATE/AGGREGATE/UNIQUE/PRIMARY KEY`, `DISTRIBUTED BY HASH`, 35 Doris UDFs |
 | **Alibaba Cloud Compatible** | Full MaxCompute (ODPS) and Hologres protocol support |
 | **Multi-Protocol** | MySQL (:9030), MaxCompute (:9031), Hologres (:15432) — simultaneously on a single instance |
