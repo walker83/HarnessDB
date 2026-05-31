@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ::types::DataType;
 use bytes::BytesMut;
+use chrono::{Datelike, Timelike};
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::kernels::cmp;
 use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
@@ -142,6 +143,73 @@ pub(crate) fn like_match(pattern: &str, text: &str) -> bool {
     dp[p.len()][t.len()]
 }
 
+pub(crate) fn df_schema_to_column_defs(
+    df_schema: &datafusion::common::DFSchema,
+) -> Vec<ColumnDef> {
+    let schema = df_schema.as_arrow();
+    schema
+        .fields()
+        .iter()
+        .map(|f| {
+            let col_type = match f.data_type() {
+                ADT::Int8
+                | ADT::Int16
+                | ADT::Int32
+                | ADT::Int64
+                | ADT::UInt8
+                | ADT::UInt16
+                | ADT::UInt32
+                | ADT::UInt64
+                | ADT::Boolean => ColumnType::Int,
+                ADT::Float32 => ColumnType::Float,
+                ADT::Float64 => ColumnType::Double,
+                ADT::Date32 | ADT::Date64 => ColumnType::Date,
+                ADT::Timestamp(_, _) => ColumnType::DateTime,
+                _ => ColumnType::String,
+            };
+            ColumnDef {
+                name: f.name().clone(),
+                col_type,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn encode_arrow_batches_to_mysql_rows(
+    batches: &[datafusion::arrow::record_batch::RecordBatch],
+) -> BytesMut {
+    if batches.is_empty() {
+        return BytesMut::new();
+    }
+
+    let num_columns = batches[0].num_columns();
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    // Estimate: ~80 bytes per column value (covers lenenc overhead + typical string/number sizes)
+    // Plus 20 bytes per row for packet headers. This avoids BytesMut reallocation cascades
+    // that would copy tens of MB when the initial estimate is too low.
+    let estimated = total_rows * (num_columns * 80 + 20);
+    let mut buf = BytesMut::with_capacity(estimated);
+
+    for batch in batches {
+        let columns = batch.columns();
+        for row_idx in 0..batch.num_rows() {
+            let pkt_start = buf.len();
+            buf.extend_from_slice(&[0u8; 4]); // placeholder for 3-byte length + 1-byte seq_id
+            for col in columns {
+                write_arrow_value_to_mysql_buf(col, row_idx, &mut buf);
+            }
+            let payload_len = buf.len() - pkt_start - 4;
+            buf[pkt_start] = (payload_len & 0xFF) as u8;
+            buf[pkt_start + 1] = ((payload_len >> 8) & 0xFF) as u8;
+            buf[pkt_start + 2] = ((payload_len >> 16) & 0xFF) as u8;
+            // seq_id at pkt_start+3 left as 0; Connection patches in-place
+        }
+    }
+
+    buf
+}
+
+#[allow(dead_code)]
 pub(crate) fn record_batches_to_query_result_with_df_schema(
     batches: &[datafusion::arrow::record_batch::RecordBatch],
     df_schema: &datafusion::common::DFSchema,
@@ -317,6 +385,34 @@ pub(crate) fn arrow_value_to_string(
     }
 }
 
+/// Format a datetime as "YYYY-MM-DD HH:MM:SS" directly into a stack buffer.
+/// Returns the number of bytes written (always 19).
+/// Zero heap allocation — no String intermediate.
+#[inline]
+fn format_datetime_to_buf(buf: &mut [u8; 64], year: i32, month: u32, day: u32,
+                           hour: u32, min: u32, sec: u32) -> usize {
+    buf[0] = b'0' + ((year / 1000) as u8);
+    buf[1] = b'0' + (((year / 100) % 10) as u8);
+    buf[2] = b'0' + (((year / 10) % 10) as u8);
+    buf[3] = b'0' + ((year % 10) as u8);
+    buf[4] = b'-';
+    buf[5] = b'0' + ((month / 10) as u8);
+    buf[6] = b'0' + ((month % 10) as u8);
+    buf[7] = b'-';
+    buf[8] = b'0' + ((day / 10) as u8);
+    buf[9] = b'0' + ((day % 10) as u8);
+    buf[10] = b' ';
+    buf[11] = b'0' + ((hour / 10) as u8);
+    buf[12] = b'0' + ((hour % 10) as u8);
+    buf[13] = b':';
+    buf[14] = b'0' + ((min / 10) as u8);
+    buf[15] = b'0' + ((min % 10) as u8);
+    buf[16] = b':';
+    buf[17] = b'0' + ((sec / 10) as u8);
+    buf[18] = b'0' + ((sec % 10) as u8);
+    19
+}
+
 /// Write an Arrow array value directly to a MySQL protocol buffer as lenenc bytes.
 /// Returns true if value was written, false if null.
 /// Uses zero-allocation formatting for numeric types via itoa/ryu.
@@ -437,36 +533,45 @@ pub(crate) fn write_arrow_value_to_mysql_buf(
             let days = arr.value(idx);
             let base = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
             let date = base + chrono::Duration::days(days as i64);
-            let s = date.format("%Y-%m-%d").to_string();
-            let len = s.len();
-            stack_buf[..len].copy_from_slice(s.as_bytes());
-            &stack_buf[..len]
+            // Manual formatting: YYYY-MM-DD (10 bytes), zero heap allocation
+            let y = date.year();
+            let m = date.month();
+            let d = date.day();
+            stack_buf[0] = b'0' + ((y / 1000) as u8);
+            stack_buf[1] = b'0' + (((y / 100) % 10) as u8);
+            stack_buf[2] = b'0' + (((y / 10) % 10) as u8);
+            stack_buf[3] = b'0' + ((y % 10) as u8);
+            stack_buf[4] = b'-';
+            stack_buf[5] = b'0' + ((m / 10) as u8);
+            stack_buf[6] = b'0' + ((m % 10) as u8);
+            stack_buf[7] = b'-';
+            stack_buf[8] = b'0' + ((d / 10) as u8);
+            stack_buf[9] = b'0' + ((d % 10) as u8);
+            &stack_buf[..10]
         }
         ADT::Timestamp(TimeUnit::Second, _) => {
             let arr = col.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
             let ts = arr.value(idx);
             let dt = chrono::DateTime::from_timestamp(ts, 0).unwrap_or_default();
-            let s = dt.format("%Y-%m-%d %H:%M:%S").to_string();
-            let len = s.len();
-            stack_buf[..len].copy_from_slice(s.as_bytes());
+            // Manual formatting: YYYY-MM-DD HH:MM:SS (19 bytes), zero heap allocation
+            let len = format_datetime_to_buf(&mut stack_buf, dt.year(), dt.month(), dt.day(),
+                                              dt.hour(), dt.minute(), dt.second());
             &stack_buf[..len]
         }
         ADT::Timestamp(TimeUnit::Millisecond, _) => {
             let arr = col.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
             let ts = arr.value(idx);
             let dt = chrono::DateTime::from_timestamp_millis(ts).unwrap_or_default();
-            let s = dt.format("%Y-%m-%d %H:%M:%S").to_string();
-            let len = s.len();
-            stack_buf[..len].copy_from_slice(s.as_bytes());
+            let len = format_datetime_to_buf(&mut stack_buf, dt.year(), dt.month(), dt.day(),
+                                              dt.hour(), dt.minute(), dt.second());
             &stack_buf[..len]
         }
         ADT::Timestamp(TimeUnit::Microsecond, _) => {
             let arr = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
             let ts = arr.value(idx);
             let dt = chrono::DateTime::from_timestamp_micros(ts).unwrap_or_default();
-            let s = dt.format("%Y-%m-%d %H:%M:%S").to_string();
-            let len = s.len();
-            stack_buf[..len].copy_from_slice(s.as_bytes());
+            let len = format_datetime_to_buf(&mut stack_buf, dt.year(), dt.month(), dt.day(),
+                                              dt.hour(), dt.minute(), dt.second());
             &stack_buf[..len]
         }
         ADT::Timestamp(TimeUnit::Nanosecond, _) => {
@@ -474,13 +579,14 @@ pub(crate) fn write_arrow_value_to_mysql_buf(
             let ts = arr.value(idx);
             let secs = ts / 1_000_000_000;
             let nsecs = (ts % 1_000_000_000) as u32;
-            let s = match chrono::DateTime::from_timestamp(secs, nsecs) {
-                Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-                None => "1970-01-01 00:00:00".to_string(),
-            };
-            let len = s.len();
-            stack_buf[..len].copy_from_slice(s.as_bytes());
-            &stack_buf[..len]
+            match chrono::DateTime::from_timestamp(secs, nsecs) {
+                Some(dt) => {
+                    let len = format_datetime_to_buf(&mut stack_buf, dt.year(), dt.month(), dt.day(),
+                                                      dt.hour(), dt.minute(), dt.second());
+                    &stack_buf[..len]
+                }
+                None => b"1970-01-01 00:00:00",
+            }
         }
         _ => {
             // Fallback: use arrow_value_to_string (allocates)

@@ -34,7 +34,7 @@ use pg_protocol::{PgServer, PgServerConfig};
 
 use connection_tracker::ConnectionTracker;
 use handler_struct::RorisQueryHandler;
-use utils::record_batches_to_query_result_with_df_schema;
+use utils::{df_schema_to_column_defs, encode_arrow_batches_to_mysql_rows};
 use web::{WebState, start_web_server};
 
 #[derive(Parser)]
@@ -117,14 +117,15 @@ impl QueryHandler for RorisQueryHandler {
                 match result {
                     Ok((batches, df_schema)) => {
                         let convert_start = Instant::now();
-                        let query_result = record_batches_to_query_result_with_df_schema(&batches, &df_schema);
+                        let columns = df_schema_to_column_defs(&df_schema);
+                        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                        let encoded_rows = encode_arrow_batches_to_mysql_rows(&batches);
                         let convert_ms = convert_start.elapsed().as_millis();
                         tracing::info!(
-                            "Query timing: DataFusion={}ms, Arrow->String={}ms, rows={}",
-                            datafusion_ms, convert_ms,
-                            query_result.rows.len()
+                            "Query timing: DataFusion={}ms, Arrow->MySQL={}ms, rows={}",
+                            datafusion_ms, convert_ms, total_rows
                         );
-                        query_result
+                        QueryResult::with_encoded_rows(columns, encoded_rows, total_rows)
                     }
                     Err(e) => {
                         tracing::error!("DataFusion error: {}", e);

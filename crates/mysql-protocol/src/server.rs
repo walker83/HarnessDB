@@ -1,3 +1,4 @@
+use bytes::BytesMut;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::net::{TcpListener, TcpStream};
@@ -41,6 +42,10 @@ impl Default for ServerConfig {
 pub struct QueryResult {
     pub columns: Vec<ColumnDef>,
     pub rows: Vec<Vec<Option<String>>>,
+    /// Pre-encoded MySQL row packets (bypasses String materialization).
+    /// Contains all row packets with seq_id=0 placeholders; Connection patches seq_ids in-place.
+    pub pre_encoded_rows: Option<BytesMut>,
+    pub pre_encoded_row_count: usize,
 }
 
 /// Column definition for query results.
@@ -68,12 +73,19 @@ impl QueryResult {
         Self {
             columns,
             rows: Vec::new(),
+            pre_encoded_rows: None,
+            pre_encoded_row_count: 0,
         }
     }
 
     /// Create a result from columns and rows.
     pub fn with_rows(columns: Vec<ColumnDef>, rows: Vec<Vec<Option<String>>>) -> Self {
-        Self { columns, rows }
+        Self {
+            columns,
+            rows,
+            pre_encoded_rows: None,
+            pre_encoded_row_count: 0,
+        }
     }
 
     /// Create an empty OK-style result (e.g. for DDL statements).
@@ -81,6 +93,22 @@ impl QueryResult {
         Self {
             columns: Vec::new(),
             rows: Vec::new(),
+            pre_encoded_rows: None,
+            pre_encoded_row_count: 0,
+        }
+    }
+
+    /// Create a result with pre-encoded row data (zero-allocation Arrow path).
+    pub fn with_encoded_rows(
+        columns: Vec<ColumnDef>,
+        encoded_rows: BytesMut,
+        row_count: usize,
+    ) -> Self {
+        Self {
+            columns,
+            rows: Vec::new(),
+            pre_encoded_rows: Some(encoded_rows),
+            pre_encoded_row_count: row_count,
         }
     }
 }
@@ -184,6 +212,13 @@ async fn handle_connection(
         .peer_addr()
         .map(|a| a.to_string())
         .unwrap_or_else(|_| "unknown".to_string());
+    // NOTE: Do NOT set TCP_NODELAY here. Our send_result_set already batches all
+    // column packets into a single write_all and row packets into chunked writes
+    // with a single flush. Nagle's algorithm helps coalesce these TCP segments
+    // for bulk data transfer. TCP_NODELAY would force immediate send of each
+    // write_all call, hurting throughput for large result sets.
+
+
     handler.on_connect(conn_id, "root", &peer_addr);
     let mut conn = Connection::new(
         stream,
