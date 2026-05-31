@@ -6,7 +6,7 @@ use datafusion::common::config::ConfigOptions;
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::LogicalPlan;
 use datafusion::logical_expr::{AggregateUDF, ScalarUDF, WindowUDF};
-use datafusion::sql::parser::{DFParser, Statement as DFStatement};
+use datafusion::sql::parser::{DFParserBuilder, Statement as DFStatement};
 use datafusion::sql::planner::SqlToRel;
 use thiserror::Error;
 
@@ -32,8 +32,9 @@ pub enum DataFusionParseError {
 }
 
 pub fn try_parse_dml_with_datafusion(sql: &str) -> Result<LogicalPlan, DataFusionParseError> {
-    let mut parser =
-        DFParser::new(sql).map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;
+    let mut parser = DFParserBuilder::new(sql)
+        .build()
+        .map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;
     let statements = parser
         .parse_statements()
         .map_err(|e| DataFusionParseError::SyntaxError(e.to_string()))?;

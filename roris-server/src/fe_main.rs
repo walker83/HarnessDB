@@ -25,8 +25,8 @@ use fe_datafusion::{register_doris_udfs, register_misc_udfs};
 use fe_monitor::MonitoringManager;
 use fe_monitor::audit_log::{AuditLogConfig, AuditLogEntry, AuditLogger, QueryStatus, QueryType};
 use fe_sql_parser::{is_dml_sql, parse_sql};
-use fe_storage::{InformationSchemaProvider, ParquetCatalogProvider};
-use maxcompute_protocol::{McServerConfig, McServerState, start_mc_server};
+use fe_storage::ParquetCatalogProvider;
+use maxcompute_protocol::{McServerConfig, start_mc_server};
 use mysql_protocol::auth::default_credentials;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::{MysqlServer, QueryHandler, QueryResult, ServerConfig, auth::AuthPluginType};
@@ -346,7 +346,7 @@ async fn main() -> Result<()> {
         tracing::info!("Edit log applied to catalog");
     }
 
-    let monitoring = Arc::new(MonitoringManager::new());
+    let _monitoring = Arc::new(MonitoringManager::new());
 
     // Create audit logger with config
     let audit_config = AuditLogConfig {

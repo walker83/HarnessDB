@@ -4,7 +4,6 @@ pub mod queries;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow_array::RecordBatch;
 use arrow_schema::{Field, Schema as ArrowSchema};
 use fe_catalog::CatalogManager;
 use fe_catalog::table::{Table, TableColumn};

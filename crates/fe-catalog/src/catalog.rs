@@ -590,6 +590,7 @@ pub struct CatalogManager {
     backend: Arc<dyn MetaBackend>,
     backend_type_name: &'static str,
     /// Optional secondary backend for dual-write mode
+    #[allow(dead_code)]
     secondary_backend: Option<Arc<dyn MetaBackend>>,
 }
 
@@ -1021,6 +1022,7 @@ impl CatalogWriter {
 }
 
 /// Helper trait for downcasting MetaBackend implementations
+#[allow(dead_code)]
 trait AsAny {
     fn as_any(&self) -> &dyn std::any::Any;
 }

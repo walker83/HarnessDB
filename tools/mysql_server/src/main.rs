@@ -1,6 +1,4 @@
 use anyhow::Result;
-use datafusion::arrow::array::{Array, BooleanArray, Float64Array, Int64Array, StringArray};
-use datafusion::arrow::datatypes::DataType as ArrowDataType;
 use mysql_protocol::server::{
     ColumnDef, ColumnType, MysqlServer, QueryHandler, QueryResult, ServerConfig,
 };
@@ -20,7 +18,7 @@ impl TpchQueryHandler {
 }
 
 impl QueryHandler for TpchQueryHandler {
-    fn handle_query(&self, conn_id: u32, sql: &str) -> QueryResult {
+    fn handle_query(&self, _conn_id: u32, sql: &str) -> QueryResult {
         let sql_upper = sql.trim().to_uppercase();
 
         // Use tpch database

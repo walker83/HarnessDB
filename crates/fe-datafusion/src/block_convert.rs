@@ -8,11 +8,10 @@ use std::sync::Arc;
 
 use arrow_array::RecordBatch;
 use arrow_array::array::*;
-use arrow_schema::TimeUnit;
 use arrow_schema::{DataType as ArrowDataType, Field};
 
 use types::vector::*;
-use types::{Block, DataType as RorisType, Vector};
+use types::Block;
 
 // ---------------------------------------------------------------------------
 // Block → RecordBatch  (IMPLEMENTED)
@@ -103,8 +102,8 @@ fn vector_to_array(vec: &Vector) -> Result<Arc<dyn arrow_array::Array>, String> 
 // ---------------------------------------------------------------------------
 
 pub fn record_batch_to_block(rb: &RecordBatch) -> Result<Block, String> {
-    use arrow_schema::DataType as ArrowDataType;
-    use types::{Field, Schema, Vector};
+    
+    use types::{Field, Schema};
 
     // Build schema from RecordBatch schema
     let mut fields = Vec::new();
@@ -162,6 +161,7 @@ fn convert_arrow_data_type(dt: &ArrowDataType) -> types::DataType {
     }
 }
 
+#[allow(dead_code)]
 fn convert_array_to_vector(
     array: &Arc<dyn Array>,
     data_type: &types::DataType,

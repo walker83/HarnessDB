@@ -8,16 +8,19 @@ use dashmap::DashMap;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::error::Result as DFResult;
 use datafusion::logical_expr::TableType;
-use datafusion::physical_plan::ExecutionPlan;
 use datafusion_datasource::memory::MemorySourceConfig;
 
+#[allow(unused_imports)]
 use crate::ParquetStorage;
+#[allow(unused_imports)]
 use fe_catalog::CatalogManager;
 use fe_datafusion::types::to_arrow_data_type;
 
 /// Custom information_schema provider that returns MySQL-compatible metadata
 pub struct InformationSchemaProvider {
+    #[allow(dead_code)]
     catalog: Arc<CatalogManager>,
+    #[allow(dead_code)]
     storage: Arc<ParquetStorage>,
     tables: DashMap<String, Arc<dyn TableProvider>>,
 }

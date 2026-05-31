@@ -159,7 +159,7 @@ impl RorisQueryHandler {
                         .with_default_catalog_and_schema("roris", &current_db)
                         .with_create_default_catalog_and_schema(false)
                         .with_information_schema(false); // Use custom information_schema from ParquetCatalogProvider
-                    let mut ctx = SessionContext::new_with_config(df_config);
+                    let ctx = SessionContext::new_with_config(df_config);
                     ctx.register_catalog("roris", df_catalog);
                     let df = ctx.sql(&select_sql).await.map_err(|e| e.to_string())?;
                     let batches = df.collect().await.map_err(|e| e.to_string())?;
@@ -361,7 +361,7 @@ fn query_stmt_to_sql(query: &ast::QueryStmt) -> String {
 
 /// Convert a parsed `Expr` back to a SQL fragment.
 fn expr_to_sql(expr: &ast::Expr) -> String {
-    use ast::{Expr, LiteralValue, UnaryOp};
+    use ast::{Expr, UnaryOp};
 
     match expr {
         Expr::Literal(lit) => literal_to_sql(lit),

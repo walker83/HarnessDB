@@ -38,6 +38,7 @@ impl NativePasswordAuth {
 
     /// Compute the MySQL native password scramble:
     /// `SHA1(password) XOR SHA1(salt + SHA1(SHA1(password)))`
+    #[cfg(test)]
     fn scramble_native_password(password: &[u8], salt: &[u8]) -> Vec<u8> {
         let hash1 = Sha1::digest(password);
         let hash2 = Sha1::digest(hash1);

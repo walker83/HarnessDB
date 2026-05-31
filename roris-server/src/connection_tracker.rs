@@ -1,5 +1,7 @@
 //! Connection tracking and server metrics
 
+#![allow(dead_code)]
+
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};

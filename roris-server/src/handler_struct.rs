@@ -27,6 +27,7 @@ pub(crate) struct RorisQueryHandler {
     pub(crate) session_ctx: SessionContext,
     pub(crate) storage: Arc<ParquetStorage>,
     // Configuration and system variables
+    #[allow(dead_code)]
     pub(crate) config: RorisConfig,
     pub(crate) sys_vars: Arc<SystemVariableManager>,
     // Per-connection session state
@@ -49,6 +50,7 @@ pub(crate) struct ViewInfo {
     pub(crate) database: String,
     pub(crate) name: String,
     pub(crate) query: String,
+    #[allow(dead_code)]
     pub(crate) columns: Vec<String>,
 }
 
@@ -75,11 +77,13 @@ impl SimpleTransactionState {
         self.savepoints.clear();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn savepoint(&mut self, name: String) -> Result<(), String> {
         self.savepoints.push(name);
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), String> {
         if self.savepoints.contains(&name.to_string()) {
             Ok(())
@@ -88,11 +92,13 @@ impl SimpleTransactionState {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn release_savepoint(&mut self, name: &str) -> Result<(), String> {
         self.savepoints.retain(|s| s != name);
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_isolation_level(&mut self, level: String) {
         self.isolation_level = level;
     }
@@ -252,18 +258,22 @@ impl RorisQueryHandler {
         self.with_session_mut(conn_id, |s| s.transaction.rollback());
     }
 
+    #[allow(dead_code)]
     pub(crate) fn savepoint(&self, conn_id: u32, name: String) -> Result<(), String> {
         self.with_session_mut(conn_id, |s| s.transaction.savepoint(name))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn rollback_to_savepoint(&self, conn_id: u32, name: &str) -> Result<(), String> {
         self.with_session_mut(conn_id, |s| s.transaction.rollback_to_savepoint(name))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn release_savepoint(&self, conn_id: u32, name: &str) -> Result<(), String> {
         self.with_session_mut(conn_id, |s| s.transaction.release_savepoint(name))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_isolation_level(&self, conn_id: u32, level: String) {
         self.with_session_mut(conn_id, |s| s.transaction.set_isolation_level(level));
     }
@@ -280,6 +290,7 @@ impl RorisQueryHandler {
             .cloned()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn update_df_table_schema(
         &self,
         db: &str,

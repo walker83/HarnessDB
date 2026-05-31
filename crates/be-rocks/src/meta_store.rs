@@ -5,6 +5,8 @@
 //! - `tablet`: Tablet schemas, rowset metadata, counters
 //! - `edit_log`: Write-ahead log entries
 
+#![allow(dead_code)]
+
 use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use std::path::Path;
 use thiserror::Error;

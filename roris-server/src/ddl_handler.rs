@@ -15,7 +15,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn create_database(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &CreateDatabaseStmt,
     ) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
@@ -24,7 +24,7 @@ impl RorisQueryHandler {
                 if let Err(e) = catalog.save() {
                     tracing::error!("Failed to save catalog: {}", e);
                 }
-                drop(catalog);
+                let _ = catalog;
                 let df_cat = self
                     .session_ctx
                     .catalog("roris")
@@ -49,7 +49,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_database(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &DropDatabaseStmt,
     ) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
@@ -67,14 +67,14 @@ impl RorisQueryHandler {
 
     pub(crate) fn alter_database(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &AlterDatabaseStmt,
     ) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         if catalog.get_database(&stmt.name).is_none() {
             return Err(format!("Unknown database '{}'", stmt.name));
         }
-        drop(catalog);
+        let _ = catalog;
         if !stmt.properties.is_empty() {
             let catalog = &self.catalog;
             if let Some(mut db) = catalog.get_database(&stmt.name) {
@@ -105,7 +105,7 @@ impl RorisQueryHandler {
         let table_id = catalog.next_id();
 
         use fe_catalog::table::{
-            DistributionInfo, KeysType, Partition, PartitionInfo, Table, TableColumn,
+            DistributionInfo, KeysType, PartitionInfo, Table, TableColumn,
         };
 
         let columns: Vec<TableColumn> = stmt
@@ -174,14 +174,14 @@ impl RorisQueryHandler {
             view_definition: None,
         };
 
-        drop(catalog);
+        let _ = catalog;
         let catalog = &self.catalog;
         match catalog.create_table(db, table) {
             Ok(()) => {
                 if let Err(e) = catalog.save() {
                     tracing::error!("Failed to save catalog: {}", e);
                 }
-                drop(catalog);
+                let _ = catalog;
                 let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = stmt
                     .columns
                     .iter()
@@ -238,7 +238,7 @@ impl RorisQueryHandler {
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         let table = stmt.name.clone();
 
-        drop(catalog);
+        let _ = catalog;
         let catalog = &self.catalog;
         match catalog.drop_table(db, &table) {
             Ok(()) => {
@@ -273,7 +273,7 @@ impl RorisQueryHandler {
 
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
-                drop(catalog);
+                let _ = catalog;
                 let catalog = &self.catalog;
                 for op in &stmt.operations {
                     match op {
@@ -562,17 +562,11 @@ impl RorisQueryHandler {
                                     // Get old schema (CatalogManager still has old entry at this point)
                                     if let Some(schema) = roris_cat.get_table_schema(db, &old_name)
                                     {
-                                        roris_cat.create_table(db, new_name, schema);
-                                        roris_cat.drop_table(db, &old_name);
+                                        let _ = roris_cat.create_table(db, new_name, schema);
+                                        let _ = roris_cat.drop_table(db, &old_name);
                                     }
                                 }
                             }
-                        }
-                        _ => {
-                            return Err(format!(
-                                "ALTER TABLE operation not yet implemented: {:?}",
-                                op
-                            ));
                         }
                     }
                 }
@@ -595,7 +589,7 @@ impl RorisQueryHandler {
 
         match catalog.get_table(db, &table) {
             Some(tbl) => {
-                drop(catalog);
+                let _ = catalog;
 
                 // Truncate Parquet data
                 let arrow_fields: Vec<datafusion::arrow::datatypes::Field> = tbl
@@ -717,7 +711,7 @@ impl RorisQueryHandler {
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
-                drop(catalog);
+                let _ = catalog;
                 let catalog = &self.catalog;
                 if let Some(mut table) = catalog.get_table(db, &stmt.table) {
                     table.properties.insert(
@@ -747,7 +741,7 @@ impl RorisQueryHandler {
         let db = stmt.database.as_deref().unwrap_or(&current_db);
         match catalog.get_table(db, &stmt.table) {
             Some(_) => {
-                drop(catalog);
+                let _ = catalog;
                 let catalog = &self.catalog;
                 if let Some(mut table) = catalog.get_table(db, &stmt.table) {
                     let key = format!("__index_{}", stmt.index_name);
@@ -782,7 +776,7 @@ impl RorisQueryHandler {
         if catalog.get_table(db, &stmt.name).is_some() && !stmt.if_not_exists {
             return Err(format!("Table '{}.{}' already exists", db, stmt.name));
         }
-        drop(catalog);
+        let _ = catalog;
         let catalog = &self.catalog;
         let columns: Vec<TableColumn> = stmt
             .columns
@@ -842,7 +836,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn alter_materialized_view(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::AlterMaterializedViewStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -860,7 +854,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn refresh_materialized_view(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::RefreshMaterializedViewStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -880,7 +874,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn create_repository(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::CreateRepositoryStmt,
     ) -> Result<QueryResult, String> {
         // Extract path from properties
@@ -911,7 +905,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_repository(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::DropRepositoryStmt,
     ) -> Result<QueryResult, String> {
         match self.backup_manager.drop_repository(&stmt.name) {
@@ -937,7 +931,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn backup_database(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::BackupDatabaseStmt,
     ) -> Result<QueryResult, String> {
         let msg = self.backup_manager.backup_database(
@@ -957,7 +951,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn restore_database(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::RestoreDatabaseStmt,
     ) -> Result<QueryResult, String> {
         let msg = self.backup_manager.restore_database(
@@ -1005,7 +999,7 @@ impl RorisQueryHandler {
                 if catalog.get_table(db, table).is_none() {
                     return Err(format!("Unknown table '{}.{}'", db, table));
                 }
-                drop(catalog);
+                let _ = catalog;
                 let catalog = &self.catalog;
                 if let Some(mut tbl) = catalog.get_table(db, table) {
                     let key = "__colocate_groups".to_string();
@@ -1099,7 +1093,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn create_catalog(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::CreateCatalogStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1113,7 +1107,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_catalog(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::DropCatalogStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1127,7 +1121,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn refresh_catalog(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::RefreshCatalogStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1202,7 +1196,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn analyze_table(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::AnalyzeTableStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1220,7 +1214,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_stats(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::DropStatsStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1240,7 +1234,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn create_function(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::CreateFunctionStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1254,7 +1248,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_function(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::DropFunctionStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1270,7 +1264,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn create_job(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::CreateJobStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1282,7 +1276,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn drop_job_stmt(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn drop_job_stmt(&self, _conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Status".to_string(),
@@ -1296,7 +1290,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn install_plugin(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::InstallPluginStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1310,7 +1304,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn uninstall_plugin(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1326,7 +1320,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn recover_database(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1340,7 +1334,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn recover_table(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         database: String,
         table: String,
     ) -> Result<QueryResult, String> {
@@ -1358,7 +1352,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn recover_partition(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         database: String,
         table: String,
         partition: String,
@@ -1379,7 +1373,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_catalog_recycle_bin(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         filter: Option<String>,
     ) -> Result<QueryResult, String> {
         let _ = filter;
@@ -1390,7 +1384,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn create_sql_block_rule(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::CreateSqlBlockRuleStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1407,7 +1401,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn alter_sql_block_rule(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
         _props: Vec<(String, String)>,
     ) -> Result<QueryResult, String> {
@@ -1422,7 +1416,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_sql_block_rule(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1438,7 +1432,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn create_row_policy(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         stmt: &fe_sql_parser::ast::CreateRowPolicyStmt,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1452,7 +1446,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn drop_row_policy(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
         _database: Option<String>,
         _table: String,
@@ -1470,7 +1464,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn alter_stats(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         table: String,
         _props: Vec<(String, String)>,
     ) -> Result<QueryResult, String> {
@@ -1483,7 +1477,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn kill_analyze_job(&self, conn_id: u32, id: String) -> Result<QueryResult, String> {
+    pub(crate) fn kill_analyze_job(&self, _conn_id: u32, id: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Status".to_string(),
@@ -1495,7 +1489,7 @@ impl RorisQueryHandler {
 
     // ---- Export / Task / Job stubs ----
 
-    pub(crate) fn cancel_export(&self, conn_id: u32, id: String) -> Result<QueryResult, String> {
+    pub(crate) fn cancel_export(&self, _conn_id: u32, id: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Status".to_string(),
@@ -1505,7 +1499,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn pause_job(&self, conn_id: u32, name: String) -> Result<QueryResult, String> {
+    pub(crate) fn pause_job(&self, _conn_id: u32, name: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Status".to_string(),
@@ -1517,7 +1511,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn resume_job_stmt(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1529,7 +1523,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn cancel_task(&self, conn_id: u32, id: String) -> Result<QueryResult, String> {
+    pub(crate) fn cancel_task(&self, _conn_id: u32, id: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Status".to_string(),

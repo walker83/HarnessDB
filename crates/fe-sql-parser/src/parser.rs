@@ -69,6 +69,7 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 ///
 /// Since SQL keywords are pure ASCII, `.to_uppercase()` preserves byte length for the
 /// keyword prefix, so byte offsets from the uppercased string are valid for the original.
+#[allow(dead_code)]
 fn keyword_split<'a>(sql: &'a str, keyword_len: usize) -> (String, &'a str) {
     let upper = sql.to_uppercase();
     let remainder = if keyword_len <= sql.len() {
@@ -1085,7 +1086,7 @@ fn parse_show_status(sql: &str) -> Result<Vec<Statement>, ParseError> {
 fn parse_show_index(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
     let sql_upper = sql.to_uppercase();
-    let after_show_upper = sql_upper
+    let _after_show_upper = sql_upper
         .strip_prefix("SHOW INDEX")
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
@@ -2896,7 +2897,7 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Result<Expr, ParseError> {
             negated,
         }),
         sqlparser::ast::Expr::Case {
-            operand,
+            operand: _,
             conditions,
             results,
             else_result,

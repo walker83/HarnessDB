@@ -4,7 +4,7 @@ use ::types::DataType;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::kernels::cmp;
 use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
-use fe_sql_parser::ast::{BinaryOp, Expr, LiteralValue, UnaryOp};
+use fe_sql_parser::ast::{BinaryOp, UnaryOp};
 use mysql_protocol::QueryResult;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 

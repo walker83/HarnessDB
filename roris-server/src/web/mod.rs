@@ -4,7 +4,6 @@ pub mod routes;
 
 use crate::connection_tracker::ConnectionTracker;
 use crate::handler_struct::RorisQueryHandler;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;

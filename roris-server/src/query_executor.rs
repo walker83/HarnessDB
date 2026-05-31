@@ -1,14 +1,11 @@
-use std::sync::Arc;
 
 use ::types::DataType as RorisDataType;
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::DataType as ADT;
 use fe_sql_parser::Statement;
 use mysql_protocol::QueryResult;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 
 use crate::handler_struct::RorisQueryHandler;
-use crate::utils::{like_match, parse_data_type};
+use crate::utils::like_match;
 
 /// Convert internal DataType to MySQL-compatible type string for DESCRIBE/SHOW CREATE TABLE
 fn datatype_to_mysql_type(dt: &RorisDataType) -> String {
@@ -221,7 +218,7 @@ impl RorisQueryHandler {
 
     // ---- show_* methods ----
 
-    pub(crate) fn show_databases(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_databases(&self, _conn_id: u32) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         let databases = catalog.list_databases();
         let rows: Vec<Vec<Option<String>>> =
@@ -442,7 +439,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_create_database(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         db: &str,
     ) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
@@ -686,7 +683,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_processlist(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         _full: bool,
     ) -> Result<QueryResult, String> {
         let conns = self.connection_tracker.list();
@@ -1026,7 +1023,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn admin_show_replica(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn admin_show_replica(&self, _conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![
                 ColumnDef {
@@ -1153,7 +1150,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_alter_table(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         _db: Option<String>,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1167,7 +1164,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_backends(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_backends(&self, _conn_id: u32) -> Result<QueryResult, String> {
         let backends = vec![(
             "1".to_string(),
             "127.0.0.1".to_string(),
@@ -1220,7 +1217,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_frontends(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_frontends(&self, _conn_id: u32) -> Result<QueryResult, String> {
         let frontends = vec![(
             "fe1".to_string(),
             "127.0.0.1".to_string(),
@@ -1273,7 +1270,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_table_id(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_table_id(&self, _conn_id: u32) -> Result<QueryResult, String> {
         let catalog = &self.catalog;
         let mut rows = Vec::new();
 
@@ -1310,7 +1307,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_partition_id(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_partition_id(&self, _conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "PartitionId".to_string(),
@@ -1322,7 +1319,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_dynamic_partition_tables(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
@@ -1413,7 +1410,7 @@ impl RorisQueryHandler {
         }
     }
 
-    pub(crate) fn show_repositories(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_repositories(&self, _conn_id: u32) -> Result<QueryResult, String> {
         let repos = self.backup_manager.list_repositories();
         let rows: Vec<Vec<Option<String>>> = repos
             .iter()
@@ -1442,7 +1439,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_users(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_users(&self, _conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "User".to_string(),
@@ -1452,7 +1449,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_catalogs(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_catalogs(&self, _conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Catalog".to_string(),
@@ -1462,7 +1459,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_export(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_export(&self, _conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Export".to_string(),
@@ -1474,7 +1471,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_functions(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         pattern: Option<String>,
     ) -> Result<QueryResult, String> {
         let _ = pattern;
@@ -1489,7 +1486,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_create_function(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1512,7 +1509,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn describe_function(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         name: String,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1526,7 +1523,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_analyze(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         id: Option<String>,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1538,7 +1535,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_stats(&self, conn_id: u32, table: String) -> Result<QueryResult, String> {
+    pub(crate) fn show_stats(&self, _conn_id: u32, table: String) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Table".to_string(),
@@ -1550,7 +1547,7 @@ impl RorisQueryHandler {
 
     pub(crate) fn show_table_stats(
         &self,
-        conn_id: u32,
+        _conn_id: u32,
         table: String,
     ) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
@@ -1562,7 +1559,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_plugins(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_plugins(&self, _conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "Plugin".to_string(),
@@ -1572,7 +1569,7 @@ impl RorisQueryHandler {
         ))
     }
 
-    pub(crate) fn show_catalog_recycle_bin(&self, conn_id: u32) -> Result<QueryResult, String> {
+    pub(crate) fn show_catalog_recycle_bin(&self, _conn_id: u32) -> Result<QueryResult, String> {
         Ok(QueryResult::with_rows(
             vec![ColumnDef {
                 name: "RecycleBin".to_string(),
