@@ -4,7 +4,7 @@
 
 ## Version
 
-- **Current**: 0.3.1
+- **Current**: 0.3.2
 - **Repository**: https://github.com/walker83/RorisDB
 
 ## Build
