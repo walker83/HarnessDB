@@ -277,6 +277,76 @@ fn test_scalar_to_text_bytes() {
     );
 }
 
+// Regression test for GitHub issue #1: DATE and DATETIME types must produce
+// correct text representations instead of the hardcoded "1970-01-01".
+#[test]
+fn test_scalar_to_text_bytes_date() {
+    // 2026-05-29: days since epoch = 20603
+    // Verify round-trip: epoch day 0 → "1970-01-01"
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::Date(0)),
+        Some(b"1970-01-01".to_vec())
+    );
+    // 2024-01-15: 19738 days since epoch
+    let days_2024_01_15 = chrono::NaiveDate::from_ymd_opt(2024, 1, 15)
+        .unwrap()
+        .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days() as i32;
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::Date(days_2024_01_15)),
+        Some(b"2024-01-15".to_vec())
+    );
+    // 2026-05-29
+    let days_2026_05_29 = chrono::NaiveDate::from_ymd_opt(2026, 5, 29)
+        .unwrap()
+        .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days() as i32;
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::Date(days_2026_05_29)),
+        Some(b"2026-05-29".to_vec())
+    );
+    // Leap year date: 2024-02-29
+    let days_leap = chrono::NaiveDate::from_ymd_opt(2024, 2, 29)
+        .unwrap()
+        .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days() as i32;
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::Date(days_leap)),
+        Some(b"2024-02-29".to_vec())
+    );
+}
+
+#[test]
+fn test_scalar_to_text_bytes_datetime() {
+    // Epoch → "1970-01-01 00:00:00"
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::DateTime(0)),
+        Some(b"1970-01-01 00:00:00".to_vec())
+    );
+    // 2026-05-31 10:30:00 UTC in microseconds since epoch
+    let dt = chrono::NaiveDate::from_ymd_opt(2026, 5, 31)
+        .unwrap()
+        .and_hms_opt(10, 30, 0)
+        .unwrap()
+        .and_utc();
+    let micros = dt.timestamp() * 1_000_000;
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::DateTime(micros)),
+        Some(b"2026-05-31 10:30:00".to_vec())
+    );
+    // 2024-02-29 23:59:59 UTC
+    let dt2 = chrono::NaiveDate::from_ymd_opt(2024, 2, 29)
+        .unwrap()
+        .and_hms_opt(23, 59, 59)
+        .unwrap()
+        .and_utc();
+    let micros2 = dt2.timestamp() * 1_000_000;
+    assert_eq!(
+        scalar_to_text_bytes(&ScalarValue::DateTime(micros2)),
+        Some(b"2024-02-29 23:59:59".to_vec())
+    );
+}
+
 // ===========================================================================
 // Charset tests
 // ===========================================================================

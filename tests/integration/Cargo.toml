@@ -13,3 +13,4 @@ mysql-protocol = { workspace = true }
 bytes = { workspace = true }
 mysql = "28"
 lazy_static = "1"
+chrono = { workspace = true }

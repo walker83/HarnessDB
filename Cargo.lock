@@ -467,7 +467,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "be-rocks"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "rocksdb",
  "serde",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "serde",
@@ -1686,7 +1686,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fe-backup"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arrow",
  "chrono",
@@ -1701,7 +1701,7 @@ dependencies = [
 
 [[package]]
 name = "fe-catalog"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "be-rocks",
@@ -1721,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "fe-common"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "common",
  "serde",
@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "fe-config"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1743,7 +1743,7 @@ dependencies = [
 
 [[package]]
 name = "fe-datafusion"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "fe-monitor"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "serde",
@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "fe-sql-parser"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "common",
  "datafusion",
@@ -1786,7 +1786,7 @@ dependencies = [
 
 [[package]]
 name = "fe-storage"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arrow",
  "arrow-arith",
@@ -2391,9 +2391,10 @@ checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
 name = "integration-tests"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
+ "chrono",
  "common",
  "fe-catalog",
  "fe-sql-parser",
@@ -2685,7 +2686,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "maxcompute-protocol"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2806,10 +2807,11 @@ dependencies = [
 
 [[package]]
 name = "mysql-protocol"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "bytes",
+ "chrono",
  "common",
  "dashmap",
  "hex",
@@ -3192,7 +3194,7 @@ dependencies = [
 
 [[package]]
 name = "pg-protocol"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3632,7 +3634,7 @@ dependencies = [
 
 [[package]]
 name = "roris-server"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -3988,7 +3990,7 @@ dependencies = [
 
 [[package]]
 name = "sql-translators"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "regex",
  "thiserror 2.0.18",
@@ -4425,7 +4427,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tpch-bench"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4532,7 +4534,7 @@ checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
 
 [[package]]
 name = "types"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "criterion",

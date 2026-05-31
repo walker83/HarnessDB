@@ -695,8 +695,19 @@ pub fn scalar_to_text_bytes(val: &ScalarValue) -> Option<Vec<u8>> {
             let s = format!("{f}");
             s.into_bytes()
         }),
-        ScalarValue::Date(_days) => Some(b"1970-01-01".to_vec()),
-        ScalarValue::DateTime(_micros) => Some(b"1970-01-01 00:00:00".to_vec()),
+        ScalarValue::Date(days) => {
+            let base = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+            let date = base + chrono::Duration::days(*days as i64);
+            Some(date.format("%Y-%m-%d").to_string().into_bytes())
+        }
+        ScalarValue::DateTime(micros) => {
+            let secs = *micros / 1_000_000;
+            let nsecs = ((*micros % 1_000_000).abs() * 1000) as u32;
+            match chrono::DateTime::from_timestamp(secs, nsecs) {
+                Some(dt) => Some(dt.format("%Y-%m-%d %H:%M:%S").to_string().into_bytes()),
+                None => Some(b"1970-01-01 00:00:00".to_vec()),
+            }
+        }
         ScalarValue::String(s) => Some(s.clone().into_bytes()),
         ScalarValue::Binary(b) => Some(b.clone()),
         ScalarValue::Array(_) => Some(b"[]".to_vec()),
