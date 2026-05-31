@@ -728,6 +728,14 @@ pub(crate) fn build_arrow_array_from_exprs(
                 .iter()
                 .map(|e| match e {
                     Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i8),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(*f as i8),
+                    Expr::Literal(LiteralValue::String(s)) => s
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .parse::<f64>()
+                        .ok()
+                        .map(|v| v as i8),
                     Expr::Literal(LiteralValue::Null) => None,
                     Expr::UnaryOp {
                         op: UnaryOp::Negate,
@@ -747,6 +755,14 @@ pub(crate) fn build_arrow_array_from_exprs(
                 .iter()
                 .map(|e| match e {
                     Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i16),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(*f as i16),
+                    Expr::Literal(LiteralValue::String(s)) => s
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .parse::<f64>()
+                        .ok()
+                        .map(|v| v as i16),
                     Expr::Literal(LiteralValue::Null) => None,
                     Expr::UnaryOp {
                         op: UnaryOp::Negate,
@@ -766,6 +782,14 @@ pub(crate) fn build_arrow_array_from_exprs(
                 .iter()
                 .map(|e| match e {
                     Expr::Literal(LiteralValue::Int64(n)) => Some(*n as i32),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(*f as i32),
+                    Expr::Literal(LiteralValue::String(s)) => s
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .parse::<f64>()
+                        .ok()
+                        .map(|v| v as i32),
                     Expr::Literal(LiteralValue::Null) => None,
                     Expr::UnaryOp {
                         op: UnaryOp::Negate,
@@ -785,6 +809,14 @@ pub(crate) fn build_arrow_array_from_exprs(
                 .iter()
                 .map(|e| match e {
                     Expr::Literal(LiteralValue::Int64(n)) => Some(*n),
+                    Expr::Literal(LiteralValue::Float64(f)) => Some(*f as i64),
+                    Expr::Literal(LiteralValue::String(s)) => s
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .parse::<f64>()
+                        .ok()
+                        .map(|v| v as i64),
                     Expr::Literal(LiteralValue::Null) => None,
                     Expr::UnaryOp {
                         op: UnaryOp::Negate,
