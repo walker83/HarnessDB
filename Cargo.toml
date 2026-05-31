@@ -142,3 +142,10 @@ postgres-types = "0.2"
 
 # Parquet support
 parquet = "55"
+
+[profile.release]
+strip = true          # Remove debug symbols
+lto = true            # Link-time optimization
+codegen-units = 1     # Better optimization (slower compile)
+opt-level = "z"       # Optimize for size
+panic = "abort"       # Smaller panic handling
