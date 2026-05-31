@@ -653,7 +653,8 @@ impl Connection {
             self.write_all(&eof).await?;
             self.seq_id = self.seq_id.wrapping_add(1);
         } else {
-            let ok = packet::make_ok_packet(
+            // DEPRECATE_EOF: result-set terminator uses 0xFE header (not 0x00)
+            let ok = packet::make_result_set_eof_ok_packet(
                 self.seq_id,
                 result.rows.len() as u64,
                 0,
@@ -1156,7 +1157,8 @@ impl Connection {
             self.write_all(&eof).await?;
             self.seq_id = self.seq_id.wrapping_add(1);
         } else {
-            let ok = packet::make_ok_packet(
+            // DEPRECATE_EOF: result-set terminator uses 0xFE header (not 0x00)
+            let ok = packet::make_result_set_eof_ok_packet(
                 self.seq_id,
                 result.rows.len() as u64,
                 0,

@@ -519,6 +519,25 @@ pub fn make_eof_packet(seq_id: u8, warning_count: u16, status_flags: u16) -> Byt
     packet
 }
 
+/// Build the result-set terminator when CLIENT_DEPRECATE_EOF IS set.
+/// This is an OK-style packet but with 0xFE header byte (not 0x00).
+pub fn make_result_set_eof_ok_packet(
+    seq_id: u8,
+    affected_rows: u64,
+    last_insert_id: u64,
+    status_flags: u16,
+    warning_count: u16,
+) -> BytesMut {
+    let mut pb = PacketBuilder::new(seq_id);
+    pb.put_u8(0xFE); // EOF/OK header byte (distinguished from old 5-byte EOF by length)
+    pb.lenenc_int(affected_rows);
+    pb.lenenc_int(last_insert_id);
+    pb.put_u16_le(status_flags);
+    pb.put_u16_le(warning_count);
+    let (packet, _) = pb.finish();
+    packet
+}
+
 // ---------------------------------------------------------------------------
 // Column definition packet (COM_QUERY response column)
 // ---------------------------------------------------------------------------
