@@ -221,6 +221,15 @@ impl PacketBuilder {
         buf.put(self.payload);
         (buf, self.seq_id.wrapping_add(1))
     }
+
+    /// Write the packet directly into an existing buffer, avoiding an extra allocation.
+    /// Returns the next sequence id.
+    pub fn write_to(self, buf: &mut BytesMut) -> u8 {
+        let len = self.payload.len();
+        write_packet_header(buf, len, self.seq_id);
+        buf.put(self.payload);
+        self.seq_id.wrapping_add(1)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -697,6 +706,73 @@ pub fn encode_text_row(seq_id: u8, values: &[Option<Vec<u8>>]) -> BytesMut {
     }
     let (packet, _) = pb.finish();
     packet
+}
+
+/// Encode a text-protocol row directly into an existing buffer.
+/// Single-pass: writes payload first, then inserts header at the beginning.
+/// Returns next seq_id.
+pub fn encode_text_row_into(seq_id: u8, values: &[Option<&[u8]>], buf: &mut BytesMut) -> u8 {
+    // Remember where this packet starts
+    let packet_start = buf.len();
+
+    // Reserve space for 4-byte header (will fill in later)
+    buf.reserve(4 + values.len() * 32); // rough estimate
+    buf.extend_from_slice(&[0, 0, 0, seq_id]);
+
+    // Write payload directly
+    for val in values {
+        match val {
+            Some(data) => {
+                encode_lenenc_int(buf, data.len() as u64);
+                buf.put_slice(data);
+            }
+            None => {
+                buf.put_u8(0xFB);
+            }
+        }
+    }
+
+    // Calculate payload length and fill in header
+    let payload_len = buf.len() - packet_start - 4;
+    buf[packet_start] = (payload_len & 0xFF) as u8;
+    buf[packet_start + 1] = ((payload_len >> 8) & 0xFF) as u8;
+    buf[packet_start + 2] = ((payload_len >> 16) & 0xFF) as u8;
+
+    seq_id.wrapping_add(1)
+}
+
+/// Encode a text-protocol row from String slice directly into buffer.
+/// Avoids intermediate conversion to byte slices.
+/// Returns next seq_id.
+pub fn encode_text_row_strings_into(seq_id: u8, values: &[Option<String>], buf: &mut BytesMut) -> u8 {
+    // Remember where this packet starts
+    let packet_start = buf.len();
+
+    // Reserve space for 4-byte header + rough estimate of payload
+    buf.reserve(4 + values.len() * 32);
+    buf.extend_from_slice(&[0, 0, 0, seq_id]);
+
+    // Write payload directly from String refs
+    for val in values {
+        match val {
+            Some(s) => {
+                let data = s.as_bytes();
+                encode_lenenc_int(buf, data.len() as u64);
+                buf.put_slice(data);
+            }
+            None => {
+                buf.put_u8(0xFB);
+            }
+        }
+    }
+
+    // Calculate payload length and fill in header
+    let payload_len = buf.len() - packet_start - 4;
+    buf[packet_start] = (payload_len & 0xFF) as u8;
+    buf[packet_start + 1] = ((payload_len >> 8) & 0xFF) as u8;
+    buf[packet_start + 2] = ((payload_len >> 16) & 0xFF) as u8;
+
+    seq_id.wrapping_add(1)
 }
 
 /// Encode a ScalarValue to text protocol bytes.

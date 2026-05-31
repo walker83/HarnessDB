@@ -85,6 +85,8 @@ impl QueryHandler for RorisQueryHandler {
                 // Other DML (like SELECT) goes to DataFusion
                 // Create a per-query context with the correct default schema for this connection
                 let current_db = self.get_session(conn_id);
+
+                let datafusion_start = Instant::now();
                 let result = self.run_datafusion({
                     let catalog = self.catalog.clone();
                     let storage = self.storage.clone();
@@ -110,10 +112,19 @@ impl QueryHandler for RorisQueryHandler {
                         })
                     }
                 });
+                let datafusion_ms = datafusion_start.elapsed().as_millis();
 
                 match result {
                     Ok((batches, df_schema)) => {
-                        record_batches_to_query_result_with_df_schema(&batches, &df_schema)
+                        let convert_start = Instant::now();
+                        let query_result = record_batches_to_query_result_with_df_schema(&batches, &df_schema);
+                        let convert_ms = convert_start.elapsed().as_millis();
+                        tracing::info!(
+                            "Query timing: DataFusion={}ms, Arrow->String={}ms, rows={}",
+                            datafusion_ms, convert_ms,
+                            query_result.rows.len()
+                        );
+                        query_result
                     }
                     Err(e) => {
                         tracing::error!("DataFusion error: {}", e);

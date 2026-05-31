@@ -112,6 +112,10 @@ hex = "0.4"
 # Testing
 mockall = "0.13"
 
+# Zero-allocation number formatting (performance)
+itoa = "1.0"
+ryu = "1.0"
+
 # Async traits
 async-trait = "0.1"
 
@@ -147,5 +151,5 @@ parquet = "55"
 strip = true          # Remove debug symbols
 lto = true            # Link-time optimization
 codegen-units = 1     # Better optimization (slower compile)
-opt-level = "z"       # Optimize for size
+opt-level = 2         # Balance between speed and size
 panic = "abort"       # Smaller panic handling

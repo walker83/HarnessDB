@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ::types::DataType;
+use bytes::BytesMut;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::kernels::cmp;
 use datafusion::arrow::datatypes::{DataType as ADT, TimeUnit};
@@ -314,6 +315,227 @@ pub(crate) fn arrow_value_to_string(
             }
         }
     }
+}
+
+/// Write an Arrow array value directly to a MySQL protocol buffer as lenenc bytes.
+/// Returns true if value was written, false if null.
+/// Uses zero-allocation formatting for numeric types via itoa/ryu.
+pub(crate) fn write_arrow_value_to_mysql_buf(
+    col: &datafusion::arrow::array::ArrayRef,
+    idx: usize,
+    buf: &mut BytesMut,
+) -> bool {
+    use bytes::BufMut;
+
+    // NullArray or null value
+    if matches!(col.data_type(), ADT::Null) || col.is_null(idx) {
+        buf.put_u8(0xFB); // MySQL NULL marker
+        return false;
+    }
+
+    // Use a stack buffer for small values (most numeric types)
+    let mut stack_buf: [u8; 64] = [0; 64];
+    let value_bytes: &[u8] = match col.data_type() {
+        ADT::Boolean => {
+            let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+            if arr.value(idx) { b"1" } else { b"0" }
+        }
+        ADT::Int8 => {
+            let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Int16 => {
+            let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Int32 => {
+            let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Int64 => {
+            let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::UInt8 => {
+            let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::UInt16 => {
+            let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::UInt32 => {
+            let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::UInt64 => {
+            let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
+            let mut itoa_buf = itoa::Buffer::new();
+            let s = itoa_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Float32 => {
+            let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
+            let mut ryu_buf = ryu::Buffer::new();
+            let s = ryu_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Float64 => {
+            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+            let mut ryu_buf = ryu::Buffer::new();
+            let s = ryu_buf.format(arr.value(idx));
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Utf8 => {
+            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            arr.value(idx).as_bytes()
+        }
+        ADT::LargeUtf8 => {
+            let arr = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            arr.value(idx).as_bytes()
+        }
+        ADT::Utf8View => {
+            let arr = col.as_any().downcast_ref::<StringViewArray>().unwrap();
+            arr.value(idx).as_bytes()
+        }
+        ADT::Date32 => {
+            let arr = col.as_any().downcast_ref::<Date32Array>().unwrap();
+            let days = arr.value(idx);
+            let base = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+            let date = base + chrono::Duration::days(days as i64);
+            let s = date.format("%Y-%m-%d").to_string();
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Timestamp(TimeUnit::Second, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let dt = chrono::DateTime::from_timestamp(ts, 0).unwrap_or_default();
+            let s = dt.format("%Y-%m-%d %H:%M:%S").to_string();
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Timestamp(TimeUnit::Millisecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let dt = chrono::DateTime::from_timestamp_millis(ts).unwrap_or_default();
+            let s = dt.format("%Y-%m-%d %H:%M:%S").to_string();
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Timestamp(TimeUnit::Microsecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let dt = chrono::DateTime::from_timestamp_micros(ts).unwrap_or_default();
+            let s = dt.format("%Y-%m-%d %H:%M:%S").to_string();
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        ADT::Timestamp(TimeUnit::Nanosecond, _) => {
+            let arr = col.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            let ts = arr.value(idx);
+            let secs = ts / 1_000_000_000;
+            let nsecs = (ts % 1_000_000_000) as u32;
+            let s = match chrono::DateTime::from_timestamp(secs, nsecs) {
+                Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                None => "1970-01-01 00:00:00".to_string(),
+            };
+            let len = s.len();
+            stack_buf[..len].copy_from_slice(s.as_bytes());
+            &stack_buf[..len]
+        }
+        _ => {
+            // Fallback: use arrow_value_to_string (allocates)
+            if let Some(s) = arrow_value_to_string(col, idx) {
+                let len = s.len();
+                if len <= stack_buf.len() {
+                    stack_buf[..len].copy_from_slice(s.as_bytes());
+                    // Can't return reference to stack_buf here due to lifetime
+                    // So we'll handle this case differently below
+                    write_lenenc_bytes_to_buf(buf, s.as_bytes());
+                    return true;
+                } else {
+                    write_lenenc_bytes_to_buf(buf, s.as_bytes());
+                    return true;
+                }
+            } else {
+                buf.put_u8(0xFB);
+                return false;
+            }
+        }
+    };
+
+    // Write lenenc int + value bytes
+    write_lenenc_bytes_to_buf(buf, value_bytes);
+    true
+}
+
+/// Write lenenc int followed by bytes to buffer.
+#[inline]
+fn write_lenenc_bytes_to_buf(buf: &mut BytesMut, data: &[u8]) {
+    use bytes::BufMut;
+    let len = data.len();
+    if len < 251 {
+        buf.put_u8(len as u8);
+    } else if len < 0x1_0000 {
+        buf.put_u8(0xFC);
+        buf.put_u8(len as u8);
+        buf.put_u8((len >> 8) as u8);
+    } else if len < 0x1_0000_0000 {
+        buf.put_u8(0xFD);
+        buf.put_u8(len as u8);
+        buf.put_u8((len >> 8) as u8);
+        buf.put_u8((len >> 16) as u8);
+    } else {
+        buf.put_u8(0xFE);
+        buf.put_u8(len as u8);
+        buf.put_u8((len >> 8) as u8);
+        buf.put_u8((len >> 16) as u8);
+        buf.put_u8((len >> 24) as u8);
+        buf.put_u8((len >> 32) as u8);
+        buf.put_u8((len >> 40) as u8);
+        buf.put_u8((len >> 48) as u8);
+        buf.put_u8((len >> 56) as u8);
+    }
+    buf.put_slice(data);
 }
 
 pub(crate) fn expr_to_string_value(expr: &fe_sql_parser::ast::Expr) -> Option<String> {

@@ -41,6 +41,8 @@ pub struct Connection {
     prepared_statements: Vec<(String, u16, u16)>,
     next_stmt_id: u32,
     read_buf: BytesMut,
+    /// Write buffer for batching TCP writes (avoids flush per row)
+    write_buf: BytesMut,
     /// Authentication timeout in seconds
     auth_timeout_secs: u64,
     /// User credentials for password verification
@@ -70,6 +72,7 @@ impl Connection {
             prepared_statements: Vec::new(),
             next_stmt_id: 1,
             read_buf: BytesMut::with_capacity(16 * 1024),
+            write_buf: BytesMut::with_capacity(64 * 1024),
             auth_timeout_secs,
             credentials,
         }
@@ -606,6 +609,10 @@ impl Connection {
     // -----------------------------------------------------------------------
 
     async fn send_result_set(&mut self, result: QueryResult) -> std::io::Result<()> {
+        use std::time::Instant;
+        let send_start = Instant::now();
+        let row_count = result.rows.len();
+
         // If no columns, it's an OK-style result (e.g. DDL)
         if result.columns.is_empty() {
             self.send_ok(0, 0).await?;
@@ -614,43 +621,45 @@ impl Connection {
 
         let use_eof = (self.capability_flags & CapabilityFlags::DEPRECATE_EOF) == 0;
 
+        // Clear and pre-allocate write buffer based on estimated result size
+        self.write_buf.clear();
+        let estimated_size = result.rows.len() * result.columns.len() * 20 + 4096;
+        self.write_buf.reserve(estimated_size.min(16 * 1024 * 1024)); // Cap at 16MB
+
+        let encode_start = Instant::now();
+
         // 1. Column count packet (lenenc int)
         let mut pb = packet::PacketBuilder::new(self.seq_id);
         pb.lenenc_int(result.columns.len() as u64);
         let (pkt, next) = pb.finish();
-        self.write_all(&pkt).await?;
+        self.write_buf.extend_from_slice(&pkt);
         self.seq_id = next;
 
         // 2. Column definition packets
         let columns: Vec<Column> = result.columns.iter().map(|c| c.into()).collect();
         for col in &columns {
             let pkt = col.encode(self.seq_id);
-            self.write_all(&pkt).await?;
+            self.write_buf.extend_from_slice(&pkt);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
 
         // 3. EOF (if not deprecated)
         if use_eof {
             let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
-            self.write_all(&eof).await?;
+            self.write_buf.extend_from_slice(&eof);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
 
-        // 4. Row data packets
+        // 4. Row data packets - batch all rows into buffer
         for row in &result.rows {
-            let values: Vec<Option<Vec<u8>>> = row
-                .iter()
-                .map(|v| v.as_ref().map(|s| s.as_bytes().to_vec()))
-                .collect();
-            let pkt = packet::encode_text_row(self.seq_id, &values);
-            self.write_all(&pkt).await?;
-            self.seq_id = self.seq_id.wrapping_add(1);
+            // Use the direct String slice version - no intermediate Vec allocation
+            self.seq_id = packet::encode_text_row_strings_into(self.seq_id, row, &mut self.write_buf);
         }
 
         // 5. Final EOF or OK
         if use_eof {
             let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
-            self.write_all(&eof).await?;
+            self.write_buf.extend_from_slice(&eof);
             self.seq_id = self.seq_id.wrapping_add(1);
         } else {
             // DEPRECATE_EOF: result-set terminator uses 0xFE header (not 0x00)
@@ -661,8 +670,34 @@ impl Connection {
                 packet::SERVER_STATUS_AUTOCOMMIT,
                 0,
             );
-            self.write_all(&ok).await?;
+            self.write_buf.extend_from_slice(&ok);
             self.seq_id = self.seq_id.wrapping_add(1);
+        }
+
+        // Write in chunks to avoid overwhelming TCP buffers
+        let encode_ms = encode_start.elapsed().as_millis();
+        let write_start = Instant::now();
+
+        // Write in 1MB chunks for better TCP flow control
+        const CHUNK_SIZE: usize = 1024 * 1024;
+        let mut offset = 0;
+        while offset < self.write_buf.len() {
+            let end = (offset + CHUNK_SIZE).min(self.write_buf.len());
+            self.stream.write_all(&self.write_buf[offset..end]).await?;
+            offset = end;
+        }
+        self.stream.flush().await?;
+
+        let write_ms = write_start.elapsed().as_millis();
+        let total_ms = send_start.elapsed().as_millis();
+        let buf_size = self.write_buf.len();
+        self.write_buf.clear();
+
+        if row_count > 1000 {
+            tracing::info!(
+                "send_result_set timing: encode={}ms, write+flush={}ms, total={}ms, buf_size={}bytes, rows={}",
+                encode_ms, write_ms, total_ms, buf_size, row_count
+            );
         }
 
         Ok(())
