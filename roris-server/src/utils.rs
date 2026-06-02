@@ -1069,7 +1069,14 @@ pub(crate) fn build_arrow_array_from_exprs(
                         op: UnaryOp::Negate,
                         expr,
                     } => match expr.as_ref() {
-                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i8)),
+                        Expr::Literal(LiteralValue::Int64(n)) => {
+                            let negated = n.checked_neg().unwrap_or(i8::MIN as i64);
+                            if negated >= i8::MIN as i64 && negated <= i8::MAX as i64 {
+                                Some(negated as i8)
+                            } else {
+                                Some(i8::MIN)
+                            }
+                        }
                         Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i8)),
                         _ => None,
                     },
@@ -1096,7 +1103,14 @@ pub(crate) fn build_arrow_array_from_exprs(
                         op: UnaryOp::Negate,
                         expr,
                     } => match expr.as_ref() {
-                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i16)),
+                        Expr::Literal(LiteralValue::Int64(n)) => {
+                            let negated = n.checked_neg().unwrap_or(i16::MIN as i64);
+                            if negated >= i16::MIN as i64 && negated <= i16::MAX as i64 {
+                                Some(negated as i16)
+                            } else {
+                                Some(i16::MIN)
+                            }
+                        }
                         Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i16)),
                         _ => None,
                     },
@@ -1123,7 +1137,19 @@ pub(crate) fn build_arrow_array_from_exprs(
                         op: UnaryOp::Negate,
                         expr,
                     } => match expr.as_ref() {
-                        Expr::Literal(LiteralValue::Int64(n)) => Some(-(*n as i32)),
+                        Expr::Literal(LiteralValue::Int64(n)) => {
+                            // Handle negation carefully to avoid overflow
+                            // The SQL parser represents -2147483648 as UnaryOp(Negate, Literal(2147483648))
+                            // We need to handle this specially since 2147483648 > i32::MAX
+                            let negated = n.checked_neg().unwrap_or(i32::MIN as i64);
+                            // Check if the result fits in i32
+                            if negated >= i32::MIN as i64 && negated <= i32::MAX as i64 {
+                                Some(negated as i32)
+                            } else {
+                                // Overflow case: this is -2147483648
+                                Some(i32::MIN)
+                            }
+                        }
                         Expr::Literal(LiteralValue::Float64(f)) => Some(-(*f as i32)),
                         _ => None,
                     },

@@ -174,4 +174,4 @@ strip = true          # Remove debug symbols
 lto = true            # Link-time optimization
 codegen-units = 1     # Better optimization (slower compile)
 opt-level = 3         # Optimize for speed (was 2)
-panic = "abort"       # Smaller panic handling
+panic = "unwind"      # Allow panic unwinding for error recovery (was "abort")

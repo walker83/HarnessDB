@@ -298,11 +298,25 @@ pub fn create_group_concat_udf() -> AggregateUDF {
     #[derive(Debug)]
     struct GroupConcatAccumulator {
         values: Vec<String>,
+        seen: std::collections::HashSet<String>, // For DISTINCT support
+        is_distinct: bool,
     }
 
     impl GroupConcatAccumulator {
         fn new() -> Self {
-            Self { values: Vec::new() }
+            Self {
+                values: Vec::new(),
+                seen: std::collections::HashSet::new(),
+                is_distinct: false,
+            }
+        }
+
+        fn new_distinct() -> Self {
+            Self {
+                values: Vec::new(),
+                seen: std::collections::HashSet::new(),
+                is_distinct: true,
+            }
         }
     }
 
@@ -317,7 +331,15 @@ pub fn create_group_concat_udf() -> AggregateUDF {
             })?;
             for i in 0..str_arr.len() {
                 if !str_arr.is_null(i) {
-                    self.values.push(str_arr.value(i).to_string());
+                    let val = str_arr.value(i).to_string();
+                    if self.is_distinct {
+                        // Only add if we haven't seen this value before
+                        if self.seen.insert(val.clone()) {
+                            self.values.push(val);
+                        }
+                    } else {
+                        self.values.push(val);
+                    }
                 }
             }
             Ok(())
