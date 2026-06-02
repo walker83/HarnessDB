@@ -1,6 +1,6 @@
 [package]
 name = "adb-mysql-protocol"
-version = "0.3.3"
+version = "1.0.0"
 edition = "2024"
 description = "Alibaba Cloud AnalyticDB for MySQL protocol implementation"
 

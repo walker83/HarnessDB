@@ -1,6 +1,6 @@
 [package]
 name = "mongodb-protocol"
-version = "0.3.3"
+version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "MongoDB wire protocol implementation for RorisDB - ApsaraDB MongoDB compatible"

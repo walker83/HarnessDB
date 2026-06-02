@@ -1,6 +1,6 @@
 [package]
 name = "vector-protocol"
-version = "0.3.3"
+version = "1.0.0"
 edition = "2024"
 description = "Vector database protocol implementation for RorisDB"
 

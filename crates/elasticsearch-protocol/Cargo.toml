@@ -1,6 +1,6 @@
 [package]
 name = "elasticsearch-protocol"
-version = "0.3.3"
+version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "Elasticsearch REST API implementation for RorisDB - OpenSearch compatible"
