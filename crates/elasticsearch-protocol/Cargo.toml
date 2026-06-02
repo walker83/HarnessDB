@@ -1,0 +1,24 @@
+[package]
+name = "elasticsearch-protocol"
+version = "0.3.3"
+edition = "2024"
+license = "Apache-2.0"
+description = "Elasticsearch REST API implementation for RorisDB - OpenSearch compatible"
+
+[dependencies]
+tokio = { workspace = true }
+bytes = "1"
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# HTTP server
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+url = "2"
+
+# For data storage
+dashmap = "5"
+uuid = { version = "1", features = ["v4"] }
