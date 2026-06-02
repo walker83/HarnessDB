@@ -1,0 +1,19 @@
+[package]
+name = "mongodb-protocol"
+version = "0.3.3"
+edition = "2024"
+license = "Apache-2.0"
+description = "MongoDB wire protocol implementation for RorisDB - ApsaraDB MongoDB compatible"
+
+[dependencies]
+tokio = { workspace = true }
+bytes = "1"
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bson = "2"
+
+# For data storage
+dashmap = "5"
+parking_lot = "0.12"
