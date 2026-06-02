@@ -18,6 +18,7 @@ members = [
     # Protocol compatibility (database chameleon)
     "crates/maxcompute-protocol",
     "crates/pg-protocol",
+    "crates/redis-protocol",
     "crates/sql-translators",
 
     # Metadata backend
@@ -134,6 +135,7 @@ fe-backup = { path = "crates/fe-backup" }
 mysql-protocol = { path = "crates/mysql-protocol" }
 maxcompute-protocol = { path = "crates/maxcompute-protocol" }
 pg-protocol = { path = "crates/pg-protocol" }
+redis-protocol = { path = "crates/redis-protocol" }
 sql-translators = { path = "crates/sql-translators" }
 
 # External protocol dependencies
@@ -151,5 +153,5 @@ parquet = "55"
 strip = true          # Remove debug symbols
 lto = true            # Link-time optimization
 codegen-units = 1     # Better optimization (slower compile)
-opt-level = 2         # Balance between speed and size
+opt-level = 3         # Optimize for speed (was 2)
 panic = "abort"       # Smaller panic handling

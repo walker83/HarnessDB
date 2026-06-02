@@ -37,6 +37,7 @@ fe-backup = { workspace = true }
 mysql-protocol = { workspace = true }
 maxcompute-protocol = { workspace = true }
 pg-protocol = { workspace = true }
+redis-protocol = { workspace = true }
 sql-translators = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }

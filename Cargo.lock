@@ -1004,6 +1004,19 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
+name = "dashmap"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
@@ -1078,7 +1091,7 @@ checksum = "94985e67cab97b1099db2a7af11f31a45008b282aba921c1e1d35327c212ec18"
 dependencies = [
  "arrow",
  "async-trait",
- "dashmap",
+ "dashmap 6.1.0",
  "datafusion-common",
  "datafusion-common-runtime",
  "datafusion-datasource",
@@ -1284,7 +1297,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9609d83d52ff8315283c6dad3b97566e877d8f366fab4c3297742f33dcd636c7"
 dependencies = [
  "arrow",
- "dashmap",
+ "dashmap 6.1.0",
  "datafusion-common",
  "datafusion-expr",
  "futures",
@@ -1581,7 +1594,7 @@ checksum = "3a72733766ddb5b41534910926e8da5836622316f6283307fd9fb7e19811a59c"
 dependencies = [
  "arrow",
  "async-trait",
- "dashmap",
+ "dashmap 6.1.0",
  "datafusion-common",
  "datafusion-common-runtime",
  "datafusion-execution",
@@ -1706,7 +1719,7 @@ dependencies = [
  "async-trait",
  "be-rocks",
  "common",
- "dashmap",
+ "dashmap 6.1.0",
  "fe-common",
  "mysql-protocol",
  "parking_lot",
@@ -1798,7 +1811,7 @@ dependencies = [
  "arrow-schema",
  "arrow-select",
  "async-trait",
- "dashmap",
+ "dashmap 6.1.0",
  "datafusion",
  "datafusion-datasource",
  "fe-catalog",
@@ -2695,7 +2708,7 @@ dependencies = [
  "chrono",
  "common",
  "crc32fast",
- "dashmap",
+ "dashmap 6.1.0",
  "fe-catalog",
  "fe-sql-parser",
  "flate2",
@@ -2815,7 +2828,7 @@ dependencies = [
  "bytes",
  "chrono",
  "common",
- "dashmap",
+ "dashmap 6.1.0",
  "hex",
  "hmac",
  "itoa",
@@ -3535,6 +3548,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "redis-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "dashmap 5.5.3",
+ "parking_lot",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3663,6 +3692,7 @@ dependencies = [
  "parquet",
  "pg-protocol",
  "prometheus",
+ "redis-protocol",
  "ryu",
  "serde",
  "serde_json",

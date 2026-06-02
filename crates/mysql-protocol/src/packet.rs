@@ -895,6 +895,124 @@ pub fn encode_binary_row(seq_id: u8, values: &[Option<BinaryValue>], num_columns
     packet
 }
 
+/// Encode a single binary-protocol row directly into an existing buffer.
+/// Zero-alloc: writes packet header + payload directly into `buf`.
+/// Returns next seq_id.
+pub fn encode_binary_row_into(
+    seq_id: u8,
+    values: &[Option<BinaryValue>],
+    num_columns: u16,
+    buf: &mut BytesMut,
+) -> u8 {
+    let packet_start = buf.len();
+
+    // Reserve space for 4-byte header + estimated payload
+    buf.reserve(4 + num_columns as usize * 20 + 10);
+
+    // 4-byte packet header (payload length filled in later)
+    buf.extend_from_slice(&[0, 0, 0, seq_id]);
+
+    // Header byte (0x00 for binary row)
+    buf.put_u8(0x00);
+
+    // NULL bitmap: (num_columns + 7 + 2) / 8 bytes
+    let null_bitmap_size = ((num_columns as usize + 9) / 8).max(1);
+    let bitmap_start = buf.len();
+    buf.extend_from_slice(&vec![0u8; null_bitmap_size]);
+
+    // First pass: mark NULL positions in bitmap
+    for (i, val) in values.iter().enumerate() {
+        if val.is_none() {
+            let bit_pos = i + 2;
+            buf[bitmap_start + bit_pos / 8] |= 1 << (bit_pos % 8);
+        }
+    }
+
+    // Second pass: encode non-NULL values directly into buf
+    for val in values.iter() {
+        if let Some(v) = val {
+            encode_binary_value_into(buf, v);
+        }
+    }
+
+    // Fill in packet header with payload length
+    let payload_len = buf.len() - packet_start - 4;
+    buf[packet_start] = (payload_len & 0xFF) as u8;
+    buf[packet_start + 1] = ((payload_len >> 8) & 0xFF) as u8;
+    buf[packet_start + 2] = ((payload_len >> 16) & 0xFF) as u8;
+
+    seq_id.wrapping_add(1)
+}
+
+/// Encode a binary value directly into a BytesMut buffer (zero-alloc variant).
+fn encode_binary_value_into(buf: &mut BytesMut, val: &BinaryValue) {
+    match val {
+        BinaryValue::Int8(n) => buf.put_i8(*n),
+        BinaryValue::UInt8(n) => buf.put_u8(*n),
+        BinaryValue::Int16(n) => buf.put_i16_le(*n),
+        BinaryValue::UInt16(n) => buf.put_u16_le(*n),
+        BinaryValue::Int32(n) => buf.put_i32_le(*n),
+        BinaryValue::UInt32(n) => buf.put_u32_le(*n),
+        BinaryValue::Int64(n) => buf.put_i64_le(*n),
+        BinaryValue::UInt64(n) => buf.put_u64_le(*n),
+        BinaryValue::Float(f) => buf.put_slice(&f.to_le_bytes()),
+        BinaryValue::Double(d) => buf.put_slice(&d.to_le_bytes()),
+        BinaryValue::String(s) => {
+            encode_lenenc_int(buf, s.len() as u64);
+            buf.put_slice(s);
+        }
+        BinaryValue::Date { year, month, day } => {
+            buf.put_u8(4); // length
+            buf.put_u16_le(*year);
+            buf.put_u8(*month);
+            buf.put_u8(*day);
+        }
+        BinaryValue::DateTime {
+            year, month, day,
+            hour, minute, second, micros,
+        } => {
+            if *micros == 0 {
+                buf.put_u8(7); // length without micros
+                buf.put_u16_le(*year);
+                buf.put_u8(*month);
+                buf.put_u8(*day);
+                buf.put_u8(*hour);
+                buf.put_u8(*minute);
+                buf.put_u8(*second);
+            } else {
+                buf.put_u8(11); // length with micros
+                buf.put_u16_le(*year);
+                buf.put_u8(*month);
+                buf.put_u8(*day);
+                buf.put_u8(*hour);
+                buf.put_u8(*minute);
+                buf.put_u8(*second);
+                buf.put_u32_le(*micros);
+            }
+        }
+        BinaryValue::Time {
+            is_neg, days, hours, minutes, seconds, micros,
+        } => {
+            if *micros == 0 {
+                buf.put_u8(8); // length
+                buf.put_u8(if *is_neg { 1 } else { 0 });
+                buf.put_u32_le(*days);
+                buf.put_u8(*hours);
+                buf.put_u8(*minutes);
+                buf.put_u8(*seconds);
+            } else {
+                buf.put_u8(12); // length with micros
+                buf.put_u8(if *is_neg { 1 } else { 0 });
+                buf.put_u32_le(*days);
+                buf.put_u8(*hours);
+                buf.put_u8(*minutes);
+                buf.put_u8(*seconds);
+                buf.put_u32_le(*micros);
+            }
+        }
+    }
+}
+
 /// Binary value representation for MySQL binary protocol.
 #[derive(Debug, Clone)]
 pub enum BinaryValue {

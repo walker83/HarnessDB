@@ -588,9 +588,8 @@ impl Connection {
         }
 
         let result = self.handler.handle_query(self.conn_id, sql);
-        // Sync connection database state for USE commands
-        let trimmed_lc = sql.trim().to_lowercase();
-        if trimmed_lc.starts_with("use ") {
+        // Sync connection database state for USE commands (reuse trimmed, no double lowercase)
+        if trimmed.starts_with("use ") {
             // Extract database name from USE statement
             if let Some(pos) = sql.trim().find("USE ") {
                 let after_use = &sql.trim()[pos + 4..].trim().trim_end_matches(';').trim();
@@ -768,22 +767,25 @@ impl Connection {
 
         let use_eof = (self.capability_flags & CapabilityFlags::DEPRECATE_EOF) == 0;
 
+        // Batch all prepare response packets into write_buf, single flush
+        self.write_buf.clear();
+
         // Send COM_STMT_PREPARE_OK
         let pkt = packet::make_stmt_prepare_ok(self.seq_id, stmt_id, num_columns, num_params, 0);
-        self.write_all(&pkt).await?;
+        self.write_buf.extend_from_slice(&pkt);
         self.seq_id = self.seq_id.wrapping_add(1);
 
         // Send parameter column definitions (if any)
         for i in 0..num_params {
             let col = Column::new(&format!("param_{}", i), column_type::VAR_STRING);
             let pkt = col.encode(self.seq_id);
-            self.write_all(&pkt).await?;
+            self.write_buf.extend_from_slice(&pkt);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
 
         if num_params > 0 && use_eof {
             let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
-            self.write_all(&eof).await?;
+            self.write_buf.extend_from_slice(&eof);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
 
@@ -791,15 +793,20 @@ impl Connection {
         for col_def in &result_columns {
             let col: Column = col_def.into();
             let pkt = col.encode(self.seq_id);
-            self.write_all(&pkt).await?;
+            self.write_buf.extend_from_slice(&pkt);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
 
         if num_columns > 0 && use_eof {
             let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
-            self.write_all(&eof).await?;
+            self.write_buf.extend_from_slice(&eof);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
+
+        // Single write + flush for entire prepare response
+        self.stream.write_all(&self.write_buf).await?;
+        self.stream.flush().await?;
+        self.write_buf.clear();
 
         Ok(())
     }
@@ -1131,11 +1138,15 @@ impl Connection {
     }
 
     /// Send result set in binary protocol format (for COM_STMT_EXECUTE).
+    /// Optimized: batches all packets into write_buf, single flush at end.
     async fn send_binary_result_set(
         &mut self,
         result: QueryResult,
         num_columns: u16,
     ) -> std::io::Result<()> {
+        use std::time::Instant;
+        let send_start = Instant::now();
+
         info!(
             "Connection {} send_binary_result_set: {} columns, {} rows, columns={:?}",
             self.conn_id,
@@ -1161,30 +1172,43 @@ impl Connection {
         }
 
         let use_eof = (self.capability_flags & CapabilityFlags::DEPRECATE_EOF) == 0;
+        let row_count = result.rows.len();
+
+        self.write_buf.clear();
 
         // 1. Column count packet (lenenc int)
         let mut pb = packet::PacketBuilder::new(self.seq_id);
         pb.lenenc_int(num_columns as u64);
         let (pkt, next) = pb.finish();
-        self.write_all(&pkt).await?;
+        self.write_buf.extend_from_slice(&pkt);
         self.seq_id = next;
 
         // 2. Column definition packets (same as text protocol)
         let columns: Vec<Column> = result.columns.iter().map(|c| c.into()).collect();
         for col in &columns {
             let pkt = col.encode(self.seq_id);
-            self.write_all(&pkt).await?;
+            self.write_buf.extend_from_slice(&pkt);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
 
         // 3. EOF packet (if not deprecated)
         if use_eof {
             let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
-            self.write_all(&eof).await?;
+            self.write_buf.extend_from_slice(&eof);
             self.seq_id = self.seq_id.wrapping_add(1);
         }
 
-        // 4. Binary row data packets
+        // Send column definitions + EOF in one shot
+        self.stream.write_all(&self.write_buf).await?;
+        self.write_buf.clear();
+
+        let write_start = Instant::now();
+
+        // 4. Binary row data packets — batch into write_buf, flush periodically
+        let estimated_row_size = num_columns as usize * 40 + 20;
+        let batch_capacity = (row_count * estimated_row_size).min(4 * 1024 * 1024);
+        self.write_buf.reserve(batch_capacity);
+
         for row in &result.rows {
             // Convert text values to binary values based on column types
             let binary_values: Vec<Option<packet::BinaryValue>> = row
@@ -1195,27 +1219,52 @@ impl Connection {
                 })
                 .collect();
 
-            let pkt = packet::encode_binary_row(self.seq_id, &binary_values, num_columns);
-            self.write_all(&pkt).await?;
-            self.seq_id = self.seq_id.wrapping_add(1);
+            self.seq_id = packet::encode_binary_row_into(self.seq_id, &binary_values, num_columns, &mut self.write_buf);
+
+            // Flush when buffer gets large (4MB threshold)
+            if self.write_buf.len() >= 4 * 1024 * 1024 {
+                self.stream.write_all(&self.write_buf).await?;
+                self.write_buf.clear();
+            }
+        }
+
+        // Send remaining row data
+        if !self.write_buf.is_empty() {
+            self.stream.write_all(&self.write_buf).await?;
+            self.write_buf.clear();
         }
 
         // 5. Final EOF or OK
         if use_eof {
             let eof = packet::make_eof_packet(self.seq_id, 0, packet::SERVER_STATUS_AUTOCOMMIT);
-            self.write_all(&eof).await?;
+            self.write_buf.extend_from_slice(&eof);
             self.seq_id = self.seq_id.wrapping_add(1);
         } else {
             // DEPRECATE_EOF: result-set terminator uses 0xFE header (not 0x00)
             let ok = packet::make_result_set_eof_ok_packet(
                 self.seq_id,
-                result.rows.len() as u64,
+                row_count as u64,
                 0,
                 packet::SERVER_STATUS_AUTOCOMMIT,
                 0,
             );
-            self.write_all(&ok).await?;
+            self.write_buf.extend_from_slice(&ok);
             self.seq_id = self.seq_id.wrapping_add(1);
+        }
+        self.stream.write_all(&self.write_buf).await?;
+        self.stream.flush().await?;
+        self.write_buf.clear();
+
+        let write_ms = write_start.elapsed().as_millis();
+        let total_ms = send_start.elapsed().as_millis();
+
+        if row_count > 1000 {
+            tracing::info!(
+                "send_binary_result_set timing: write+flush={}ms, total={}ms, rows={}",
+                write_ms,
+                total_ms,
+                row_count
+            );
         }
 
         Ok(())
@@ -1293,10 +1342,15 @@ impl Connection {
         Ok(())
     }
 
-    /// Write all bytes to the stream.
+    /// Write all bytes to the stream (with flush — for single-packet responses).
     async fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
         self.stream.write_all(data).await?;
         self.stream.flush().await
+    }
+
+    /// Write bytes to the stream WITHOUT flushing (for batching multiple packets).
+    async fn write_no_flush(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.stream.write_all(data).await
     }
 }
 

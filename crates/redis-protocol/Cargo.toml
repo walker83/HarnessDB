@@ -1,0 +1,24 @@
+[package]
+name = "redis-protocol"
+version = "0.3.3"
+edition = "2024"
+license = "Apache-2.0"
+description = "Redis protocol (RESP2/RESP3) implementation for RorisDB - Tair compatible"
+
+[dependencies]
+tokio = { workspace = true }
+bytes = "1"
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# For data storage backend
+dashmap = "5"
+parking_lot = "0.12"
+
+# For type conversions
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# For KEYS pattern matching
+regex = "1"
