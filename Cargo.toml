@@ -20,6 +20,7 @@ members = [
     "crates/pg-protocol",
     "crates/redis-protocol",
     "crates/mongodb-protocol",
+    "crates/clickhouse-protocol",
     "crates/sql-translators",
 
     # Metadata backend
@@ -138,6 +139,7 @@ maxcompute-protocol = { path = "crates/maxcompute-protocol" }
 pg-protocol = { path = "crates/pg-protocol" }
 redis-protocol = { path = "crates/redis-protocol" }
 mongodb-protocol = { path = "crates/mongodb-protocol" }
+clickhouse-protocol = { path = "crates/clickhouse-protocol" }
 sql-translators = { path = "crates/sql-translators" }
 
 # External protocol dependencies
