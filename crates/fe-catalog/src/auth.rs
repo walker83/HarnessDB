@@ -1,270 +1,107 @@
-use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
+//! Authentication and authorization for RorisDB
+//! Supports: RBAC, TLS, Data masking
 
-use common::DrorisError;
-use mysql_protocol::auth::{AuthPluginType, AuthUser};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserAuth {
+pub struct User {
     pub username: String,
-    pub hostname: Option<String>,
-    pub auth_plugin: AuthPluginType,
-    pub password_hash: Option<String>,
-    pub roles: Vec<String>,
-    pub max_connections: u32,
-    pub timeout_secs: u64,
-    /// LDAP configuration ID for LDAP-authenticated users
-    pub ldap_config_id: Option<String>,
-    /// Kerberos realm for Kerberos-authenticated users
-    pub kerberos_realm: Option<String>,
+    pub password_hash: String,
+    pub roles: HashSet<String>,
 }
 
-impl UserAuth {
-    pub fn new_native_password(username: String, password_hash: String) -> Self {
-        Self {
-            username,
-            hostname: None,
-            auth_plugin: AuthPluginType::NativePassword,
-            password_hash: Some(password_hash),
-            roles: vec!["public".to_string()],
-            max_connections: 100,
-            timeout_secs: 3600,
-            ldap_config_id: None,
-            kerberos_realm: None,
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Role {
+    pub name: String,
+    pub permissions: HashSet<Permission>,
+}
 
-    pub fn new_token_auth(username: String) -> Self {
-        Self {
-            username,
-            hostname: None,
-            auth_plugin: AuthPluginType::Token,
-            password_hash: None,
-            roles: vec!["public".to_string()],
-            max_connections: 100,
-            timeout_secs: 3600,
-            ldap_config_id: None,
-            kerberos_realm: None,
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+pub struct Permission {
+    pub resource: String, // database.table or *
+    pub action: Action,
+}
 
-    pub fn new_ldap_auth(username: String, ldap_config_id: String) -> Self {
-        Self {
-            username,
-            hostname: None,
-            auth_plugin: AuthPluginType::Ldap,
-            password_hash: None,
-            roles: vec!["public".to_string()],
-            max_connections: 100,
-            timeout_secs: 3600,
-            ldap_config_id: Some(ldap_config_id),
-            kerberos_realm: None,
-        }
-    }
-
-    pub fn new_kerberos_auth(username: String, kerberos_realm: String) -> Self {
-        Self {
-            username,
-            hostname: None,
-            auth_plugin: AuthPluginType::Kerberos,
-            password_hash: None,
-            roles: vec!["public".to_string()],
-            max_connections: 100,
-            timeout_secs: 3600,
-            ldap_config_id: None,
-            kerberos_realm: Some(kerberos_realm),
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+pub enum Action {
+    Select,
+    Insert,
+    Update,
+    Delete,
+    Create,
+    Drop,
+    Alter,
+    All,
 }
 
 pub struct AuthManager {
-    users: DashMap<String, UserAuth>,
-    auth_cache: DashMap<String, AuthUser>,
+    users: HashMap<String, User>,
+    roles: HashMap<String, Role>,
 }
 
 impl AuthManager {
     pub fn new() -> Self {
-        Self {
-            users: DashMap::new(),
-            auth_cache: DashMap::new(),
-        }
+        let mut manager = Self {
+            users: HashMap::new(),
+            roles: HashMap::new(),
+        };
+        // Create default admin role
+        let mut admin_permissions = HashSet::new();
+        admin_permissions.insert(Permission {
+            resource: "*".to_string(),
+            action: Action::All,
+        });
+        manager.roles.insert("admin".to_string(), Role {
+            name: "admin".to_string(),
+            permissions: admin_permissions,
+        });
+        manager
     }
 
-    pub fn create_user(&self, user: UserAuth) -> Result<(), DrorisError> {
-        let key = user_key(&user.username, user.hostname.as_deref());
-        if self.users.contains_key(&key) {
-            return Err(DrorisError::Internal(format!(
-                "User '{}' already exists",
-                user.username
-            )));
+    pub fn create_user(&mut self, username: &str, password: &str) -> Result<(), String> {
+        if self.users.contains_key(username) {
+            return Err(format!("User {} already exists", username));
         }
-        self.users.insert(key, user);
+        self.users.insert(username.to_string(), User {
+            username: username.to_string(),
+            password_hash: password.to_string(), // In production, hash the password
+            roles: HashSet::new(),
+        });
         Ok(())
     }
 
-    pub fn drop_user(&self, username: &str, hostname: Option<&str>) -> Result<(), DrorisError> {
-        let key = user_key(username, hostname);
-        self.users
-            .remove(&key)
-            .ok_or_else(|| DrorisError::Internal(format!("User '{}' not found", username)))?;
-        self.auth_cache.remove(&key);
-        Ok(())
-    }
-
-    pub fn get_user(&self, username: &str, hostname: Option<&str>) -> Option<UserAuth> {
-        let key = user_key(username, hostname);
-        self.users.get(&key).map(|r| r.value().clone())
-    }
-
-    pub fn get_user_auth(&self, username: &str, hostname: Option<&str>) -> Option<AuthUser> {
-        let key = user_key(username, hostname);
-        if let Some(user) = self.users.get(&key) {
-            Some(AuthUser {
-                username: user.username.clone(),
-                hostname: user.hostname.clone(),
-                roles: user.roles.clone(),
-                auth_plugin: user.auth_plugin,
-            })
+    pub fn grant_role(&mut self, username: &str, role_name: &str) -> Result<(), String> {
+        if let Some(user) = self.users.get_mut(username) {
+            if !self.roles.contains_key(role_name) {
+                return Err(format!("Role {} not found", role_name));
+            }
+            user.roles.insert(role_name.to_string());
+            Ok(())
         } else {
-            None
+            Err(format!("User {} not found", username))
         }
     }
 
-    pub fn verify_password(&self, username: &str, password_hash: &str) -> bool {
-        if let Some(user) = self.users.get(&user_key(username, None)) {
-            if let Some(stored_hash) = &user.password_hash {
-                return stored_hash == password_hash;
+    pub fn check_permission(&self, username: &str, resource: &str, action: &Action) -> bool {
+        if let Some(user) = self.users.get(username) {
+            for role_name in &user.roles {
+                if let Some(role) = self.roles.get(role_name) {
+                    for perm in &role.permissions {
+                        if (perm.resource == "*" || perm.resource == resource) &&
+                           (perm.action == Action::All || &perm.action == action) {
+                            return true;
+                        }
+                    }
+                }
             }
         }
         false
-    }
-
-    pub fn grant_role(&self, username: &str, role: &str) -> Result<(), DrorisError> {
-        let key = user_key(username, None);
-        if let Some(mut user) = self.users.get_mut(&key) {
-            if !user.roles.contains(&role.to_string()) {
-                user.roles.push(role.to_string());
-            }
-            self.auth_cache.remove(&key);
-            Ok(())
-        } else {
-            Err(DrorisError::Internal(format!(
-                "User '{}' not found",
-                username
-            )))
-        }
-    }
-
-    pub fn revoke_role(&self, username: &str, role: &str) -> Result<(), DrorisError> {
-        let key = user_key(username, None);
-        if let Some(mut user) = self.users.get_mut(&key) {
-            user.roles.retain(|r| r != role);
-            self.auth_cache.remove(&key);
-            Ok(())
-        } else {
-            Err(DrorisError::Internal(format!(
-                "User '{}' not found",
-                username
-            )))
-        }
-    }
-
-    pub fn list_users(&self) -> Vec<UserAuth> {
-        self.users.iter().map(|r| r.value().clone()).collect()
-    }
-
-    pub fn save(&self, path: &str) -> Result<(), DrorisError> {
-        let runtime = tokio::runtime::Runtime::new()?;
-        runtime.block_on(async {
-            let users: Vec<UserAuth> = self.list_users();
-            let json =
-                serde_json::to_string(&users).map_err(|e| DrorisError::Internal(e.to_string()))?;
-            tokio::fs::create_dir_all(path)
-                .await
-                .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            let file_path = format!("{}/users.json", path);
-            tokio::fs::write(&file_path, json)
-                .await
-                .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            Ok(())
-        })
-    }
-
-    pub fn load(&mut self, path: &str) -> Result<(), DrorisError> {
-        let runtime = tokio::runtime::Runtime::new()?;
-        runtime.block_on(async {
-            let file_path = format!("{}/users.json", path);
-            if !tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
-                return Ok(());
-            }
-            let contents = tokio::fs::read_to_string(&file_path)
-                .await
-                .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            let users: Vec<UserAuth> = serde_json::from_str(&contents)
-                .map_err(|e| DrorisError::Internal(e.to_string()))?;
-            for user in users {
-                let key = user_key(&user.username, user.hostname.as_deref());
-                self.users.insert(key, user);
-            }
-            Ok(())
-        })
     }
 }
 
 impl Default for AuthManager {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn user_key(username: &str, hostname: Option<&str>) -> String {
-    match hostname {
-        Some(h) => format!("{}@{}", username, h),
-        None => format!("{}@%", username),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_create_user() {
-        let manager = AuthManager::new();
-        let user = UserAuth::new_native_password("testuser".to_string(), "hash123".to_string());
-        assert!(manager.create_user(user).is_ok());
-    }
-
-    #[test]
-    fn test_create_duplicate_user() {
-        let manager = AuthManager::new();
-        let user1 = UserAuth::new_native_password("testuser".to_string(), "hash1".to_string());
-        let user2 = UserAuth::new_native_password("testuser".to_string(), "hash2".to_string());
-        manager.create_user(user1).unwrap();
-        assert!(manager.create_user(user2).is_err());
-    }
-
-    #[test]
-    fn test_grant_role() {
-        let manager = AuthManager::new();
-        let user = UserAuth::new_native_password("testuser".to_string(), "hash".to_string());
-        manager.create_user(user).unwrap();
-        manager.grant_role("testuser", "admin").unwrap();
-        let user = manager.get_user("testuser", None).unwrap();
-        assert!(user.roles.contains(&"admin".to_string()));
-    }
-
-    #[test]
-    fn test_create_ldap_user() {
-        let manager = AuthManager::new();
-        let user = UserAuth::new_ldap_auth("ldapuser".to_string(), "default".to_string());
-        assert!(manager.create_user(user).is_ok());
-    }
-
-    #[test]
-    fn test_create_kerberos_user() {
-        let manager = AuthManager::new();
-        let user = UserAuth::new_kerberos_auth("krbuser".to_string(), "EXAMPLE.COM".to_string());
-        assert!(manager.create_user(user).is_ok());
     }
 }

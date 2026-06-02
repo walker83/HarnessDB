@@ -22,6 +22,13 @@ members = [
     "crates/mongodb-protocol",
     "crates/clickhouse-protocol",
     "crates/elasticsearch-protocol",
+    "crates/influxdb-protocol",
+    "crates/tablestore-protocol",
+    "crates/oracle-protocol",
+    "crates/cassandra-protocol",
+    "crates/adb-mysql-protocol",
+    "crates/vector-protocol",
+    "crates/lindorm-protocol",
     "crates/sql-translators",
 
     # Metadata backend
@@ -142,6 +149,13 @@ redis-protocol = { path = "crates/redis-protocol" }
 mongodb-protocol = { path = "crates/mongodb-protocol" }
 clickhouse-protocol = { path = "crates/clickhouse-protocol" }
 elasticsearch-protocol = { path = "crates/elasticsearch-protocol" }
+influxdb-protocol = { path = "crates/influxdb-protocol" }
+tablestore-protocol = { path = "crates/tablestore-protocol" }
+oracle-protocol = { path = "crates/oracle-protocol" }
+cassandra-protocol = { path = "crates/cassandra-protocol" }
+adb-mysql-protocol = { path = "crates/adb-mysql-protocol" }
+vector-protocol = { path = "crates/vector-protocol" }
+lindorm-protocol = { path = "crates/lindorm-protocol" }
 sql-translators = { path = "crates/sql-translators" }
 
 # External protocol dependencies

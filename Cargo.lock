@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "adb-mysql-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "dashmap 6.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -653,6 +667,19 @@ checksum = "225bff33b2141874fe80d71e07d6eec4f85c5c216453dd96388240f96e1acc14"
 dependencies = [
  "cc",
  "pkg-config",
+]
+
+[[package]]
+name = "cassandra-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "dashmap 5.5.3",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2486,6 +2513,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "influxdb-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "dashmap 5.5.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "integer-encoding"
 version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2700,6 +2745,20 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "lindorm-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "dashmap 6.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3215,6 +3274,20 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "oracle-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "dashmap 5.5.3",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4296,6 +4369,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tablestore-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "dashmap 5.5.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4828,6 +4918,20 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vector-protocol"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "dashmap 6.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "version_check"

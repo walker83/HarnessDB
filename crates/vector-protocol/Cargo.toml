@@ -1,0 +1,15 @@
+[package]
+name = "vector-protocol"
+version = "0.3.3"
+edition = "2024"
+description = "Vector database protocol implementation for RorisDB"
+
+[dependencies]
+tokio.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+dashmap.workspace = true
+anyhow.workspace = true

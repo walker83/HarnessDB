@@ -1,0 +1,17 @@
+[package]
+name = "cassandra-protocol"
+version = "0.3.3"
+edition = "2024"
+license = "Apache-2.0"
+description = "Apache Cassandra native protocol implementation for RorisDB"
+
+[dependencies]
+tokio = { workspace = true }
+bytes = "1"
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# For data storage
+dashmap = "5"

@@ -1,0 +1,132 @@
+//! Cassandra native protocol server
+
+use crate::frame::{Frame, Opcode};
+use crate::handler::{CassandraCommandHandler, DefaultCassandraHandler};
+use crate::storage::CassandraStorage;
+use bytes::BytesMut;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tracing::{error, info};
+
+/// Cassandra server configuration
+#[derive(Debug, Clone)]
+pub struct CassandraServerConfig {
+    pub port: u16,
+}
+
+impl Default for CassandraServerConfig {
+    fn default() -> Self {
+        Self { port: 9042 }
+    }
+}
+
+/// Cassandra native protocol server
+pub struct CassandraServer {
+    config: CassandraServerConfig,
+    storage: Arc<CassandraStorage>,
+    handler: Arc<dyn CassandraCommandHandler>,
+}
+
+impl CassandraServer {
+    /// Create a new Cassandra server
+    pub fn new(config: CassandraServerConfig) -> Self {
+        let storage = Arc::new(CassandraStorage::new());
+        let handler = Arc::new(DefaultCassandraHandler::new(storage.clone()));
+        Self {
+            config,
+            storage,
+            handler,
+        }
+    }
+
+    /// Start the Cassandra server
+    pub async fn start(&self) -> anyhow::Result<()> {
+        let addr: SocketAddr = format!("0.0.0.0:{}", self.config.port).parse()?;
+        let listener = TcpListener::bind(addr).await?;
+        info!("Cassandra native protocol server listening on {}", addr);
+
+        let handler = self.handler.clone();
+
+        loop {
+            match listener.accept().await {
+                Ok((stream, addr)) => {
+                    info!("Cassandra client connected from {}", addr);
+
+                    let handler = handler.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_connection(stream, handler).await {
+                            error!("Cassandra connection error: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Cassandra accept error: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Get storage reference
+    pub fn storage(&self) -> &Arc<CassandraStorage> {
+        &self.storage
+    }
+}
+
+/// Handle a single Cassandra connection
+async fn handle_connection(
+    mut stream: TcpStream,
+    handler: Arc<dyn CassandraCommandHandler>,
+) -> anyhow::Result<()> {
+    let mut read_buf = BytesMut::with_capacity(8192);
+    let mut keyspace = "system".to_string();
+
+    loop {
+        let n = stream.read_buf(&mut read_buf).await?;
+        if n == 0 {
+            info!("Cassandra client disconnected");
+            return Ok(());
+        }
+
+        // Parse frames
+        while let Some(frame) = Frame::parse(&mut read_buf) {
+            let opcode = Opcode::from_u8(frame.header.opcode);
+
+            match opcode {
+                Some(Opcode::Startup) | Some(Opcode::Options) => {
+                    info!("Received STARTUP/OPTIONS");
+                    let response = handler.handle_startup();
+                    stream.write_all(&response).await?;
+                }
+
+                Some(Opcode::Query) => {
+                    // Parse CQL query (simplified)
+                    let cql = String::from_utf8_lossy(&frame.body).to_string();
+                    info!("Received CQL: {}", cql);
+
+                    // Execute query
+                    let response = handler.handle_query(&keyspace, &cql);
+                    stream.write_all(&response).await?;
+                }
+
+                _ => {
+                    info!("Received opcode: {:?}", opcode);
+                }
+            }
+        }
+    }
+}
+
+/// Start Cassandra server with default configuration
+pub async fn start_cassandra_server() -> anyhow::Result<()> {
+    let config = CassandraServerConfig::default();
+    let server = CassandraServer::new(config);
+    server.start().await
+}
+
+/// Start Cassandra server with custom configuration
+pub async fn start_cassandra_server_with_config(config: CassandraServerConfig) -> anyhow::Result<()> {
+    let server = CassandraServer::new(config);
+    server.start().await
+}

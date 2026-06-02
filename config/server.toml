@@ -1,0 +1,89 @@
+# RorisDB Server Configuration
+# All protocols can be independently enabled/disabled
+
+[server]
+data_dir = "data/fe/storage"
+meta_dir = "data/fe/doris-meta"
+log_level = "info"
+
+[servers.mysql]
+enabled = true
+host = "0.0.0.0"
+port = 9030
+
+[servers.maxcompute]
+enabled = true
+host = "0.0.0.0"
+port = 9031
+
+[servers.hologres]
+enabled = true
+host = "0.0.0.0"
+port = 15432
+
+[servers.redis]
+enabled = true
+host = "0.0.0.0"
+port = 6379
+num_databases = 16
+
+[servers.mongodb]
+enabled = true
+host = "0.0.0.0"
+port = 27017
+
+[servers.clickhouse]
+enabled = true
+host = "0.0.0.0"
+port = 8123
+
+[servers.elasticsearch]
+enabled = true
+host = "0.0.0.0"
+port = 9200
+
+[servers.influxdb]
+enabled = true
+host = "0.0.0.0"
+port = 8086
+
+[servers.tablestore]
+enabled = true
+host = "0.0.0.0"
+port = 8087
+
+[servers.oracle]
+enabled = true
+host = "0.0.0.0"
+port = 1521
+
+[servers.cassandra]
+enabled = true
+host = "0.0.0.0"
+port = 9042
+
+[servers.adb_mysql]
+enabled = true
+host = "0.0.0.0"
+port = 3306
+
+[servers.vector]
+enabled = true
+host = "0.0.0.0"
+port = 19530
+
+[servers.lindorm]
+enabled = true
+host = "0.0.0.0"
+port = 30030
+
+[query]
+max_concurrent_queries = 100
+query_timeout_seconds = 300
+
+[storage]
+compression = "zstd"
+
+[monitoring]
+audit_log_enabled = true
+metrics_enabled = true
