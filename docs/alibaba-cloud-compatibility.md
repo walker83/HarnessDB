@@ -2,18 +2,22 @@
 
 RorisDB 作为通用数据库仿真底座，支持模拟多种数据库协议和 SQL 方言。
 
-## Phase 1 完成状态
+## Phase 1 & Phase 2 完成状态
 
-Phase 1 基础协议兼容性已完成。所有核心端点、认证和基础 SQL 功能均已实现。
+Phase 1 (REST API) 和 Phase 2 (Tunnel 协议) 均已实现。所有核心端点、认证、SQL 翻译和批量数据传输功能均已完成。
 
-**测试覆盖**: 1493 测试全部通过 (807 单元测试 + 686 集成测试)
+**测试覆盖**: 1780 测试全部通过 (1052 单元测试 + 728 集成测试)
+- Phase 1: 184 单元测试 + 9 集成测试 = 193 测试
+- Phase 2 (Tunnel): 55 单元测试 = 55 测试
+- SQL Translators (MaxCompute): 125 单元测试 = 125 测试
+- 其他: 剩余测试 (MySQL/PG/Hologres/FE 等)
 
 ## 支持的数据库协议
 
 | 数据库 | 协议类型 | 端口 | 状态 | 说明 |
 |--------|---------|------|------|------|
 | MySQL | TCP 二进制 (MySQL Wire Protocol) | 9030 | ✅ 已支持 | 基础协议 |
-| MaxCompute (ODPS) | HTTP/REST + XML | 9031 | ✅ Phase 1 完成 | 阿里云离线大数据 |
+| MaxCompute (ODPS) | HTTP/REST + XML + Tunnel | 9031 | ✅ Phase 1 + Phase 2 完成 | 阿里云离线大数据 |
 | Hologres | TCP 二进制 (PostgreSQL v3) | 15432 | ✅ Phase 1 完成 | 阿里云实时数仓 |
 
 ## 端口配置
@@ -21,7 +25,7 @@ Phase 1 基础协议兼容性已完成。所有核心端点、认证和基础 SQ
 | 服务 | 默认端口 | CLI 参数 | 说明 |
 |------|---------|---------|------|
 | MySQL Wire Protocol | 9030 | `--mysql-port` | 基础 MySQL 协议 |
-| MaxCompute REST API | 9031 | `--maxcompute-port` | HTTP REST 端点 |
+| MaxCompute REST API | 9031 | `--maxcompute-port` | HTTP REST + Tunnel |
 | Hologres (PostgreSQL) | 15432 | `--hologres-port` | PostgreSQL v3 协议 |
 | Web SQL Editor | 8080 (configurable) | (config: `server.http_port`) | 内嵌 Web UI |
 
@@ -38,43 +42,104 @@ Phase 1 基础协议兼容性已完成。所有核心端点、认证和基础 SQ
 | HMAC-SHA1 签名 (V2) | ✅ | 标准 AccessKey 认证 |
 | HMAC-SHA256 签名 (V4) | ✅ | 带 region 的增强签名 |
 | XML 请求/响应 | ✅ | 完整 XML 序列化 |
+| JSON 请求/响应 | ✅ | Tunnel 协议使用 JSON |
 | SQL 作业提交 | ✅ | 异步提交 + 轮询结果 |
-| Tunnel 协议 (批量传输) | ❌ | Phase 2 |
 | Instance 管理 | ✅ | 状态查询/结果获取/停止 |
 | 表删除 (REST API) | ✅ | DELETE /api/projects/{project}/tables/{table} |
+| Tunnel 上传协议 | ✅ | 创建上传 → 上传 Block → 提交 |
+| Tunnel 下载协议 | ✅ | 创建下载 → 获取行范围数据 |
+| Tunnel Session 重载 | ✅ | GET 查询上传/下载会话状态 |
+| Tunnel 端点发现 | ✅ | GET /api/projects/{project}/tunnel |
+| Tunnel 压缩 | ✅ | ZLIB/deflate 压缩/解压 |
+| Tunnel Protobuf 编码 | ✅ | 自定义线格式编码器/解码器 |
+| Stream Upload | ❌ | 流式上传 |
+| Upsert | ❌ | 部分更新 |
 
 ### 认证方式
 
 MaxCompute 协议支持两种签名方式：
 
-| 方式 | 算法 | 实现状态 | a 说明 |
-|------|------|---------|--------|
+| 方式 | 算法 | 实现状态 | 说明 |
+|------|------|---------|------|
 | V2 签名 | HMAC-SHA1 | ✅ | `Authorization: ODPS {ak}:{signature}` |
 | V4 签名 | HMAC-SHA256 | ✅ | `Authorization: ODPS2-HMAC-SHA256 ...` |
 
 默认凭据: `AccessKey ID = "roris"`, `AccessKey Secret = "roris-secret"`
 
+### Tunnel 协议详情
+
+#### REST 端点
+
+| 操作 | 方法 | URL 模式 | 状态 | 说明 |
+|------|------|---------|------|------|
+| 端点发现 | GET | `/api/projects/{project}/tunnel` | ✅ | 返回 Tunnel 服务地址 |
+| 创建上传会话 | POST | `.../tables/{table}?uploads` | ✅ | 返回 UploadID + Schema |
+| 上传数据块 | PUT | `.../tables/{table}?uploadid={id}&blockid={n}` | ✅ | Protobuf 二进制数据 |
+| 提交上传 | POST | `.../tables/{table}?uploadid={id}` | ✅ | 将数据插入目标表 |
+| 创建下载会话 | POST | `.../tables/{table}?downloads` | ✅ | 返回 DownloadID + RecordCount |
+| 下载数据 | GET | `.../tables/{table}?downloadid={id}&rowrange=(start,count)` | ✅ | Protobuf 二进制响应 |
+| 重载上传会话 | GET | `...?uploadid={id}` | ✅ | 返回状态 + 已上传块列表 |
+| 重载下载会话 | GET | `...?downloadid={id}` | ✅ | 返回状态 + 记录数 |
+
+#### 数据格式
+
+Tunnel 使用自定义 Protobuf-like 线格式（非标准 Protobuf）：
+
+| 编码特性 | 状态 | 说明 |
+|------|------|------|
+| Tag 编码 `(field << 3) \| wire_type` | ✅ | Varint 标签 |
+| VARINT 线类型 (0) | ✅ | 整数、ZigZag 编码 |
+| FIXED64 线类型 (1) | ✅ | DOUBLE、LONG |
+| LENGTH_DELIMITED 线类型 (2) | ✅ | 字符串、二进制 |
+| FIXED32 线类型 (5) | ✅ | FLOAT |
+| ZigZag 编码/解码 | ✅ | 有符号整数优化 |
+| Varint 编码/解码 | ✅ | 变长整数 |
+| 每记录 CRC32C | ✅ | TUNNEL_END_RECORD 标记 |
+| 流脚注 (记录数 + CRC32C) | ✅ | TUNNEL_META_COUNT + TUNNEL_META_CHECKSUM |
+| NULL 值编码 | ✅ | null_count + null_indices 前缀 |
+| 支持的类型编码 | ✅ | BIGINT/INT/SMALLINT/TINYINT/BOOLEAN/FLOAT/DOUBLE/STRING/BINARY/DATETIME/DATE/DECIMAL |
+
+#### 压缩支持
+
+| 算法 | 上传 | 下载 | 说明 |
+|------|------|------|------|
+| RAW (无压缩) | ✅ | ✅ | 默认 |
+| ZLIB/deflate | ✅ | ✅ | `Content-Encoding: deflate` / `Accept-Encoding: deflate` |
+| SNAPPY | ❌ | ❌ | Phase 3 |
+| ZSTD | ❌ | ❌ | Phase 3 |
+| LZ4 | ❌ | ❌ | Phase 3 |
+
+#### Session 管理
+
+| 特性 | 配置 | 说明 |
+|------|------|------|
+| 最大 Session 数 | 1,000 | 超出时驱逐最旧条目 |
+| 驱逐目标 | 800 | 80% 容量 |
+| TTL | 3600 秒 | 1 小时后自动清理 |
+| Block 存储 | 内存 (BTreeMap) | Block ID 有序存储 |
+| 下载缓存 | 内存 (SELECT * 结果) | 单节点 Phase 2 接受限制 |
+
 ### 数据类型兼容
 
-| MaxCompute 类型 | RorisDB 映射 | 状态 |
-|----------------|-------------|------|
-| BIGINT | BIGINT | ✅ |
-| INT | INT | ✅ |
-| SMALLINT | SMALLINT | ✅ |
-| TINYINT | TINYINT | ✅ |
-| STRING | STRING | ✅ |
-| STRING(n) | VARCHAR(n) | ✅ |
-| DOUBLE | DOUBLE | ✅ |
-| FLOAT | FLOAT | ✅ |
-| DECIMAL(p,s) | DECIMAL(p,s) | ✅ |
-| BOOLEAN | BOOLEAN | ✅ |
-| DATETIME | DATETIME | ✅ |
-| DATE | DATE | ✅ |
-| TIMESTAMP | TIMESTAMP | ✅ |
-| BINARY | BLOB | ✅ |
-| ARRAY<T> | ARRAY | ✅ 透传 DataFusion |
-| MAP<K,V> | MAP | ✅ 透传 DataFusion |
-| STRUCT<...> | STRUCT | ✅ 透传 DataFusion |
+| MaxCompute 类型 | RorisDB 映射 | REST | Tunnel 编码 |
+|----------------|-------------|------|------------|
+| BIGINT | BIGINT | ✅ | ✅ ZigZag varint |
+| INT | INT | ✅ | ✅ ZigZag varint |
+| SMALLINT | SMALLINT | ✅ | ✅ ZigZag varint |
+| TINYINT | TINYINT | ✅ | ✅ ZigZag varint |
+| STRING | STRING | ✅ | ✅ Length-delimited |
+| STRING(n) | VARCHAR(n) | ✅ | ✅ Length-delimited |
+| DOUBLE | DOUBLE | ✅ | ✅ Fixed64 LE |
+| FLOAT | FLOAT | ✅ | ✅ Fixed32 LE |
+| DECIMAL(p,s) | DECIMAL(p,s) | ✅ | ✅ Length-delimited (string) |
+| BOOLEAN | BOOLEAN | ✅ | ✅ Varint (0/1) |
+| DATETIME | DATETIME | ✅ | ✅ ZigZag varint (ms) |
+| DATE | DATE | ✅ | ✅ ZigZag varint (days) |
+| TIMESTAMP | TIMESTAMP | ✅ | ✅ Varint (ms) |
+| BINARY | BLOB | ✅ | ✅ Length-delimited (hex) |
+| ARRAY<T> | ARRAY | ✅ | ❌ Tunnel |
+| MAP<K,V> | MAP | ✅ | ❌ Tunnel |
+| STRUCT<...> | STRUCT | ✅ | ❌ Tunnel |
 
 ### SQL 语法兼容
 
@@ -264,7 +329,7 @@ MaxCompute 协议支持两种签名方式：
 # 启动 RorisDB
 ./target/release/roris-fe --mysql-port 9030 --maxcompute-port 9031
 
-# 使用 pyodps 连接
+# 使用 pyodps 连接 (REST API + SQL)
 python3 <<EOF
 from odps import ODPS
 o = ODPS('roris', 'roris-secret', 'default',
@@ -285,6 +350,34 @@ for t in o.list_tables():
 
 # 查询
 with o.execute_sql('SELECT * FROM users').open_reader() as reader:
+    for record in reader:
+        print(record)
+EOF
+
+# 使用 pyodps Tunnel (批量上传/下载)
+python3 <<EOF
+from odps import ODPS
+from odps.tunnel import TableTunnel
+
+o = ODPS('roris', 'roris-secret', 'default',
+         endpoint='http://127.0.0.1:9031/api')
+
+tunnel = TableTunnel(o)
+
+# 批量上传
+upload_session = tunnel.create_upload_session('users')
+with upload_session.open_record_writer(0) as writer:
+    record = upload_session.new_record()
+    record[0] = 1    # id
+    record[1] = 'Alice'  # name
+    record[2] = 25   # age
+    writer.write(record)
+
+upload_session.commit([0])
+
+# 批量下载
+download_session = tunnel.create_download_session('users')
+with download_session.open_record_reader() as reader:
     for record in reader:
         print(record)
 EOF
@@ -336,11 +429,18 @@ SELECT * FROM orders WHERE user_id = 100;
 | MySQL Protocol |  | MaxCompute       |  | PG Protocol         |
 | (TCP :9030)    |  | Protocol (HTTP)  |  | (TCP :15432)        |
 | [已支持]       |  | :9031            |  | Hologres 兼容       |
-+----------------+  +------------------+  +---------------------+
-                           |                       |
-                    MC SQL Translator       Hologres SQL Translator
-                    (strip MC-specific)     (strip PG-unsupported,
-                                             add set_table_property)
++----------------+  |                  |  +---------------------+
+                    | REST API + Tunnel|
+                    | SQL Translator   |
+                    | Session Manager  |
+                    +------------------+
+                           |
+                    +------------------+
+                    | Tunnel Protocol  |
+                    | Upload/Download  |
+                    | Protobuf Codec   |
+                    | CRC32C + ZLIB    |
+                    +------------------+
 ```
 
 ## 认证架构
@@ -352,7 +452,87 @@ MySQL:
 MaxCompute:
   V2 Signing:  HMAC-SHA1(method + path + query + headers + body)
   V4 Signing:  HMAC-SHA256(region + service + signed_headers + payload_hash)
+  Tunnel:      复用 V2/V4 签名 (同一 Authorization 头)
 
 Hologres / PG:
   MD5:  md5(password + user) stored, challenge-response: md5(md5(pw+user) + salt)
 ```
+
+## Tunnel 协议线格式详情
+
+### 记录编码
+
+```
+每条记录:
+  [null_count (varint)]           ← 空值列数
+  [null_column_index (varint)×n]  ← 空值列索引 (0-based)
+  对于每个非空列:
+    [tag: varint(field_number << 3 | wire_type)]
+    [value: 类型相关编码]
+  [TUNNEL_END_RECORD tag: 0x01FFFFE0]  ← 记录终止
+  [per_record_crc: uint32 LE]          ← CRC32C
+
+流脚注:
+  [TUNNEL_META_COUNT tag: 0x01FFFFFE]
+  [record_count (varint)]
+  [TUNNEL_META_CHECKSUM tag: 0x02000000]
+  [overall_crc32c (uint32 LE)]         ← 所有 per-record CRC 的 CRC
+```
+
+### 常量定义
+
+```
+TUNNEL_VERSION       = 6
+TUNNEL_END_RECORD    = 33,553,408  (0x01FFFFE0)
+TUNNEL_META_COUNT    = 33,554,430  (0x01FFFFFE)
+TUNNEL_META_CHECKSUM = 33,554,431  (0x02000000)
+```
+
+---
+
+## 参考来源
+
+### SDK 源码
+
+MaxCompute Tunnel 协议的实现基于以下开源 SDK 源码分析：
+
+- **[pyodps](https://github.com/aliyun/aliyun-odps-python-sdk)** — Python SDK
+  - `odps/tunnel/base.py` — Tunnel 基类、端点发现
+  - `odps/tunnel/tabletunnel.py` — 所有会话类型和 API 调用
+  - `odps/tunnel/io/writer.py` — 记录/Arrow 写入器 (Protobuf 编码)
+  - `odps/tunnel/io/reader.py` — 记录/Arrow 读取器 (Protobuf 解码)
+  - `odps/tunnel/io/stream.py` — 压缩选项和流处理
+  - `odps/tunnel/pb/encoder.py` — Protobuf 编码器
+  - `odps/tunnel/pb/decoder.py` — Protobuf 解码器
+  - `odps/tunnel/pb/wire_format.py` — 线格式常量和工具函数
+  - `odps/tunnel/pb/output_stream.py` — Varint/LittleEndian 编码
+  - `odps/tunnel/wireconstants.py` — TUNNEL_END_RECORD 等常量
+  - `odps/tunnel/checksum.py` — CRC32C 校验和实现
+  - `odps/tunnel/errors.py` — 错误解析 (XML 和 JSON)
+  - `odps/rest.py` — REST 客户端、请求构建
+  - `odps/accounts.py` — 认证 (V2/V4 签名)
+
+- **[aliyun-odps-java-sdk](https://github.com/aliyun/aliyun-odps-java-sdk)** — Java SDK
+  - `TableTunnel.java` — 所有会话类型 (内部 UploadSession/DownloadSession 类)
+  - `TunnelConstants.java` — 所有参数名和常量
+  - `HttpHeaders.java` — 所有 HTTP 头名称
+  - `TunnelException.java` — 错误响应解析 (JSON)
+  - `SessionBase.java` — 基础会话 HTTP 请求逻辑
+  - `Configuration.java` — Tunnel 配置
+  - `GeneralConfiguration.java` — URL 构建
+  - `ResourceBuilder.java` — REST 资源 URL 模式
+  - `Util.java` — 通用头部
+
+### 官方文档
+
+- [阿里云 MaxCompute Tunnel 文档](https://help.aliyun.com/zh/maxcompute/user-guide/tunnel-commands)
+- [MaxCompute Tunnel REST API 参考](https://help.aliyun.com/zh/maxcompute/user-guide/tunnel-api/)
+- [DataWorks 数据集成](https://help.aliyun.com/zh/dataworks/user-guide/maxcompute-connector)
+
+### CRC32C
+
+- [CRC32C (Castagnoli)](https://en.wikipedia.org/wiki/Cyclic_redundancy_check#Polynomial_representations_of_cyclic_redundancy_checks) — 使用 `crc32fast` Rust crate 实现
+
+### Protobuf 线格式
+
+- [Protocol Buffers Encoding](https://protobuf.dev/programming-guides/encoding/) — 线格式规范 (字段标签、ZigZag 编码)

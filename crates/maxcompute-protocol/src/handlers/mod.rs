@@ -21,14 +21,23 @@ pub fn build_router() -> Router<std::sync::Arc<crate::server::McServerState>> {
             "/projects/{project}",
             axum::routing::get(projects::get_project),
         )
-        // Table endpoints
+        // Tunnel endpoint discovery
+        .route(
+            "/projects/{project}/tunnel",
+            axum::routing::get(crate::tunnel::handlers::tunnel_endpoint_handler),
+        )
+        // Tunnel upload session creation (POST with ?uploads)
         .route(
             "/projects/{project}/tables",
-            axum::routing::get(tables::list_tables),
+            axum::routing::get(tables::list_tables)
+                .post(tunnel_post_tables),
         )
+        // Table endpoints + Tunnel download/session reload
         .route(
             "/projects/{project}/tables/{table}",
-            axum::routing::get(tables::get_table).delete(tables::delete_table),
+            axum::routing::get(tunnel_get_tables)
+                .post(tunnel_post_tables)
+                .delete(tables::delete_table),
         )
         // Instance endpoints
         .route(
@@ -43,6 +52,56 @@ pub fn build_router() -> Router<std::sync::Arc<crate::server::McServerState>> {
             "/projects/{project}/instances/{id}",
             axum::routing::put(instances::stop_instance),
         )
+}
+
+// ---------------------------------------------------------------------------
+// Tunnel dispatchers — these check query params and route to tunnel handlers
+// or fall through to the regular table handlers.
+// ---------------------------------------------------------------------------
+
+use axum::{
+    extract::{Path, Query, State},
+    http::HeaderMap,
+    response::{IntoResponse, Response},
+};
+use std::sync::Arc;
+
+async fn tunnel_post_tables(
+    state: State<Arc<crate::server::McServerState>>,
+    Path((project, table)): Path<(String, String)>,
+    headers: HeaderMap,
+    query: Query<std::collections::HashMap<String, String>>,
+    _body: axum::body::Body,
+) -> Response {
+    let params: std::collections::HashMap<String, String> = query.0.clone();
+    if params.contains_key("uploads") {
+        crate::tunnel::handlers::create_upload_session(state, Path((project, table)), headers).await
+    } else if params.contains_key("downloads") {
+        crate::tunnel::handlers::create_download_session(state, Path((project, table)), headers).await
+    } else if params.contains_key("uploadid") {
+        crate::tunnel::handlers::commit_upload(state, Path((project, table)), headers, query).await
+    } else {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            "unknown POST to /tables, expected tunnel query param",
+        ).into_response()
+    }
+}
+
+async fn tunnel_get_tables(
+    state: State<Arc<crate::server::McServerState>>,
+    Path((project, table)): Path<(String, String)>,
+    headers: HeaderMap,
+    query: Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let params: std::collections::HashMap<String, String> = query.0.clone();
+    if params.contains_key("downloadid") {
+        crate::tunnel::handlers::download_data(state, Path((project, table)), headers, query).await
+    } else if params.contains_key("uploadid") {
+        crate::tunnel::handlers::reload_session(state, Path((project, table)), query).await
+    } else {
+        tables::get_table(state, Path((project, table))).await.into_response()
+    }
 }
 
 // ---------------------------------------------------------------------------

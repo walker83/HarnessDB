@@ -16,6 +16,7 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::handlers::InstanceManager;
+use crate::tunnel::session::TunnelSessionManager;
 
 /// Configuration for the MaxCompute protocol server.
 #[derive(Debug, Clone)]
@@ -46,6 +47,7 @@ pub struct McServerState {
     pub handler: Arc<dyn QueryHandler>,
     pub config: McServerConfig,
     pub instance_manager: Arc<InstanceManager>,
+    pub tunnel_session_manager: Arc<TunnelSessionManager>,
     conn_id_counter: AtomicU32,
 }
 
@@ -55,6 +57,7 @@ impl McServerState {
             handler,
             config,
             instance_manager: Arc::new(InstanceManager::new()),
+            tunnel_session_manager: Arc::new(TunnelSessionManager::new()),
             conn_id_counter: AtomicU32::new(1_000_000),
         }
     }

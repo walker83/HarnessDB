@@ -22,6 +22,7 @@ pub mod error;
 pub mod handlers;
 pub mod server;
 pub mod sql;
+pub mod tunnel;
 pub mod xml_models;
 
 pub use server::{McServerConfig, McServerState, start_mc_server};
