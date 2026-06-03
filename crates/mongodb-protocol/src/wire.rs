@@ -118,7 +118,9 @@ impl OpMsg {
                     let doc = bson::Document::from_reader(&mut cursor).ok()?;
                     buf.advance(cursor.position() as usize);
                     sections.push(Section::Body(doc));
-                    break; // Kind 0 is always the last section
+                    // NOTE: We do NOT break here. Some drivers (including pymongo)
+                    // send kind 0 (body) BEFORE kind 1 (document sequences).
+                    // Continue parsing to capture all sections.
                 }
                 1 => {
                     // Document sequence

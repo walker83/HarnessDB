@@ -98,16 +98,27 @@ async fn handle_connection(
                     info!("Received STARTUP/OPTIONS");
                     let response = handler.handle_startup();
                     stream.write_all(&response).await?;
+                    stream.flush().await?;
                 }
 
                 Some(Opcode::Query) => {
-                    // Parse CQL query (simplified)
-                    let cql = String::from_utf8_lossy(&frame.body).to_string();
+                    // Parse CQL query: body is [long string] query + [short] consistency + [byte] flags
+                    let cql = if frame.body.len() >= 4 {
+                        let cql_len = ((frame.body[0] as usize) << 24)
+                            | ((frame.body[1] as usize) << 16)
+                            | ((frame.body[2] as usize) << 8)
+                            | (frame.body[3] as usize);
+                        let end = (4 + cql_len).min(frame.body.len());
+                        String::from_utf8_lossy(&frame.body[4..end]).to_string()
+                    } else {
+                        String::from_utf8_lossy(&frame.body).to_string()
+                    };
                     info!("Received CQL: {}", cql);
 
                     // Execute query
-                    let response = handler.handle_query(&keyspace, &cql);
+                    let response = handler.handle_query(&mut keyspace, &cql);
                     stream.write_all(&response).await?;
+                    stream.flush().await?;
                 }
 
                 _ => {

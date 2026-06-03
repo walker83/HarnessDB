@@ -20,11 +20,11 @@ impl FrameHeader {
             return None;
         }
 
-        let version = buf.get_u8();
-        let flags = buf.get_u8();
-        let stream = buf.get_i16();
-        let opcode = buf.get_u8();
-        let length = buf.get_i32();
+        let version = buf[0];
+        let flags = buf[1];
+        let stream = i16::from_be_bytes([buf[2], buf[3]]);
+        let opcode = buf[4];
+        let length = i32::from_be_bytes([buf[5], buf[6], buf[7], buf[8]]);
 
         Some(Self {
             version,
@@ -102,10 +102,13 @@ impl Frame {
         let header = FrameHeader::parse(buf)?;
 
         let length = header.length as usize;
-        if buf.len() < length {
+        // Check if we have the full frame (header + body) before consuming anything
+        if buf.len() < FrameHeader::SIZE + length {
             return None;
         }
 
+        // Now safe to consume: skip header, take body
+        buf.advance(FrameHeader::SIZE);
         let body = buf.split_to(length).to_vec();
 
         Some(Self { header, body })

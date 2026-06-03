@@ -95,17 +95,23 @@ class CassandraClient:
     def _send_frame(self, opcode, body):
         """Send a Cassandra protocol frame"""
         stream_id = self._next_stream_id()
-        # Header: version(1) + flags(1) + stream_id(2) + opcode(1) + length(4)
-        header = struct.pack("!BBhiI", self.version, 0, stream_id, opcode, len(body))
+        # Header: version(1) + flags(1) + stream_id(2) + opcode(1) + length(4) = 9 bytes
+        header = struct.pack("!BBhbI", self.version, 0, stream_id, opcode, len(body))
         self.sock.sendall(header + body)
         return stream_id
 
     def _read_frame(self):
         """Read a Cassandra protocol frame"""
-        header = self.sock.recv(8)
-        if len(header) < 8:
+        # Read exactly 9 bytes for v4 header
+        header = b''
+        while len(header) < 9:
+            chunk = self.sock.recv(9 - len(header))
+            if not chunk:
+                break
+            header += chunk
+        if len(header) < 9:
             raise Exception("Incomplete header")
-        ver, flags, stream_id, opcode, length = struct.unpack("!BBhiI", header)
+        ver, flags, stream_id, opcode, length = struct.unpack("!BBhbI", header)
 
         body = b''
         while len(body) < length:

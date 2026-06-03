@@ -2987,6 +2987,7 @@ dependencies = [
  "bytes",
  "dashmap 5.5.3",
  "parking_lot",
+ "regex",
  "serde",
  "serde_json",
  "tokio",

@@ -17,3 +17,4 @@ bson = "2"
 # For data storage
 dashmap = "5"
 parking_lot = "0.12"
+regex = "1"

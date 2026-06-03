@@ -7,7 +7,68 @@ use std::sync::Arc;
 /// Trait for handling Cassandra commands
 pub trait CassandraCommandHandler: Send + Sync {
     fn handle_startup(&self) -> Vec<u8>;
-    fn handle_query(&self, keyspace: &str, cql: &str) -> Vec<u8>;
+    fn handle_query(&self, keyspace: &mut String, cql: &str) -> Vec<u8>;
+}
+
+/// Build a RESULT frame with VOID result kind (for DDL, INSERT, UPDATE, DELETE)
+fn build_void_result(stream: i16) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4);
+    body.extend_from_slice(&0x0000_0001u32.to_be_bytes()); // Void
+    let frame = Frame::new(0x84, stream, Opcode::Result, body);
+    let mut buf = bytes::BytesMut::new();
+    frame.encode(&mut buf);
+    buf.to_vec()
+}
+
+/// Build a RESULT frame with ROWS result kind (for SELECT)
+fn build_rows_result(stream: i16, columns: &[&str], rows: &[Vec<String>]) -> Vec<u8> {
+    let mut body = Vec::new();
+    // Result kind = ROWS (0x0002)
+    body.extend_from_slice(&0x0000_0002u32.to_be_bytes());
+    // Column count (i32)
+    body.extend_from_slice(&(columns.len() as i32).to_be_bytes());
+    // Row count (i32)
+    body.extend_from_slice(&(rows.len() as i32).to_be_bytes());
+    // Row data: each cell is [i32 length][bytes]
+    for row in rows {
+        for val in row {
+            let val_bytes = val.as_bytes();
+            body.extend_from_slice(&(val_bytes.len() as i32).to_be_bytes());
+            body.extend_from_slice(val_bytes);
+        }
+    }
+    let frame = Frame::new(0x84, stream, Opcode::Result, body);
+    let mut buf = bytes::BytesMut::new();
+    frame.encode(&mut buf);
+    buf.to_vec()
+}
+
+/// Build a RESULT frame with SET_KEYSPACE result kind (for USE)
+fn build_set_keyspace_result(stream: i16, keyspace: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    // Result kind = SET_KEYSPACE (0x0003)
+    body.extend_from_slice(&0x0000_0003u32.to_be_bytes());
+    // [string] keyspace name: [u16 len][bytes]
+    let ks_bytes = keyspace.as_bytes();
+    body.extend_from_slice(&(ks_bytes.len() as u16).to_be_bytes());
+    body.extend_from_slice(ks_bytes);
+    let frame = Frame::new(0x84, stream, Opcode::Result, body);
+    let mut buf = bytes::BytesMut::new();
+    frame.encode(&mut buf);
+    buf.to_vec()
+}
+
+/// Build an ERROR frame
+fn build_error_frame(stream: i16, code: i32, message: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&code.to_be_bytes());
+    let msg_bytes = message.as_bytes();
+    body.extend_from_slice(&(msg_bytes.len() as u16).to_be_bytes());
+    body.extend_from_slice(msg_bytes);
+    let frame = Frame::new(0x84, stream, Opcode::Error, body);
+    let mut buf = bytes::BytesMut::new();
+    frame.encode(&mut buf);
+    buf.to_vec()
 }
 
 /// Default Cassandra command handler
@@ -19,51 +80,205 @@ impl DefaultCassandraHandler {
     pub fn new(storage: Arc<CassandraStorage>) -> Self {
         Self { storage }
     }
-
-    fn execute_cql(&self, keyspace: &str, cql: &str) -> String {
-        let cql = cql.trim().trim_end_matches(';');
-        let upper = cql.to_uppercase();
-
-        if upper.starts_with("SELECT") {
-            if upper.contains("FROM SYSTEM.LOCAL") {
-                return "key|cluster_name|cql_version\n-----|------------|-------------\nlocal|HarnessDB|3.3.1\n".to_string();
-            }
-        }
-
-        if upper.starts_with("CREATE KEYSPACE") {
-            let parts: Vec<&str> = cql.split_whitespace().collect();
-            if parts.len() >= 3 {
-                let ks_name = parts[2];
-                self.storage.create_keyspace(ks_name);
-                return "Keyspace created".to_string();
-            }
-        }
-
-        if upper.starts_with("USE") {
-            return "Keyspace set".to_string();
-        }
-
-        "Statement executed".to_string()
-    }
 }
 
 impl CassandraCommandHandler for DefaultCassandraHandler {
     fn handle_startup(&self) -> Vec<u8> {
-        // Return READY frame
+        // Return READY frame (version 0x84 = response v4)
         let frame = Frame::new(0x84, 0, Opcode::Ready, vec![]);
         let mut buf = bytes::BytesMut::new();
         frame.encode(&mut buf);
         buf.to_vec()
     }
 
-    fn handle_query(&self, keyspace: &str, cql: &str) -> Vec<u8> {
-        let result = self.execute_cql(keyspace, cql);
+    fn handle_query(&self, keyspace: &mut String, cql: &str) -> Vec<u8> {
+        let cql_trimmed = cql.trim().trim_end_matches(';');
+        let upper = cql_trimmed.to_uppercase();
+        let stream: i16 = 0;
 
-        // Return RESULT frame (simplified)
-        let result_body = result.into_bytes();
-        let frame = Frame::new(0x84, 0, Opcode::Result, result_body);
-        let mut buf = bytes::BytesMut::new();
-        frame.encode(&mut buf);
-        buf.to_vec()
+        // SELECT queries
+        if upper.starts_with("SELECT") {
+            return self.handle_select(stream, keyspace, cql_trimmed, &upper);
+        }
+
+        // USE keyspace
+        if upper.starts_with("USE ") {
+            let parts: Vec<&str> = cql_trimmed.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let ks = parts[1].to_string();
+                *keyspace = ks.clone();
+                return build_set_keyspace_result(stream, &ks);
+            }
+            return build_error_frame(stream, 0x2200, "Invalid USE statement");
+        }
+
+        // CREATE KEYSPACE
+        if upper.starts_with("CREATE KEYSPACE") {
+            let parts: Vec<&str> = cql_trimmed.split_whitespace().collect();
+            // CREATE KEYSPACE [IF NOT EXISTS] name ...
+            let ks_name = if upper.contains("IF NOT EXISTS") {
+                // parts: CREATE KEYSPACE IF NOT EXISTS name ...
+                parts.get(4).copied().unwrap_or("unknown")
+            } else {
+                parts.get(2).copied().unwrap_or("unknown")
+            };
+            self.storage.create_keyspace(ks_name);
+            return build_void_result(stream);
+        }
+
+        // CREATE TABLE
+        if upper.starts_with("CREATE TABLE") {
+            // Parse table name (may be keyspace.table)
+            let parts: Vec<&str> = cql_trimmed.split_whitespace().collect();
+            let table_part = if upper.contains("IF NOT EXISTS") {
+                parts.get(4).copied().unwrap_or("unknown")
+            } else {
+                parts.get(2).copied().unwrap_or("unknown")
+            };
+            let (ks, table) = parse_table_name(table_part, keyspace);
+            let ks_obj = self.storage.get_keyspace(&ks);
+            ks_obj.create_table(&table);
+            return build_void_result(stream);
+        }
+
+        // DROP TABLE
+        if upper.starts_with("DROP TABLE") {
+            // Simplified: just return VOID
+            return build_void_result(stream);
+        }
+
+        // DROP KEYSPACE
+        if upper.starts_with("DROP KEYSPACE") {
+            return build_void_result(stream);
+        }
+
+        // INSERT
+        if upper.starts_with("INSERT") {
+            return build_void_result(stream);
+        }
+
+        // UPDATE
+        if upper.starts_with("UPDATE") {
+            return build_void_result(stream);
+        }
+
+        // DELETE
+        if upper.starts_with("DELETE") {
+            return build_void_result(stream);
+        }
+
+        // DESCRIBE
+        if upper.starts_with("DESCRIBE") || upper.starts_with("DESC") {
+            return self.handle_describe(stream, keyspace, &upper);
+        }
+
+        // Default: VOID
+        build_void_result(stream)
+    }
+}
+
+impl DefaultCassandraHandler {
+    fn handle_select(&self, stream: i16, keyspace: &str, cql: &str, upper: &str) -> Vec<u8> {
+        // system.local
+        if upper.contains("FROM SYSTEM.LOCAL") || upper.contains("FROM SYSTEM.LOCAL ") {
+            let columns = &["key", "cluster_name", "cql_version", "release_version"];
+            let rows = vec![vec![
+                "local".to_string(),
+                "HarnessDB".to_string(),
+                "3.4.5".to_string(),
+                "HarnessDB-0.3.3".to_string(),
+            ]];
+            return build_rows_result(stream, columns, &rows);
+        }
+
+        // system.peers
+        if upper.contains("FROM SYSTEM.PEERS") {
+            let columns = &["peer", "data_center", "rack", "release_version"];
+            return build_rows_result(stream, columns, &[]);
+        }
+
+        // SELECT COUNT(*)
+        if upper.contains("COUNT(*)") {
+            let columns = &["count"];
+            let rows = vec![vec!["0".to_string()]];
+            return build_rows_result(stream, columns, &rows);
+        }
+
+        // Generic SELECT from user tables
+        if upper.contains("FROM ") {
+            // Try to extract table name
+            let from_idx = upper.find("FROM ").unwrap();
+            let after_from = &cql[from_idx + 5..].trim();
+            let table_part = after_from
+                .split_whitespace()
+                .next()
+                .unwrap_or("unknown");
+
+            let (ks, _table) = parse_table_name(table_part, keyspace);
+            let ks_obj = self.storage.get_keyspace(&ks);
+
+            // Return empty rows with some columns based on the query
+            let columns = extract_select_columns(cql, upper);
+            let _ = ks_obj; // Used to validate keyspace exists
+            return build_rows_result(stream, &columns, &[]);
+        }
+
+        // Fallback: empty rows
+        build_rows_result(stream, &["result"], &[])
+    }
+
+    fn handle_describe(&self, stream: i16, _keyspace: &str, upper: &str) -> Vec<u8> {
+        if upper.contains("KEYSPACES") {
+            let columns = &["keyspace_name"];
+            let keyspaces = self.storage.list_keyspaces();
+            let rows: Vec<Vec<String>> = keyspaces
+                .iter()
+                .map(|k| vec![k.clone()])
+                .collect();
+            return build_rows_result(stream, columns, &rows);
+        }
+
+        if upper.contains("TABLES") {
+            let columns = &["table_name"];
+            return build_rows_result(stream, columns, &[]);
+        }
+
+        // DESCRIBE TABLE
+        let columns = &["column_name", "type"];
+        return build_rows_result(stream, columns, &[]);
+    }
+}
+
+/// Parse "keyspace.table" or just "table" (using current keyspace)
+fn parse_table_name<'a>(name: &'a str, default_ks: &'a str) -> (String, String) {
+    if let Some(dot_pos) = name.find('.') {
+        let ks = &name[..dot_pos];
+        let table = &name[dot_pos + 1..];
+        (ks.to_string(), table.to_string())
+    } else {
+        (default_ks.to_string(), name.to_string())
+    }
+}
+
+/// Extract column names from a SELECT clause
+fn extract_select_columns<'a>(cql: &'a str, upper: &str) -> Vec<&'a str> {
+    // Simple parser: find text between SELECT and FROM
+    let select_start = if upper.starts_with("SELECT ") { 7 } else { return vec!["col"] };
+    let from_pos = match upper.find(" FROM ") {
+        Some(p) => p,
+        None => return vec!["col"],
+    };
+
+    let col_part = &cql[select_start..from_pos];
+    let cols: Vec<&str> = col_part
+        .split(',')
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty())
+        .collect();
+
+    if cols.is_empty() {
+        vec!["col"]
+    } else {
+        cols
     }
 }
