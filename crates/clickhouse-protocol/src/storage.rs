@@ -6,27 +6,33 @@ use std::sync::Arc;
 
 /// ClickHouse table with columnar storage
 pub struct Table {
-    columns: HashMap<String, Vec<String>>,
-    column_types: HashMap<String, String>,
+    pub columns: HashMap<String, Vec<String>>,
+    pub column_order: Vec<String>,
+    pub column_types: HashMap<String, String>,
 }
 
 impl Table {
     pub fn new() -> Self {
         Self {
             columns: HashMap::new(),
+            column_order: Vec::new(),
             column_types: HashMap::new(),
         }
     }
 
     pub fn create_column(&mut self, name: String, type_name: String) {
         self.columns.insert(name.clone(), Vec::new());
+        self.column_order.push(name.clone());
         self.column_types.insert(name, type_name);
     }
 
-    pub fn insert_row(&mut self, values: HashMap<String, String>) {
-        for (col_name, value) in values {
-            if let Some(column) = self.columns.get_mut(&col_name) {
-                column.push(value);
+    pub fn insert_row(&mut self, values: Vec<String>) {
+        for (i, value) in values.into_iter().enumerate() {
+            if i < self.column_order.len() {
+                let col_name = &self.column_order[i];
+                if let Some(column) = self.columns.get_mut(col_name) {
+                    column.push(value);
+                }
             }
         }
     }
@@ -38,7 +44,6 @@ impl Table {
             return rows;
         }
 
-        // Get row count from first column
         let row_count = self.columns.values().next().map(|c| c.len()).unwrap_or(0);
 
         for i in 0..row_count {
@@ -52,6 +57,81 @@ impl Table {
         }
 
         rows
+    }
+
+    /// Delete rows matching a predicate. Returns number of rows deleted.
+    pub fn delete_where<F>(&mut self, predicate: F) -> usize
+    where
+        F: Fn(&HashMap<String, String>) -> bool,
+    {
+        let row_count = self.columns.values().next().map(|c| c.len()).unwrap_or(0);
+        let mut keep = Vec::with_capacity(row_count);
+
+        for i in 0..row_count {
+            let mut row = HashMap::new();
+            for (col_name, values) in &self.columns {
+                if i < values.len() {
+                    row.insert(col_name.clone(), values[i].clone());
+                }
+            }
+            keep.push(!predicate(&row));
+        }
+
+        let mut deleted = 0;
+        for col in self.columns.values_mut() {
+            let mut new_col = Vec::new();
+            for (i, val) in col.drain(..).enumerate() {
+                if keep[i] {
+                    new_col.push(val);
+                } else {
+                    deleted += 1;
+                }
+            }
+            *col = new_col;
+        }
+        // delete_where counts per-column, divide by number of columns
+        if self.columns.is_empty() {
+            0
+        } else {
+            deleted / self.columns.len()
+        }
+    }
+
+    /// Update rows matching a predicate. Returns number of rows updated.
+    pub fn update_where<F>(
+        &mut self,
+        predicate: F,
+        updates: &HashMap<String, String>,
+    ) -> usize
+    where
+        F: Fn(&HashMap<String, String>) -> bool,
+    {
+        let row_count = self.columns.values().next().map(|c| c.len()).unwrap_or(0);
+        let mut indices_to_update = Vec::new();
+        for i in 0..row_count {
+            let mut row = HashMap::new();
+            for (col_name, values) in &self.columns {
+                if i < values.len() {
+                    row.insert(col_name.clone(), values[i].clone());
+                }
+            }
+            if predicate(&row) {
+                indices_to_update.push(i);
+            }
+        }
+
+        // Apply updates
+        for (col_name, new_value) in updates {
+            if let Some(col) = self.columns.get_mut(col_name) {
+                for &idx in &indices_to_update {
+                    if idx < col.len() {
+                        col[idx] = new_value.clone();
+                    }
+                }
+            }
+        }
+
+        indices_to_update.len()
     }
 
     pub fn count(&self) -> usize {
@@ -93,6 +173,7 @@ impl Database {
         self.tables.get(name).map(|t| {
             let mut new_table = Table::new();
             new_table.columns = t.columns.clone();
+            new_table.column_order = t.column_order.clone();
             new_table.column_types = t.column_types.clone();
             new_table
         })
@@ -132,11 +213,21 @@ impl ClickHouseStorage {
         }
     }
 
+    pub fn create_database(&self, name: &str) {
+        self.databases
+            .entry(name.to_string())
+            .or_insert_with(|| Arc::new(Database::new()));
+    }
+
     pub fn get_database(&self, name: &str) -> Arc<Database> {
         self.databases
             .entry(name.to_string())
             .or_insert_with(|| Arc::new(Database::new()))
             .clone()
+    }
+
+    pub fn drop_database(&self, name: &str) -> bool {
+        self.databases.remove(name).is_some()
     }
 
     pub fn list_databases(&self) -> Vec<String> {
