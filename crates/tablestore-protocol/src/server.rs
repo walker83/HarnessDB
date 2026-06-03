@@ -96,6 +96,7 @@ async fn handle_request(
 
     let method = parts.method.as_str();
     let path = parts.uri.path();
+    let query = parts.uri.query().unwrap_or("");
 
     // Read body
     let body_str = {
@@ -108,10 +109,10 @@ async fn handle_request(
         }
     };
 
-    info!("TableStore {} {}", method, path);
+    info!("TableStore {} {} query={}", method, path, query);
 
     // Handle request
-    let (status_code, response_body) = handler.handle_request(method, path, body_str.as_deref());
+    let (status_code, response_body) = handler.handle_request(method, path, query, body_str.as_deref());
 
     let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 

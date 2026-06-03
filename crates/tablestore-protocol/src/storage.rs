@@ -23,20 +23,27 @@ pub struct Row {
     pub attributes: HashMap<String, AttributeValue>,
 }
 
+/// Column definition with name and type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnDef {
+    pub name: String,
+    pub type_name: String,
+}
+
 /// TableStore table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableSchema {
-    pub primary_key_columns: Vec<String>,
-    pub defined_columns: Vec<String>,
+    pub primary_key: Vec<ColumnDef>,
+    pub defined_columns: Vec<ColumnDef>,
     pub time_to_live: i32, // seconds, -1 means no expiration
     pub max_versions: i32,
 }
 
 impl TableSchema {
-    pub fn new(primary_key_columns: Vec<String>) -> Self {
+    pub fn new(primary_key: Vec<ColumnDef>, defined_columns: Vec<ColumnDef>) -> Self {
         Self {
-            primary_key_columns,
-            defined_columns: Vec::new(),
+            primary_key,
+            defined_columns,
             time_to_live: -1,
             max_versions: 1,
         }

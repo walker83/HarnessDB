@@ -1,13 +1,13 @@
 //! TableStore REST API command handler
 
-use crate::storage::{AttributeValue, Row, TableSchema, TableStoreStorage};
-use serde::{Deserialize, Serialize};
+use crate::storage::{AttributeValue, ColumnDef, Row, TableSchema, TableStoreStorage};
+use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// Trait for handling TableStore commands
 pub trait TableStoreCommandHandler: Send + Sync {
-    fn handle_request(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String);
+    fn handle_request(&self, method: &str, path: &str, query: &str, body: Option<&str>) -> (u16, String);
 }
 
 /// Default TableStore command handler
@@ -15,29 +15,49 @@ pub struct DefaultTableStoreHandler {
     storage: Arc<TableStoreStorage>,
 }
 
-#[derive(Serialize, Deserialize)]
+// ── Request types matching the test JSON format ──
+
+#[derive(Deserialize)]
+struct ColumnDefRequest {
+    name: String,
+    #[serde(rename = "type")]
+    type_name: String,
+}
+
+#[derive(Deserialize)]
 struct CreateTableRequest {
-    table_name: String,
-    primary_key: Vec<String>,
+    primary_key: Vec<ColumnDefRequest>,
+    #[serde(default)]
+    defined_columns: Vec<ColumnDefRequest>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
+struct NameValue {
+    name: String,
+    value: serde_json::Value,
+}
+
+#[derive(Deserialize)]
 struct PutRowRequest {
-    primary_key: HashMap<String, serde_json::Value>,
-    attributes: HashMap<String, serde_json::Value>,
+    primary_key: Vec<NameValue>,
+    attributes: Vec<NameValue>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct GetRowRequest {
-    primary_key: HashMap<String, serde_json::Value>,
+#[derive(Deserialize)]
+struct UpdateRowRequest {
+    primary_key: Vec<NameValue>,
+    attributes: Vec<NameValue>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct GetRangeRequest {
     start: HashMap<String, serde_json::Value>,
     end: HashMap<String, serde_json::Value>,
     limit: Option<usize>,
 }
+
+/// Default instance name used since the test has no instance prefix in paths.
+const DEFAULT_INSTANCE: &str = "default";
 
 impl DefaultTableStoreHandler {
     pub fn new(storage: Arc<TableStoreStorage>) -> Self {
@@ -61,44 +81,111 @@ impl DefaultTableStoreHandler {
         }
     }
 
-    fn convert_primary_key(pk: &HashMap<String, serde_json::Value>) -> BTreeMap<String, AttributeValue> {
-        pk.iter()
+    /// Convert array-of-{name,value} to BTreeMap (used for primary keys).
+    fn pairs_to_primary_key(pairs: &[NameValue]) -> BTreeMap<String, AttributeValue> {
+        pairs
+            .iter()
+            .map(|nv| (nv.name.clone(), Self::json_to_attribute_value(&nv.value)))
+            .collect()
+    }
+
+    /// Convert array-of-{name,value} to HashMap (used for attributes).
+    fn pairs_to_attributes(pairs: &[NameValue]) -> HashMap<String, AttributeValue> {
+        pairs
+            .iter()
+            .map(|nv| (nv.name.clone(), Self::json_to_attribute_value(&nv.value)))
+            .collect()
+    }
+
+    /// Convert HashMap to BTreeMap (used for range queries where body already uses map form).
+    fn map_to_primary_key(map: &HashMap<String, serde_json::Value>) -> BTreeMap<String, AttributeValue> {
+        map.iter()
             .map(|(k, v)| (k.clone(), Self::json_to_attribute_value(v)))
             .collect()
     }
 
-    fn convert_attributes(attrs: &HashMap<String, serde_json::Value>) -> HashMap<String, AttributeValue> {
-        attrs
-            .iter()
-            .map(|(k, v)| (k.clone(), Self::json_to_attribute_value(v)))
-            .collect()
+    /// Parse a primary key from a URL query string like `id=1&name=foo`.
+    fn parse_pk_from_query(query: &str) -> Option<BTreeMap<String, AttributeValue>> {
+        if query.is_empty() {
+            return None;
+        }
+        let mut pk = BTreeMap::new();
+        for part in query.split('&') {
+            if let Some((k, v)) = part.split_once('=') {
+                if !k.is_empty() {
+                    let attr_val = if let Ok(i) = v.parse::<i64>() {
+                        AttributeValue::Integer(i)
+                    } else if let Ok(f) = v.parse::<f64>() {
+                        AttributeValue::Double(f)
+                    } else {
+                        AttributeValue::String(v.to_string())
+                    };
+                    pk.insert(k.to_string(), attr_val);
+                }
+            }
+        }
+        if pk.is_empty() { None } else { Some(pk) }
     }
 }
 
 impl TableStoreCommandHandler for DefaultTableStoreHandler {
-    fn handle_request(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+    fn handle_request(&self, method: &str, path: &str, query: &str, body: Option<&str>) -> (u16, String) {
         let path_parts: Vec<&str> = path.trim_matches('/').split('/').collect();
 
         match (method, path_parts.as_slice()) {
-            // GET / - List instances
+            // ── GET / ── server info ──
             ("GET", [""]) => {
                 let instances = self.storage.list_instances();
                 let response = serde_json::json!({
+                    "status": "ok",
+                    "protocol": "tablestore",
                     "instances": instances
                 });
                 (200, serde_json::to_string(&response).unwrap())
             }
 
-            // POST /{instance}/tables - Create table
-            ("POST", [instance, "tables"]) if path_parts.len() == 2 => {
+            // ── GET /tables ── list tables ──
+            ("GET", ["tables"]) => {
+                let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                let tables = inst.list_tables();
+                let response = serde_json::json!({ "tables": tables });
+                (200, serde_json::to_string(&response).unwrap())
+            }
+
+            // ── GET /tables/{name} ── describe table ──
+            ("GET", ["tables", name]) => {
+                let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                if let Some(tbl) = inst.get_table(name) {
+                    let schema = tbl.schema();
+                    let response = serde_json::json!({
+                        "table_name": name,
+                        "status": "ACTIVE",
+                        "primary_key": schema.primary_key,
+                        "defined_columns": schema.defined_columns,
+                        "row_count": tbl.count()
+                    });
+                    (200, serde_json::to_string(&response).unwrap())
+                } else {
+                    (404, r#"{"error": "Table not found"}"#.to_string())
+                }
+            }
+
+            // ── PUT /tables/{name} ── create table ──
+            ("PUT", ["tables", name]) => {
                 if let Some(body_str) = body {
                     if let Ok(req) = serde_json::from_str::<CreateTableRequest>(body_str) {
-                        let inst = self.storage.get_instance(instance);
-                        let schema = TableSchema::new(req.primary_key);
-                        inst.create_table(&req.table_name, schema);
+                        let pk_cols: Vec<ColumnDef> = req.primary_key.into_iter()
+                            .map(|c| ColumnDef { name: c.name, type_name: c.type_name })
+                            .collect();
+                        let def_cols: Vec<ColumnDef> = req.defined_columns.into_iter()
+                            .map(|c| ColumnDef { name: c.name, type_name: c.type_name })
+                            .collect();
+                        let schema = TableSchema::new(pk_cols, def_cols);
+                        let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                        inst.create_table(name, schema);
                         let response = serde_json::json!({
                             "status": "success",
-                            "table_name": req.table_name
+                            "table_name": name
                         });
                         return (200, serde_json::to_string(&response).unwrap());
                     }
@@ -106,39 +193,25 @@ impl TableStoreCommandHandler for DefaultTableStoreHandler {
                 (400, r#"{"error": "Invalid request"}"#.to_string())
             }
 
-            // GET /{instance}/tables - List tables
-            ("GET", [instance, "tables"]) if path_parts.len() == 2 => {
-                let inst = self.storage.get_instance(instance);
-                let tables = inst.list_tables();
-                let response = serde_json::json!({
-                    "tables": tables
-                });
-                (200, serde_json::to_string(&response).unwrap())
-            }
-
-            // DELETE /{instance}/tables/{table} - Delete table
-            ("DELETE", [instance, "tables", table]) if path_parts.len() == 3 => {
-                let inst = self.storage.get_instance(instance);
-                if inst.delete_table(table) {
+            // ── DELETE /tables/{name} ── delete table ──
+            ("DELETE", ["tables", name]) => {
+                let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                if inst.delete_table(name) {
                     (200, r#"{"status": "success"}"#.to_string())
                 } else {
                     (404, r#"{"error": "Table not found"}"#.to_string())
                 }
             }
 
-            // PUT /{instance}/{table}/row - Put row
-            ("PUT", [instance, table, "row"]) if path_parts.len() == 3 => {
+            // ── POST /tables/{name}/rows ── put row ──
+            ("POST", ["tables", name, "rows"]) => {
                 if let Some(body_str) = body {
                     if let Ok(req) = serde_json::from_str::<PutRowRequest>(body_str) {
-                        let inst = self.storage.get_instance(instance);
-                        if let Some(tbl) = inst.get_table(table) {
-                            let primary_key = Self::convert_primary_key(&req.primary_key);
-                            let attributes = Self::convert_attributes(&req.attributes);
-                            let row = Row {
-                                primary_key,
-                                attributes,
-                            };
-                            tbl.put_row(row);
+                        let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                        if let Some(tbl) = inst.get_table(name) {
+                            let primary_key = Self::pairs_to_primary_key(&req.primary_key);
+                            let attributes = Self::pairs_to_attributes(&req.attributes);
+                            tbl.put_row(Row { primary_key, attributes });
                             return (200, r#"{"status": "success"}"#.to_string());
                         } else {
                             return (404, r#"{"error": "Table not found"}"#.to_string());
@@ -148,38 +221,58 @@ impl TableStoreCommandHandler for DefaultTableStoreHandler {
                 (400, r#"{"error": "Invalid request"}"#.to_string())
             }
 
-            // POST /{instance}/{table}/row - Get row
-            ("POST", [instance, table, "row"]) if path_parts.len() == 3 => {
-                if let Some(body_str) = body {
-                    if let Ok(req) = serde_json::from_str::<GetRowRequest>(body_str) {
-                        let inst = self.storage.get_instance(instance);
-                        if let Some(tbl) = inst.get_table(table) {
-                            let primary_key = Self::convert_primary_key(&req.primary_key);
-                            if let Some(row) = tbl.get_row(&primary_key) {
-                                let response = serde_json::json!({
-                                    "primary_key": row.primary_key,
-                                    "attributes": row.attributes
-                                });
-                                return (200, serde_json::to_string(&response).unwrap());
-                            } else {
-                                return (404, r#"{"error": "Row not found"}"#.to_string());
-                            }
+            // ── GET /tables/{name}/rows?id=… ── get row by PK from query string ──
+            ("GET", ["tables", name, "rows"]) => {
+                if let Some(pk) = Self::parse_pk_from_query(query) {
+                    let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                    if let Some(tbl) = inst.get_table(name) {
+                        if let Some(row) = tbl.get_row(&pk) {
+                            let response = serde_json::json!({
+                                "primary_key": row.primary_key,
+                                "attributes": row.attributes
+                            });
+                            return (200, serde_json::to_string(&response).unwrap());
                         } else {
-                            return (404, r#"{"error": "Table not found"}"#.to_string());
+                            return (404, r#"{"error": "Row not found"}"#.to_string());
                         }
+                    } else {
+                        return (404, r#"{"error": "Table not found"}"#.to_string());
                     }
                 }
-                (400, r#"{"error": "Invalid request"}"#.to_string())
+                (400, r#"{"error": "Missing primary key in query string"}"#.to_string())
             }
 
-            // DELETE /{instance}/{table}/row - Delete row
-            ("DELETE", [instance, table, "row"]) if path_parts.len() == 3 => {
+            // ── DELETE /tables/{name}/rows?id=… ── delete row by PK from query string ──
+            ("DELETE", ["tables", name, "rows"]) => {
+                if let Some(pk) = Self::parse_pk_from_query(query) {
+                    let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                    if let Some(tbl) = inst.get_table(name) {
+                        if tbl.delete_row(&pk) {
+                            return (200, r#"{"status": "success"}"#.to_string());
+                        } else {
+                            return (404, r#"{"error": "Row not found"}"#.to_string());
+                        }
+                    } else {
+                        return (404, r#"{"error": "Table not found"}"#.to_string());
+                    }
+                }
+                (400, r#"{"error": "Missing primary key in query string"}"#.to_string())
+            }
+
+            // ── POST /tables/{name}/rows/{id} ── update row ──
+            ("POST", ["tables", name, "rows", _id]) => {
                 if let Some(body_str) = body {
-                    if let Ok(req) = serde_json::from_str::<GetRowRequest>(body_str) {
-                        let inst = self.storage.get_instance(instance);
-                        if let Some(tbl) = inst.get_table(table) {
-                            let primary_key = Self::convert_primary_key(&req.primary_key);
-                            if tbl.delete_row(&primary_key) {
+                    if let Ok(req) = serde_json::from_str::<UpdateRowRequest>(body_str) {
+                        let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                        if let Some(tbl) = inst.get_table(name) {
+                            let primary_key = Self::pairs_to_primary_key(&req.primary_key);
+                            let new_attrs = Self::pairs_to_attributes(&req.attributes);
+                            if let Some(existing) = tbl.get_row(&primary_key) {
+                                let mut merged = existing.attributes;
+                                for (k, v) in new_attrs {
+                                    merged.insert(k, v);
+                                }
+                                tbl.put_row(Row { primary_key, attributes: merged });
                                 return (200, r#"{"status": "success"}"#.to_string());
                             } else {
                                 return (404, r#"{"error": "Row not found"}"#.to_string());
@@ -192,19 +285,17 @@ impl TableStoreCommandHandler for DefaultTableStoreHandler {
                 (400, r#"{"error": "Invalid request"}"#.to_string())
             }
 
-            // POST /{instance}/{table}/range - Get range
-            ("POST", [instance, table, "range"]) if path_parts.len() == 3 => {
+            // ── POST /tables/{name}/range ── get range ──
+            ("POST", ["tables", name, "range"]) => {
                 if let Some(body_str) = body {
                     if let Ok(req) = serde_json::from_str::<GetRangeRequest>(body_str) {
-                        let inst = self.storage.get_instance(instance);
-                        if let Some(tbl) = inst.get_table(table) {
-                            let start = Self::convert_primary_key(&req.start);
-                            let end = Self::convert_primary_key(&req.end);
+                        let inst = self.storage.get_instance(DEFAULT_INSTANCE);
+                        if let Some(tbl) = inst.get_table(name) {
+                            let start = Self::map_to_primary_key(&req.start);
+                            let end = Self::map_to_primary_key(&req.end);
                             let limit = req.limit.unwrap_or(100);
                             let rows = tbl.get_range(&start, &end, limit);
-                            let response = serde_json::json!({
-                                "rows": rows
-                            });
+                            let response = serde_json::json!({ "rows": rows });
                             return (200, serde_json::to_string(&response).unwrap());
                         } else {
                             return (404, r#"{"error": "Table not found"}"#.to_string());
