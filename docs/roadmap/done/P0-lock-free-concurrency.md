@@ -33,7 +33,7 @@ public class TabletManager {
   4. 吞吐受限（1000 ops/sec）
 ```
 
-### RorisDB的无锁设计目标
+### HarnessDB的无锁设计目标
 
 ```
 无锁架构优势：
@@ -582,7 +582,7 @@ impl SchedulerActor {
 
 ## 📊 性能预期对比
 
-| 指标 | Doris（synchronized） | RorisDB（无锁） | 提升倍数 |
+| 指标 | Doris（synchronized） | HarnessDB（无锁） | 提升倍数 |
 |------|---------------------|----------------|---------|
 | **并发吞吐** | 1000 ops/sec | 10000 ops/sec | 10倍 |
 | **读延迟** | 100ms | 5ms | 20倍改善 |
@@ -728,7 +728,7 @@ impl TabletActorSupervisor {
 4. ✅ **并发安全**：无死锁风险
 5. ✅ **易于扩展**：Actor可并行增加
 
-**无锁并发是RorisDB稳定性的基础！**
+**无锁并发是HarnessDB稳定性的基础！**
 
 ---
 
@@ -750,4 +750,4 @@ impl TabletActorSupervisor {
 4. ✅ 性能：5-10倍提升，无锁竞争
 5. ✅ 稳定性：无死锁风险，易于扩展
 
-**P0-02是RorisDB并发性能的保障！**
+**P0-02是HarnessDB并发性能的保障！**

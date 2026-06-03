@@ -1,4 +1,4 @@
-//! Apache Cassandra native protocol implementation for RorisDB
+//! Apache Cassandra native protocol implementation for HarnessDB
 
 pub mod frame;
 pub mod handler;

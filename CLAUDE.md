@@ -5,7 +5,7 @@
 ## Version
 
 - **Current**: 0.3.3
-- **Repository**: https://github.com/walker83/RorisDB
+- **Repository**: https://github.com/walker83/HarnessDB
 
 ## Build
 
@@ -13,16 +13,16 @@
 cargo build --release
 ```
 
-Builds binary: `target/release/roris-fe`.
+Builds binary: `target/release/harness-db`.
 
 ## Run
 
 ```bash
 # Default: MySQL port 9030, data dir data/fe/storage
-./target/release/roris-fe
+./target/release/harness-db
 
 # Custom port and data directory
-./target/release/roris-fe --mysql-port 3306 --data-dir /path/to/data
+./target/release/harness-db --mysql-port 3306 --data-dir /path/to/data
 ```
 
 Connect via MySQL client: `mysql -h 127.0.0.1 -P 9030 -uroot`
@@ -42,13 +42,13 @@ cargo test -p integration-tests -- <test_name>
 
 ## Architecture
 
-RorisDB is a single-node OLAP database using DataFusion as the query engine with Parquet storage.
+HarnessDB is a single-node OLAP database using DataFusion as the query engine with Parquet storage.
 
 ### Frontend (FE) - Query Processing
 - **fe-sql-parser** - MySQL-compatible SQL parsing via `sqlparser` crate → AST
 - **fe-catalog** - Database/Table metadata management (JSON + RocksDB backends)
 - **fe-storage** - Parquet storage layer (DataFusion TableProvider, filter/projection pushdown)
-- **fe-datafusion** - Type conversion (Roris ↔ Arrow), UDFs, Block↔Arrow conversion
+- **fe-datafusion** - Type conversion (Harness ↔ Arrow), UDFs, Block↔Arrow conversion
 - **fe-common** - Shared FE utilities (EditLog)
 - **fe-monitor** - Audit log
 - **mysql-protocol** - MySQL wire protocol server (handshake, auth, COM_QUERY)
@@ -58,7 +58,7 @@ RorisDB is a single-node OLAP database using DataFusion as the query engine with
 
 ### Shared
 - **types** - DataType, Field, Schema, Vector, Bitmap, Block (columnar memory layout)
-- **common** - Error handling (DrorisError), configuration
+- **common** - Error handling (DharnessError), configuration
 
 ### Query Flow
 1. MySQL protocol receives SQL

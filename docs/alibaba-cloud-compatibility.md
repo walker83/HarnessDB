@@ -1,6 +1,6 @@
-# RorisDB Database Chameleon - 兼容性矩阵
+# HarnessDB Database Chameleon - 兼容性矩阵
 
-RorisDB 作为通用数据库仿真底座，支持模拟多种数据库协议和 SQL 方言。
+HarnessDB 作为通用数据库仿真底座，支持模拟多种数据库协议和 SQL 方言。
 
 ## Phase 1 & Phase 2 完成状态
 
@@ -64,7 +64,7 @@ MaxCompute 协议支持两种签名方式：
 | V2 签名 | HMAC-SHA1 | ✅ | `Authorization: ODPS {ak}:{signature}` |
 | V4 签名 | HMAC-SHA256 | ✅ | `Authorization: ODPS2-HMAC-SHA256 ...` |
 
-默认凭据: `AccessKey ID = "roris"`, `AccessKey Secret = "roris-secret"`
+默认凭据: `AccessKey ID = "harness"`, `AccessKey Secret = "harness-secret"`
 
 ### Tunnel 协议详情
 
@@ -121,7 +121,7 @@ Tunnel 使用自定义 Protobuf-like 线格式（非标准 Protobuf）：
 
 ### 数据类型兼容
 
-| MaxCompute 类型 | RorisDB 映射 | REST | Tunnel 编码 |
+| MaxCompute 类型 | HarnessDB 映射 | REST | Tunnel 编码 |
 |----------------|-------------|------|------------|
 | BIGINT | BIGINT | ✅ | ✅ ZigZag varint |
 | INT | INT | ✅ | ✅ ZigZag varint |
@@ -164,8 +164,8 @@ Tunnel 使用自定义 Protobuf-like 线格式（非标准 Protobuf）：
 | `INSERT INTO t SELECT ...` | 直接执行 | ✅ |
 | `INSERT OVERWRITE TABLE t SELECT ...` | 转为 INSERT INTO | ✅ 自动转换 |
 | `INSERT INTO t PARTITION(ds='x') VALUES ...` | 剥离 PARTITION 子句 | ✅ 自动转换 |
-| `UPDATE t SET ... WHERE ...` | 直接执行 | ✅ RorisDB 支持 |
-| `DELETE FROM t WHERE ...` | 直接执行 | ✅ RorisDB 支持 |
+| `UPDATE t SET ... WHERE ...` | 直接执行 | ✅ HarnessDB 支持 |
+| `DELETE FROM t WHERE ...` | 直接执行 | ✅ HarnessDB 支持 |
 | `MERGE INTO ...` | 透传 | ✅ 透传解析器 |
 | `FROM src INSERT INTO t1 ... INSERT INTO t2 ...` (MULTI INSERT) | 直接执行 | ✅ 透传 |
 
@@ -235,11 +235,11 @@ Tunnel 使用自定义 Protobuf-like 线格式（非标准 Protobuf）：
 | 明文密码认证 | — | ❌ | 未实现 |
 | SCRAM-SHA-256 | — | ❌ | Phase 2 |
 
-默认凭据: `username = "roris"`, `password = "roris-secret"`
+默认凭据: `username = "harness"`, `password = "harness-secret"`
 
 ### 数据类型兼容
 
-| Hologres/PG 类型 | RorisDB 映射 | 状态 |
+| Hologres/PG 类型 | HarnessDB 映射 | 状态 |
 |-----------------|-------------|------|
 | BIGINT | BIGINT | ✅ |
 | INTEGER / INT | INT | ✅ |
@@ -313,7 +313,7 @@ Tunnel 使用自定义 Protobuf-like 线格式（非标准 Protobuf）：
 | `pg_attribute` | ✅ | 映射到 column |
 | `pg_user` / `pg_roles` | ✅ | 模拟返回 |
 | `hg_stat_activity` | ✅ | Hologres 特有视图已实现 |
-| `version()` | ✅ | 返回 "PostgreSQL 15.x (RorisDB)" |
+| `version()` | ✅ | 返回 "PostgreSQL 15.x (HarnessDB)" |
 | `current_schema()` | ✅ | 返回当前 schema |
 | `current_database()` | ✅ | 返回当前 database |
 | `pg_typeof()` | ✅ | 类型推断 |
@@ -326,13 +326,13 @@ Tunnel 使用自定义 Protobuf-like 线格式（非标准 Protobuf）：
 ### MaxCompute 兼容
 
 ```bash
-# 启动 RorisDB
-./target/release/roris-fe --mysql-port 9030 --maxcompute-port 9031
+# 启动 HarnessDB
+./target/release/harness-db --mysql-port 9030 --maxcompute-port 9031
 
 # 使用 pyodps 连接 (REST API + SQL)
 python3 <<EOF
 from odps import ODPS
-o = ODPS('roris', 'roris-secret', 'default',
+o = ODPS('harness', 'harness-secret', 'default',
          endpoint='http://127.0.0.1:9031/api')
 
 # 创建表
@@ -359,7 +359,7 @@ python3 <<EOF
 from odps import ODPS
 from odps.tunnel import TableTunnel
 
-o = ODPS('roris', 'roris-secret', 'default',
+o = ODPS('harness', 'harness-secret', 'default',
          endpoint='http://127.0.0.1:9031/api')
 
 tunnel = TableTunnel(o)
@@ -386,11 +386,11 @@ EOF
 ### Hologres 兼容
 
 ```bash
-# 启动 RorisDB
-./target/release/roris-fe --mysql-port 9030 --hologres-port 15432
+# 启动 HarnessDB
+./target/release/harness-db --mysql-port 9030 --hologres-port 15432
 
 # 使用 psql 连接
-psql -h 127.0.0.1 -p 15432 -U roris -d default
+psql -h 127.0.0.1 -p 15432 -U harness -d default
 
 # 建表 (Hologres 语法)
 CREATE TABLE orders (
@@ -418,7 +418,7 @@ SELECT * FROM orders WHERE user_id = 100;
 
 ```
 +-------------------------------------------------------------------+
-|                      RorisDB Core Engine                          |
+|                      HarnessDB Core Engine                          |
 |  DataFusion 48 | Parquet Storage | Catalog Manager                |
 +-------------------------------------------------------------------+
          ^                    ^                    ^

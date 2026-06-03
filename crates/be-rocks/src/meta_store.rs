@@ -1,4 +1,4 @@
-//! RocksDB wrapper with column families for RorisDB metadata storage.
+//! RocksDB wrapper with column families for HarnessDB metadata storage.
 //!
 //! Column families:
 //! - `catalog`: Database/Table metadata, atomic ID counter

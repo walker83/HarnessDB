@@ -4,7 +4,7 @@ use std::sync::Arc;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use fe_backup::BackupManager;
 use fe_catalog::CatalogManager;
-use fe_config::{RorisConfig, SessionVariables, SystemVariableManager};
+use fe_config::{HarnessConfig, SessionVariables, SystemVariableManager};
 use fe_datafusion::{register_doris_udfs, register_misc_udfs};
 use fe_monitor::audit_log::AuditLogger;
 use fe_storage::{ParquetCatalogProvider, ParquetStorage};
@@ -21,14 +21,14 @@ pub(crate) struct SessionState {
     pub(crate) transaction: SimpleTransactionState,
 }
 
-pub(crate) struct RorisQueryHandler {
+pub(crate) struct HarnessQueryHandler {
     pub(crate) catalog: Arc<CatalogManager>,
     pub(crate) views: Arc<PlRwLock<Vec<ViewInfo>>>,
     pub(crate) session_ctx: SessionContext,
     pub(crate) storage: Arc<ParquetStorage>,
     // Configuration and system variables
     #[allow(dead_code)]
-    pub(crate) config: RorisConfig,
+    pub(crate) config: HarnessConfig,
     pub(crate) sys_vars: Arc<SystemVariableManager>,
     // Per-connection session state
     pub(crate) sessions: Arc<PlRwLock<HashMap<u32, SessionState>>>,
@@ -104,10 +104,10 @@ impl SimpleTransactionState {
     }
 }
 
-impl RorisQueryHandler {
+impl HarnessQueryHandler {
     pub(crate) fn new(
         catalog: Arc<CatalogManager>,
-        config: RorisConfig,
+        config: HarnessConfig,
         sys_vars: Arc<SystemVariableManager>,
         audit_logger: Arc<AuditLogger>,
         connection_tracker: Arc<ConnectionTracker>,
@@ -124,11 +124,11 @@ impl RorisQueryHandler {
             storage.clone(),
         ));
         let df_config = SessionConfig::new()
-            .with_default_catalog_and_schema("roris", "information_schema")
+            .with_default_catalog_and_schema("harness", "information_schema")
             .with_create_default_catalog_and_schema(false)
             .with_information_schema(false); // Use custom information_schema from ParquetCatalogProvider
         let mut session_ctx = SessionContext::new_with_config(df_config);
-        session_ctx.register_catalog("roris", df_catalog);
+        session_ctx.register_catalog("harness", df_catalog);
         register_doris_udfs(&mut session_ctx);
         register_misc_udfs(&mut session_ctx);
         fe_datafusion::register_date_udfs(&mut session_ctx);
@@ -142,7 +142,7 @@ impl RorisQueryHandler {
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .worker_threads(max_concurrent.max(2))
-                .thread_name("roris-df-worker")
+                .thread_name("harness-df-worker")
                 .build()
                 .expect("Failed to create shared Tokio runtime"),
         );

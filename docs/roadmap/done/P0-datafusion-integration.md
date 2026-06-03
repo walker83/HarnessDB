@@ -2,7 +2,7 @@
 
 ## 背景
 
-当前 RorisDB 的 SQL 引擎完全手写（Parser → Planner → Optimizer → Execution），存在以下根本问题：
+当前 HarnessDB 的 SQL 引擎完全手写（Parser → Planner → Optimizer → Execution），存在以下根本问题：
 - 表达式在 Planner 和 Execution 之间用字符串传递，需要序列化→反序列化，导致信息丢失（如 DISTINCT 标志）
 - 聚合结果没有列名，下游只能靠索引猜测
 - 表达式解析器用手写字符串匹配，遇到括号就放弃二元运算符解析
@@ -21,9 +21,9 @@ MySQL Protocol → fe_main.rs (DDL dispatch)
                     ↓
             DataFusion (Parser → LogicalPlan → Optimizer → PhysicalPlan → Execution)
                     ↓
-             RorisTableProvider (MemTable wrapper)
+             HarnessTableProvider (MemTable wrapper)
                     ↕
-             RorisCatalogProvider → fe-catalog::CatalogManager
+             HarnessCatalogProvider → fe-catalog::CatalogManager
 ```
 
 ### 选择
@@ -36,8 +36,8 @@ MySQL Protocol → fe_main.rs (DDL dispatch)
 ### Phase 1: 基础框架
 1. [x] 创建 `fe-datafusion` crate
 2. [ ] 实现类型转换 `DataType ↔ Arrow DataType`
-3. [ ] 实现 `RorisCatalogProvider` (CatalogProvider + SchemaProvider)
-4. [ ] 实现 `RorisTableProvider` (TableProvider wrapping MemTable)
+3. [ ] 实现 `HarnessCatalogProvider` (CatalogProvider + SchemaProvider)
+4. [ ] 实现 `HarnessTableProvider` (TableProvider wrapping MemTable)
 
 ### Phase 2: 查询通道
 5. [ ] 改造 `fe_main.rs` 的 DML 路径，用 `SessionContext::sql()` 替换手写引擎
@@ -59,8 +59,8 @@ MySQL Protocol → fe_main.rs (DDL dispatch)
 - `crates/fe-datafusion/` — DataFusion 适配层
 
 ### 修改
-- `roris-server/src/fe_main.rs` — DML 走 DataFusion, DDL 保留
-- `roris-server/Cargo.toml` — 添加 fe-datafusion 依赖
+- `harness-server/src/fe_main.rs` — DML 走 DataFusion, DDL 保留
+- `harness-server/Cargo.toml` — 添加 fe-datafusion 依赖
 - `Cargo.toml` — 添加 workspace member
 
 ### 保留不动

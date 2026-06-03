@@ -1,44 +1,44 @@
 
-use ::types::DataType as RorisDataType;
+use ::types::DataType as HarnessDataType;
 use fe_sql_parser::Statement;
 use mysql_protocol::QueryResult;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 
-use crate::handler_struct::RorisQueryHandler;
+use crate::handler_struct::HarnessQueryHandler;
 use crate::utils::like_match;
 
 /// Convert internal DataType to MySQL-compatible type string for DESCRIBE/SHOW CREATE TABLE
-fn datatype_to_mysql_type(dt: &RorisDataType) -> String {
+fn datatype_to_mysql_type(dt: &HarnessDataType) -> String {
     match dt {
-        RorisDataType::Null => "NULL".to_string(),
-        RorisDataType::Boolean => "TINYINT(1)".to_string(),
-        RorisDataType::Int8 => "TINYINT".to_string(),
-        RorisDataType::Int16 => "SMALLINT".to_string(),
-        RorisDataType::Int32 => "INT".to_string(),
-        RorisDataType::Int64 => "BIGINT".to_string(),
-        RorisDataType::Int128 => "DECIMAL(38,0)".to_string(),
-        RorisDataType::Float32 => "FLOAT".to_string(),
-        RorisDataType::Float64 => "DOUBLE".to_string(),
-        RorisDataType::Decimal(d) => format!("DECIMAL({},{})", d.precision, d.scale),
-        RorisDataType::Date => "DATE".to_string(),
-        RorisDataType::DateTime => "DATETIME".to_string(),
-        RorisDataType::Varchar(n) => format!("VARCHAR({})", n),
-        RorisDataType::Char(n) => format!("CHAR({})", n),
-        RorisDataType::String => "TEXT".to_string(),
-        RorisDataType::Binary => "BLOB".to_string(),
-        RorisDataType::Json => "JSON".to_string(),
-        RorisDataType::Array(inner) => format!("ARRAY<{}>", datatype_to_mysql_type(inner)),
-        RorisDataType::Map(k, v) => format!(
+        HarnessDataType::Null => "NULL".to_string(),
+        HarnessDataType::Boolean => "TINYINT(1)".to_string(),
+        HarnessDataType::Int8 => "TINYINT".to_string(),
+        HarnessDataType::Int16 => "SMALLINT".to_string(),
+        HarnessDataType::Int32 => "INT".to_string(),
+        HarnessDataType::Int64 => "BIGINT".to_string(),
+        HarnessDataType::Int128 => "DECIMAL(38,0)".to_string(),
+        HarnessDataType::Float32 => "FLOAT".to_string(),
+        HarnessDataType::Float64 => "DOUBLE".to_string(),
+        HarnessDataType::Decimal(d) => format!("DECIMAL({},{})", d.precision, d.scale),
+        HarnessDataType::Date => "DATE".to_string(),
+        HarnessDataType::DateTime => "DATETIME".to_string(),
+        HarnessDataType::Varchar(n) => format!("VARCHAR({})", n),
+        HarnessDataType::Char(n) => format!("CHAR({})", n),
+        HarnessDataType::String => "TEXT".to_string(),
+        HarnessDataType::Binary => "BLOB".to_string(),
+        HarnessDataType::Json => "JSON".to_string(),
+        HarnessDataType::Array(inner) => format!("ARRAY<{}>", datatype_to_mysql_type(inner)),
+        HarnessDataType::Map(k, v) => format!(
             "MAP<{},{}>",
             datatype_to_mysql_type(k),
             datatype_to_mysql_type(v)
         ),
-        RorisDataType::Struct(_) => "STRUCT".to_string(),
-        RorisDataType::Float32Vector(dim) => format!("FLOAT32_VECTOR({})", dim),
+        HarnessDataType::Struct(_) => "STRUCT".to_string(),
+        HarnessDataType::Float32Vector(dim) => format!("FLOAT32_VECTOR({})", dim),
     }
 }
 
-impl RorisQueryHandler {
+impl HarnessQueryHandler {
     pub(crate) fn execute_statement(
         &self,
         conn_id: u32,
@@ -820,12 +820,12 @@ impl RorisQueryHandler {
     }
 
     pub(crate) fn show_engines(&self) -> Result<QueryResult, String> {
-        // RorisDB uses a single storage engine based on Parquet
+        // HarnessDB uses a single storage engine based on Parquet
         let rows = vec![
             vec![
                 Some("InnoDB".to_string()),
                 Some("DEFAULT".to_string()),
-                Some("RorisDB Parquet storage engine".to_string()),
+                Some("HarnessDB Parquet storage engine".to_string()),
                 Some("NO".to_string()),
                 Some("NO".to_string()),
                 Some("NO".to_string()),

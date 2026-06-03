@@ -8,7 +8,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use crate::database::Database;
 use crate::materialized_view::MaterializedView;
 use crate::table::Table;
-use common::{CatalogError, DrorisError, Result};
+use common::{CatalogError, DharnessError, Result};
 
 /// Configuration for CatalogManager backend selection.
 #[derive(Debug, Clone)]
@@ -222,7 +222,7 @@ impl MetaBackend for JsonMetaBackend {
         }
         let contents = fs::read_to_string(&path)?;
         let state: CatalogState =
-            serde_json::from_str(&contents).map_err(|e| DrorisError::Internal(e.to_string()))?;
+            serde_json::from_str(&contents).map_err(|e| DharnessError::Internal(e.to_string()))?;
         for (key, value) in state.databases {
             self.databases.insert(key, value);
         }
@@ -253,7 +253,7 @@ impl JsonMetaBackend {
             next_id: self.next_id.load(Ordering::Relaxed),
         };
         let json = serde_json::to_string(&catalog_state)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+            .map_err(|e| DharnessError::Internal(e.to_string()))?;
         let path = self.catalog_file();
         fs::create_dir_all(&self.catalog_path)?;
         fs::write(&path, json.as_bytes())?;
@@ -270,7 +270,7 @@ impl JsonMetaBackend {
         }
         let contents = fs::read_to_string(&path)?;
         let state: CatalogState =
-            serde_json::from_str(&contents).map_err(|e| DrorisError::Internal(e.to_string()))?;
+            serde_json::from_str(&contents).map_err(|e| DharnessError::Internal(e.to_string()))?;
         for (key, value) in state.databases {
             self.databases.insert(key, value);
         }
@@ -291,7 +291,7 @@ pub struct RocksMetaBackend {
 impl RocksMetaBackend {
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let meta_store = be_rocks::MetaStore::open(path)
-            .map_err(|e| DrorisError::Internal(format!("Failed to open RocksDB: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("Failed to open RocksDB: {}", e)))?;
         let catalog_store = be_rocks::CatalogStore::new(Arc::new(meta_store));
         Ok(Self { catalog_store })
     }
@@ -301,10 +301,10 @@ impl MetaBackend for RocksMetaBackend {
     fn put_database(&self, name: &str, db: &Database) -> Result<()> {
         // Serialize fe_catalog::Database to JSON bytes and store raw
         let data = serde_json::to_vec(db)
-            .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
         self.catalog_store
             .put_database_raw(name, &data)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_database(&self, name: &str) -> Result<Option<Database>> {
@@ -312,31 +312,31 @@ impl MetaBackend for RocksMetaBackend {
         let data = self
             .catalog_store
             .get_database_raw(name)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
-            .map_err(|e| DrorisError::Internal(format!("Deserialization error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
     }
 
     fn delete_database(&self, name: &str) -> Result<()> {
         self.catalog_store
             .delete_database(name)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn list_databases(&self) -> Result<Vec<String>> {
         self.catalog_store
             .list_databases()
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()> {
         // Serialize fe_catalog::Table to JSON bytes and store raw
         let data = serde_json::to_vec(table)
-            .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
         self.catalog_store
             .put_table_raw(db_name, table_name, &data)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
@@ -344,40 +344,40 @@ impl MetaBackend for RocksMetaBackend {
         let data = self
             .catalog_store
             .get_table_raw(db_name, table_name)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
-            .map_err(|e| DrorisError::Internal(format!("Deserialization error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
     }
 
     fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
         self.catalog_store
             .delete_table(db_name, table_name)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
         self.catalog_store
             .list_tables(db_name)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn next_id(&self) -> Result<u64> {
         self.catalog_store
             .next_id()
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn set_next_id(&self, value: u64) -> Result<()> {
         self.catalog_store
             .set_next_id(value)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_next_id(&self) -> Result<u64> {
         self.catalog_store
             .get_next_id()
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn put_materialized_view(
@@ -389,10 +389,10 @@ impl MetaBackend for RocksMetaBackend {
         // Store materialized views with a special prefix
         let key = format!("mv:{}.{}", db_name, name);
         let value = serde_json::to_vec(mv)
-            .map_err(|e| DrorisError::Internal(format!("Serialization error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
         self.catalog_store
             .put_raw(&key, &value)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
@@ -400,17 +400,17 @@ impl MetaBackend for RocksMetaBackend {
         let data = self
             .catalog_store
             .get_raw(&key)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
-            .map_err(|e| DrorisError::Internal(format!("Deserialization error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
     }
 
     fn delete_materialized_view(&self, db_name: &str, name: &str) -> Result<()> {
         let key = format!("mv:{}.{}", db_name, name);
         self.catalog_store
             .delete_raw(&key)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
@@ -418,13 +418,13 @@ impl MetaBackend for RocksMetaBackend {
         let keys = self
             .catalog_store
             .list_keys_with_prefix_str(&prefix)
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
         let mut mvs = Vec::new();
         for key in keys {
             if let Some(data) = self
                 .catalog_store
                 .get_raw(&key)
-                .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))?
+                .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?
             {
                 if let Ok(mv) = serde_json::from_slice::<MaterializedView>(&data) {
                     mvs.push(mv);
@@ -437,7 +437,7 @@ impl MetaBackend for RocksMetaBackend {
     fn flush(&self) -> Result<()> {
         self.catalog_store
             .flush()
-            .map_err(|e| DrorisError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
     }
 
     fn load(&self) -> Result<()> {
@@ -697,7 +697,7 @@ impl CatalogManager {
 
     pub fn create_database(&self, name: &str) -> Result<()> {
         if self.databases.contains_key(name) {
-            return Err(DrorisError::catalog(
+            return Err(DharnessError::catalog(
                 CatalogError::DatabaseAlreadyExists,
                 format!("database '{}' already exists", name),
             ));
@@ -705,7 +705,7 @@ impl CatalogManager {
         // Use create_dir_all (idempotent) to avoid TOCTOU race between checking
         // and creating the metadata directory.
         std::fs::create_dir_all(&self.catalog_path).map_err(|e| {
-            DrorisError::Internal(format!("Failed to create catalog directory: {}", e))
+            DharnessError::Internal(format!("Failed to create catalog directory: {}", e))
         })?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let db = Database::new(id, name);
@@ -716,7 +716,7 @@ impl CatalogManager {
 
     pub fn drop_database(&self, name: &str) -> Result<()> {
         self.databases.remove(name).ok_or_else(|| {
-            DrorisError::catalog(
+            DharnessError::catalog(
                 CatalogError::DatabaseNotFound,
                 format!("database '{}' not found", name),
             )
@@ -739,14 +739,14 @@ impl CatalogManager {
 
     pub fn create_table(&self, db_name: &str, table: Table) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name).ok_or_else(|| {
-            DrorisError::catalog(
+            DharnessError::catalog(
                 CatalogError::DatabaseNotFound,
                 format!("database '{}' not found", db_name),
             )
         })?;
         // Check for duplicate to prevent silent overwrite
         if db_ref.get_table(&table.name).is_some() {
-            return Err(DrorisError::catalog(
+            return Err(DharnessError::catalog(
                 CatalogError::TableAlreadyExists,
                 format!("table '{}.{}' already exists", db_name, table.name),
             ));
@@ -758,13 +758,13 @@ impl CatalogManager {
 
     pub fn drop_table(&self, db_name: &str, table_name: &str) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name).ok_or_else(|| {
-            DrorisError::catalog(
+            DharnessError::catalog(
                 CatalogError::DatabaseNotFound,
                 format!("database '{}' not found", db_name),
             )
         })?;
         db_ref.drop_table(table_name).ok_or_else(|| {
-            DrorisError::catalog(
+            DharnessError::catalog(
                 CatalogError::TableNotFound,
                 format!("table '{}' not found", table_name),
             )
@@ -799,7 +799,7 @@ impl CatalogManager {
     pub fn drop_materialized_view(&self, db_name: &str, name: &str) -> common::Result<()> {
         let key = format!("{}.{}", db_name, name);
         self.materialized_views.remove(&key).ok_or_else(|| {
-            DrorisError::catalog(
+            DharnessError::catalog(
                 CatalogError::TableNotFound,
                 format!("materialized view '{}' not found", name),
             )
@@ -847,7 +847,7 @@ impl CatalogManager {
             next_id: self.next_id.load(Ordering::Relaxed),
         };
         let json = serde_json::to_string(&catalog_state)
-            .map_err(|e| DrorisError::Internal(e.to_string()))?;
+            .map_err(|e| DharnessError::Internal(e.to_string()))?;
         let path = format!("{}/catalog.json", self.catalog_path);
         fs::create_dir_all(&self.catalog_path)?;
         fs::write(&path, json.as_bytes())?;
@@ -968,7 +968,7 @@ impl CatalogWriter {
 
     pub async fn create_database(&self, name: &str) -> common::Result<()> {
         let op = CatalogOp::CreateDatabase(name.to_string());
-        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let data = serde_json::to_vec(&op).map_err(|e| DharnessError::Internal(e.to_string()))?;
         let _index = self
             .edit_log
             .write()
@@ -980,7 +980,7 @@ impl CatalogWriter {
 
     pub async fn drop_database(&self, name: &str) -> common::Result<()> {
         let op = CatalogOp::DropDatabase(name.to_string());
-        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let data = serde_json::to_vec(&op).map_err(|e| DharnessError::Internal(e.to_string()))?;
         let _index = self
             .edit_log
             .write()
@@ -995,7 +995,7 @@ impl CatalogWriter {
             db: db_name.to_string(),
             table: table.clone(),
         };
-        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let data = serde_json::to_vec(&op).map_err(|e| DharnessError::Internal(e.to_string()))?;
         let _index = self
             .edit_log
             .write()
@@ -1010,7 +1010,7 @@ impl CatalogWriter {
             db: db_name.to_string(),
             table: db_name.to_string(),
         };
-        let data = serde_json::to_vec(&op).map_err(|e| DrorisError::Internal(e.to_string()))?;
+        let data = serde_json::to_vec(&op).map_err(|e| DharnessError::Internal(e.to_string()))?;
         let _index = self
             .edit_log
             .write()

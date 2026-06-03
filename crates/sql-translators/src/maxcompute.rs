@@ -1,6 +1,6 @@
 //! MaxCompute (ODPS) SQL dialect translator.
 //!
-//! Translates MaxCompute SQL to RorisDB-compatible SQL by:
+//! Translates MaxCompute SQL to HarnessDB-compatible SQL by:
 //! - Stripping MaxCompute-specific DDL clauses (PARTITIONED BY, LIFECYCLE, STORED AS, etc.)
 //! - Converting INSERT OVERWRITE to INSERT INTO
 //! - Removing MAPJOIN/SKEWJOIN optimizer hints
@@ -327,8 +327,8 @@ fn process_create_table(sql: &str) -> (String, Vec<String>) {
     let mut result = trimmed.to_string();
 
     // Strip COMMENT on table (keep column comments in the column defs)
-    // Actually, let's not strip table COMMENT - keep it if RorisDB supports it
-    // The spec says "Handle COMMENT 'text' on columns and tables (keep if RorisDB supports, else strip)"
+    // Actually, let's not strip table COMMENT - keep it if HarnessDB supports it
+    // The spec says "Handle COMMENT 'text' on columns and tables (keep if HarnessDB supports, else strip)"
 
     let (r1, w1) = strip_lifecycle(&result);
     result = r1;
@@ -725,7 +725,7 @@ fn translate_cluster_by(sql: &str) -> (String, Vec<String>) {
 }
 
 /// Strip `ZORDER BY (...)` clauses for compatibility.
-/// ZORDER BY is a MaxCompute data skipping optimization not supported by RorisDB.
+/// ZORDER BY is a MaxCompute data skipping optimization not supported by HarnessDB.
 fn strip_zorder_by(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
     let (masked, original_strings) = crate::mask_string_literals(sql);
@@ -797,7 +797,7 @@ fn strip_zorder_by(sql: &str) -> (String, Vec<String>) {
     (result, warnings)
 }
 
-/// Map MaxCompute types to RorisDB types in column definitions.
+/// Map MaxCompute types to HarnessDB types in column definitions.
 /// Uses string literal masking to avoid matching type keywords inside string values.
 fn map_types_in_ddl(sql: &str) -> String {
     let (masked, original_strings) = crate::mask_string_literals(sql);
@@ -829,7 +829,7 @@ impl DialectTranslator for MaxComputeTranslator {
         // Check for no-op SET/SETPROJECT statements
         if is_noop_set_statement(cleaned) {
             return TranslateResult::ok(String::new())
-                .with_warning("SET/SETPROJECT statement is a no-op in RorisDB");
+                .with_warning("SET/SETPROJECT statement is a no-op in HarnessDB");
         }
 
         // Check for unsupported features
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn test_create_table_with_comment() {
-        // Table-level COMMENT should be preserved (RorisDB may support it)
+        // Table-level COMMENT should be preserved (HarnessDB may support it)
         assert_translated(
             "CREATE TABLE t (col1 STRING) COMMENT 'a table'",
             "CREATE TABLE t (col1 STRING) COMMENT 'a table'",
@@ -1522,7 +1522,7 @@ mod tests {
         );
     }
 
-    // ── Features now passed through to RorisDB ──
+    // ── Features now passed through to HarnessDB ──
     fn test_select_replace_passthrough() {
         // SELECT * REPLACE now passes through to DataFusion
         assert_translated(
@@ -1542,7 +1542,7 @@ mod tests {
 
     #[test]
     fn test_update_passthrough() {
-        // UPDATE now passes through (RorisDB supports it)
+        // UPDATE now passes through (HarnessDB supports it)
         assert_translated(
             "UPDATE t SET col1 = 1 WHERE id = 1",
             "UPDATE t SET col1 = 1 WHERE id = 1",
@@ -1551,7 +1551,7 @@ mod tests {
 
     #[test]
     fn test_delete_passthrough() {
-        // DELETE now passes through (RorisDB supports it)
+        // DELETE now passes through (HarnessDB supports it)
         assert_translated("DELETE FROM t WHERE id = 1", "DELETE FROM t WHERE id = 1");
     }
 

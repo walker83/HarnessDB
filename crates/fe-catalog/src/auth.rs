@@ -1,4 +1,4 @@
-//! Authentication and authorization for RorisDB
+//! Authentication and authorization for HarnessDB
 //! Supports: RBAC, TLS, Data masking
 
 use serde::{Deserialize, Serialize};

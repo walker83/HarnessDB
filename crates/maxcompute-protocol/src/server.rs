@@ -34,8 +34,8 @@ impl Default for McServerConfig {
         Self {
             bind_addr: "127.0.0.1".to_string(),
             port: 9031,
-            access_key_id: "roris".to_string(),
-            access_key_secret: "roris-secret".to_string(),
+            access_key_id: "harness".to_string(),
+            access_key_secret: "harness-secret".to_string(),
             default_project: "default".to_string(),
             region: None,
         }
@@ -178,8 +178,8 @@ mod tests {
         let config = McServerConfig::default();
         assert_eq!(config.bind_addr, "127.0.0.1");
         assert_eq!(config.port, 9031);
-        assert_eq!(config.access_key_id, "roris");
-        assert_eq!(config.access_key_secret, "roris-secret");
+        assert_eq!(config.access_key_id, "harness");
+        assert_eq!(config.access_key_secret, "harness-secret");
         assert_eq!(config.default_project, "default");
         assert!(config.region.is_none());
     }

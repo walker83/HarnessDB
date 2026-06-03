@@ -1,4 +1,4 @@
-//! ClickHouse HTTP protocol implementation for RorisDB
+//! ClickHouse HTTP protocol implementation for HarnessDB
 //! Compatible with ClickHouse HTTP interface and clickhouse-client
 
 pub mod handler;

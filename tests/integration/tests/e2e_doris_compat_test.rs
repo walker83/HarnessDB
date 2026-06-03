@@ -23,8 +23,8 @@ struct E2eServer {
 impl E2eServer {
     fn start() -> Self {
         let pid = std::process::id();
-        let meta_dir = format!("/tmp/roris_e2e_meta_{}", pid);
-        let data_dir = format!("/tmp/roris_e2e_data_{}", pid);
+        let meta_dir = format!("/tmp/harness_e2e_meta_{}", pid);
+        let data_dir = format!("/tmp/harness_e2e_data_{}", pid);
 
         let _ = std::fs::remove_dir_all(&meta_dir);
         let _ = std::fs::remove_dir_all(&data_dir);
@@ -43,7 +43,7 @@ impl E2eServer {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .unwrap_or_else(|e| panic!("Failed to start roris-fe binary '{}': {}", binary, e));
+            .unwrap_or_else(|e| panic!("Failed to start harness-db binary '{}': {}", binary, e));
 
         E2eServer {
             child,
@@ -80,8 +80,8 @@ impl Drop for E2eServer {
 fn find_binary() -> String {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let candidates = [
-        format!("{}/../../target/release/roris-fe", manifest_dir),
-        format!("{}/../../target/debug/roris-fe", manifest_dir),
+        format!("{}/../../target/release/harness-db", manifest_dir),
+        format!("{}/../../target/debug/harness-db", manifest_dir),
     ];
 
     for path in &candidates {
@@ -91,7 +91,7 @@ fn find_binary() -> String {
     }
 
     panic!(
-        "roris-fe binary not found. Build with: cargo build --release\n\
+        "harness-db binary not found. Build with: cargo build --release\n\
          Expected at one of:\n  {}",
         candidates.join("\n  ")
     );

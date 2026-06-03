@@ -1,4 +1,4 @@
-# RorisDB 功能列表
+# HarnessDB 功能列表
 
 > 版本 0.3.0
 
@@ -80,7 +80,7 @@
 
 ## 数据类型
 
-| RorisDB 类型 | SQL 语法 | Arrow 类型 | 说明 |
+| HarnessDB 类型 | SQL 语法 | Arrow 类型 | 说明 |
 |-------------|---------|-----------|------|
 | `Boolean` | `BOOLEAN`、`BOOL` | Boolean | |
 | `Int8` | `TINYINT` | Int8 | |

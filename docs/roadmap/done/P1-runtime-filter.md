@@ -45,7 +45,7 @@ public class RuntimeFilter {
 // 3. MinMax Filter（范围过滤）
 ```
 
-### RorisDB的缺失
+### HarnessDB的缺失
 
 ```
 当前缺失：
@@ -485,7 +485,7 @@ fe-scheduler/src/coordinator.rs # 集成RF管理
 4. ✅ **性能提升**：5-10倍（Hash Join）
 5. ✅ **网络优化**：减少数据传输
 
-**Runtime Filter是RorisDB Join优化的重要组成部分！**
+**Runtime Filter是HarnessDB Join优化的重要组成部分！**
 
 ---
 
@@ -505,4 +505,4 @@ fe-scheduler/src/coordinator.rs # 集成RF管理
 3. ✅ 性能提升明显（5-10倍）
 4. ✅ 标准优化功能（数据库必备）
 
-**P1-05是RorisDB Join优化的关键！**
+**P1-05是HarnessDB Join优化的关键！**

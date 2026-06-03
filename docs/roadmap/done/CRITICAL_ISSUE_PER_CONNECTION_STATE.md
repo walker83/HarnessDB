@@ -9,14 +9,14 @@
 
 E2E integration tests show failures when multiple connections are active:
 ```
-table 'roris.test_29970_15.sales' not found
+table 'harness.test_29970_15.sales' not found
 ```
 
 Tests interfere with each other even when running sequentially.
 
 ## Root Cause
 
-All MySQL connections shared a single `RorisQueryHandler` instance with shared state:
+All MySQL connections shared a single `HarnessQueryHandler` instance with shared state:
 - `current_database: Arc<PlRwLock<String>>` - shared across ALL connections
 - `session_vars: Arc<PlRwLock<SessionVariables>>` - shared across ALL connections  
 - `transaction: Arc<PlRwLock<SimpleTransactionState>>` - shared across ALL connections
@@ -31,7 +31,7 @@ When test A executes `USE database_a`, it sets the shared `current_database`. Wh
 The issue has been resolved by implementing per-connection session state using `HashMap<u32, SessionState>`:
 
 ```rust
-pub(crate) struct RorisQueryHandler {
+pub(crate) struct HarnessQueryHandler {
     // ... shared resources ...
     pub(crate) sessions: Arc<PlRwLock<HashMap<u32, SessionState>>>,
 }

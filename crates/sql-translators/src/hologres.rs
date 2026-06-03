@@ -1,7 +1,7 @@
 //! Hologres SQL dialect translator.
 //!
 //! Translates Hologres (Alibaba Cloud PostgreSQL-compatible) SQL to
-//! RorisDB-compatible SQL by:
+//! HarnessDB-compatible SQL by:
 //! - Stripping Hologres-specific DDL clauses (WITH table properties, etc.)
 //! - Converting CALL set_table_property to no-op
 //! - Stripping PARTITION BY LIST and PARTITION OF
@@ -388,7 +388,7 @@ fn strip_explain_analyze(sql: &str) -> (String, Vec<String>) {
 }
 
 /// Strip FOR UPDATE / FOR SHARE / FOR NO KEY UPDATE / FOR KEY SHARE from SELECT statements.
-/// These are row-level locking clauses that RorisDB does not support, but rather than
+/// These are row-level locking clauses that HarnessDB does not support, but rather than
 /// erroring, we strip them with a warning to maximize compatibility.
 fn strip_for_update(sql: &str) -> (String, Vec<String>) {
     let trimmed = sql.trim();
@@ -635,7 +635,7 @@ fn handle_create_foreign_table(sql: &str) -> (String, Vec<String>) {
 
 // ── Type Mapping ───────────────────────────────────────────────────────
 
-/// Map Hologres types to RorisDB types in column definitions.
+/// Map Hologres types to HarnessDB types in column definitions.
 /// Masks string literals before applying regex to avoid matching type keywords
 /// inside string values (e.g., `WHERE col = 'TEXT'`).
 fn map_types(sql: &str) -> String {
@@ -695,7 +695,7 @@ fn map_types(sql: &str) -> String {
 
 // ── pg_catalog Translation ─────────────────────────────────────────────
 
-/// Translate pg_catalog queries to RorisDB equivalents.
+/// Translate pg_catalog queries to HarnessDB equivalents.
 fn translate_pg_catalog(sql: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
     let trimmed = sql.trim();
@@ -799,37 +799,37 @@ impl DialectTranslator for HologresTranslator {
         // Check for no-op patterns
         if is_set_table_property(cleaned) {
             return TranslateResult::ok(String::new())
-                .with_warning("CALL set_table_property is a no-op in RorisDB");
+                .with_warning("CALL set_table_property is a no-op in HarnessDB");
         }
 
         if is_create_partition_of(cleaned) {
             return TranslateResult::ok(String::new())
-                .with_warning("CREATE TABLE ... PARTITION OF is ignored in RorisDB");
+                .with_warning("CREATE TABLE ... PARTITION OF is ignored in HarnessDB");
         }
 
         if is_create_extension(cleaned) {
             return TranslateResult::ok(String::new())
-                .with_warning("CREATE EXTENSION is ignored in RorisDB");
+                .with_warning("CREATE EXTENSION is ignored in HarnessDB");
         }
 
         if is_set_table_group(cleaned) {
             return TranslateResult::ok(String::new())
-                .with_warning("CALL set_table_group is a no-op in RorisDB");
+                .with_warning("CALL set_table_group is a no-op in HarnessDB");
         }
 
         if is_refresh_materialized_view(cleaned) {
             return TranslateResult::ok(String::new())
-                .with_warning("CALL refresh_materialized_view is a no-op in RorisDB");
+                .with_warning("CALL refresh_materialized_view is a no-op in HarnessDB");
         }
 
         if is_grant_revoke(cleaned) {
             return TranslateResult::ok(String::new())
-                .with_warning("GRANT/REVOKE stripped (RorisDB does not support permissions)");
+                .with_warning("GRANT/REVOKE stripped (HarnessDB does not support permissions)");
         }
 
         if is_create_policy(cleaned) {
             return TranslateResult::ok(String::new()).with_warning(
-                "CREATE/ALTER POLICY stripped (RorisDB does not support row-level security)",
+                "CREATE/ALTER POLICY stripped (HarnessDB does not support row-level security)",
             );
         }
 

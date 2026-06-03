@@ -53,7 +53,7 @@ members = [
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/walker83/RorisDB"
+repository = "https://github.com/walker83/HarnessDB"
 
 [workspace.dependencies]
 # Async runtime

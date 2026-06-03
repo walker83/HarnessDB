@@ -19,7 +19,7 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use fe_backup::BackupManager;
 use fe_catalog::CatalogManager;
 use fe_common::edit_log::EditLog;
-use fe_config::RorisConfig;
+use fe_config::HarnessConfig;
 use fe_config::SystemVariableManager;
 use fe_datafusion::{register_doris_udfs, register_misc_udfs};
 use fe_monitor::MonitoringManager;
@@ -33,12 +33,12 @@ use mysql_protocol::{MysqlServer, QueryHandler, QueryResult, ServerConfig, auth:
 use pg_protocol::{PgServer, PgServerConfig};
 
 use connection_tracker::ConnectionTracker;
-use handler_struct::RorisQueryHandler;
+use handler_struct::HarnessQueryHandler;
 use utils::{df_schema_to_column_defs, encode_arrow_batches_to_mysql_rows};
 use web::{WebState, start_web_server};
 
 #[derive(Parser)]
-#[command(name = "roris-fe", about = "Roris Frontend Server")]
+#[command(name = "harness-db", about = "Harness Frontend Server")]
 struct Args {
     #[arg(long, default_value = "data/fe/doris-meta")]
     meta_dir: String,
@@ -55,11 +55,11 @@ struct Args {
     #[arg(long, default_value = "data/fe/storage")]
     data_dir: String,
 
-    #[arg(long, default_value = "roris.toml")]
+    #[arg(long, default_value = "harness.toml")]
     config_file: String,
 }
 
-impl QueryHandler for RorisQueryHandler {
+impl QueryHandler for HarnessQueryHandler {
     fn handle_query(&self, conn_id: u32, sql: &str) -> QueryResult {
         tracing::info!("handle_query received SQL: {:?}", sql);
         let trimmed = sql.trim().trim_end_matches(';');
@@ -97,11 +97,11 @@ impl QueryHandler for RorisQueryHandler {
                             let df_catalog =
                                 Arc::new(ParquetCatalogProvider::new(catalog, storage));
                             let df_config = SessionConfig::new()
-                                .with_default_catalog_and_schema("roris", &current_db)
+                                .with_default_catalog_and_schema("harness", &current_db)
                                 .with_create_default_catalog_and_schema(false)
                                 .with_information_schema(false); // Use custom information_schema from ParquetCatalogProvider
                             let mut ctx = SessionContext::new_with_config(df_config);
-                            ctx.register_catalog("roris", df_catalog);
+                            ctx.register_catalog("harness", df_catalog);
                             register_doris_udfs(&mut ctx);
                             register_misc_udfs(&mut ctx);
                             fe_datafusion::register_date_udfs(&mut ctx);
@@ -231,7 +231,7 @@ impl QueryHandler for RorisQueryHandler {
     }
 }
 
-impl RorisQueryHandler {
+impl HarnessQueryHandler {
     fn dispatch_parsed(&self, conn_id: u32, trimmed: &str) -> QueryResult {
         match parse_sql(trimmed) {
             Ok(statements) => {
@@ -283,10 +283,10 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
-    tracing::info!("RorisDB starting...");
+    tracing::info!("HarnessDB starting...");
 
     // Load configuration
-    let mut config = RorisConfig::load_or_default(&args.config_file);
+    let mut config = HarnessConfig::load_or_default(&args.config_file);
     config.apply_cli_overrides(
         Some(args.mysql_port),
         Some(args.data_dir.clone()),
@@ -381,7 +381,7 @@ async fn main() -> Result<()> {
     // Create MySQL credentials (shared between auth and DDL handler)
     let mysql_credentials = default_credentials();
 
-    let query_handler = Arc::new(RorisQueryHandler::new(
+    let query_handler = Arc::new(HarnessQueryHandler::new(
         catalog.clone(),
         config.clone(),
         sys_vars,
@@ -405,7 +405,7 @@ async fn main() -> Result<()> {
     let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
     tracing::info!(
-        "RorisDB starting MySQL server on port {} (may fail silently if port is in use)",
+        "HarnessDB starting MySQL server on port {} (may fail silently if port is in use)",
         config.server.mysql_port
     );
     handles.push(tokio::spawn(async move {
@@ -417,14 +417,14 @@ async fn main() -> Result<()> {
 
     // Start MaxCompute protocol server (HTTP/REST)
     tracing::info!(
-        "RorisDB starting MaxCompute server on port {} (may fail silently if port is in use)",
+        "HarnessDB starting MaxCompute server on port {} (may fail silently if port is in use)",
         args.maxcompute_port
     );
     let mc_config = McServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.maxcompute_port,
-        access_key_id: "roris".to_string(),
-        access_key_secret: "roris-secret".to_string(),
+        access_key_id: "harness".to_string(),
+        access_key_secret: "harness-secret".to_string(),
         default_project: "default".to_string(),
         region: None,
     };
@@ -437,15 +437,15 @@ async fn main() -> Result<()> {
 
     // Start Hologres protocol server (PostgreSQL wire protocol)
     tracing::info!(
-        "RorisDB starting Hologres server on port {} (may fail silently if port is in use)",
+        "HarnessDB starting Hologres server on port {} (may fail silently if port is in use)",
         args.hologres_port
     );
     let pg_config = PgServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.hologres_port,
         max_connections: config.server.max_connections,
-        username: "roris".to_string(),
-        password: "roris-secret".to_string(),
+        username: "harness".to_string(),
+        password: "harness-secret".to_string(),
         accept_any_password: false,
     };
     let pg_server = PgServer::new(pg_config, query_handler.clone());
@@ -474,7 +474,7 @@ async fn main() -> Result<()> {
     }));
 
     tracing::info!(
-        "RorisDB servers started: MySQL={}, MaxCompute={}, Hologres={}",
+        "HarnessDB servers started: MySQL={}, MaxCompute={}, Hologres={}",
         config.server.mysql_port,
         args.maxcompute_port,
         args.hologres_port
@@ -532,7 +532,7 @@ async fn main() -> Result<()> {
     }));
 
     tokio::signal::ctrl_c().await?;
-    tracing::info!("Roris FE shutting down...");
+    tracing::info!("Harness FE shutting down...");
     shutdown.store(true, Ordering::SeqCst);
 
     // Wait for all tasks with timeout

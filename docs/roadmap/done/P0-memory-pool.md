@@ -30,7 +30,7 @@ public class Block {
   5. 内存碎片（难以管理）
 ```
 
-### RorisDB的内存池设计目标
+### HarnessDB的内存池设计目标
 
 ```
 内存池优势：
@@ -518,7 +518,7 @@ impl Clone for QueryResult {
 
 ## 📊 性能预期对比
 
-| 指标 | Doris（new分配） | RorisDB（内存池） | 提升倍数 |
+| 指标 | Doris（new分配） | HarnessDB（内存池） | 提升倍数 |
 |------|-----------------|------------------|---------|
 | **内存分配次数** | 100万次 | 100次 | 减少90% |
 | **GC停顿** | 5次/秒 | 0次 | 完全消除 |
@@ -641,7 +641,7 @@ impl MemoryLeakDetector {
 4. ✅ **零拷贝传递**：Arc共享，减少拷贝
 5. ✅ **性能提升**：分配延迟降低10倍
 
-**内存池是RorisDB内存管理的优化！**
+**内存池是HarnessDB内存管理的优化！**
 
 ---
 
@@ -663,4 +663,4 @@ impl MemoryLeakDetector {
 4. ✅ 性能提升（分配延迟降低）
 5. ✅ Rust独有优势（Arc零拷贝）
 
-**P0-03是RorisDB内存效率的保障！**
+**P0-03是HarnessDB内存效率的保障！**

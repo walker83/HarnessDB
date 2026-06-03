@@ -1,7 +1,7 @@
-//! MaxCompute (ODPS) REST API protocol compatibility layer for RorisDB.
+//! MaxCompute (ODPS) REST API protocol compatibility layer for HarnessDB.
 //!
 //! This crate implements the MaxCompute REST API protocol, allowing standard
-//! MaxCompute SDKs (pyodps, Java SDK, odpscmd) to connect to RorisDB.
+//! MaxCompute SDKs (pyodps, Java SDK, odpscmd) to connect to HarnessDB.
 //!
 //! # Protocol Overview
 //! - Transport: HTTP/REST

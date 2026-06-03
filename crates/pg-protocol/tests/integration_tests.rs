@@ -285,7 +285,7 @@ async fn test_connection_lifecycle() {
     let (mut reader, mut writer) = tokio::io::split(client);
 
     // Startup + auth handshake
-    perform_startup_and_auth(&mut reader, &mut writer, "roris", "default", "anything").await;
+    perform_startup_and_auth(&mut reader, &mut writer, "harness", "default", "anything").await;
 
     // Send Terminate
     let terminate = encode_terminate();
@@ -314,7 +314,7 @@ async fn test_simple_query() {
     let client = TcpStream::connect(addr).await.unwrap();
     let (mut reader, mut writer) = tokio::io::split(client);
 
-    perform_startup_and_auth(&mut reader, &mut writer, "roris", "default", "pass").await;
+    perform_startup_and_auth(&mut reader, &mut writer, "harness", "default", "pass").await;
 
     // Send Query("SELECT 1 AS num")
     let query = encode_query("SELECT 1 AS num");
@@ -382,7 +382,7 @@ async fn test_extended_query_flow() {
     let client = TcpStream::connect(addr).await.unwrap();
     let (mut reader, mut writer) = tokio::io::split(client);
 
-    perform_startup_and_auth(&mut reader, &mut writer, "roris", "default", "x").await;
+    perform_startup_and_auth(&mut reader, &mut writer, "harness", "default", "x").await;
 
     // 1. Parse("SELECT 1 AS num")
     let parse = encode_parse("", "SELECT 1 AS num");
@@ -459,7 +459,7 @@ async fn test_auth_failure_wrong_password() {
     // Set specific credentials, do NOT accept any password
     let auth_config = AuthConfig {
         accept_any_password: false,
-        username: "roris".to_string(),
+        username: "harness".to_string(),
         password: "correct_password".to_string(),
     };
 
@@ -468,7 +468,7 @@ async fn test_auth_failure_wrong_password() {
     let (mut reader, mut writer) = tokio::io::split(client);
 
     // Send StartupMessage
-    let startup = encode_startup("roris", "default");
+    let startup = encode_startup("harness", "default");
     writer.write_all(&startup).await.unwrap();
 
     // Receive AuthenticationMD5Password and extract salt
@@ -477,7 +477,7 @@ async fn test_auth_failure_wrong_password() {
     let salt: [u8; 4] = body[4..8].try_into().unwrap();
 
     // Compute MD5 with WRONG password
-    let wrong_md5 = compute_md5_password("roris", "wrong_password", &salt);
+    let wrong_md5 = compute_md5_password("harness", "wrong_password", &salt);
     let pwd_msg = encode_password(&wrong_md5);
     writer.write_all(&pwd_msg).await.unwrap();
 
@@ -527,7 +527,7 @@ async fn test_multiple_queries() {
     let client = TcpStream::connect(addr).await.unwrap();
     let (mut reader, mut writer) = tokio::io::split(client);
 
-    perform_startup_and_auth(&mut reader, &mut writer, "roris", "default", "pass").await;
+    perform_startup_and_auth(&mut reader, &mut writer, "harness", "default", "pass").await;
 
     // Send first query
     let query = encode_query("SELECT 1 AS num");
@@ -607,7 +607,7 @@ async fn test_ssl_request_declined() {
     );
 
     // 3. Now send normal StartupMessage and complete auth
-    perform_startup_and_auth(&mut reader, &mut writer, "roris", "default", "pass").await;
+    perform_startup_and_auth(&mut reader, &mut writer, "harness", "default", "pass").await;
 
     // Verify the connection works by running a simple query
     let query = encode_query("SELECT 1 AS num");

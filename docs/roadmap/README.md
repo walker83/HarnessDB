@@ -1,6 +1,6 @@
-# RorisDB Roadmap
+# HarnessDB Roadmap
 
-本目录包含 RorisDB 各模块的开发路线图，按优先级和模块拆分为独立文档，方便跟踪和执行。
+本目录包含 HarnessDB 各模块的开发路线图，按优先级和模块拆分为独立文档，方便跟踪和执行。
 
 ## 文档索引
 

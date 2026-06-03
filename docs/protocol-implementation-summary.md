@@ -1,8 +1,8 @@
-# RorisDB Protocol Implementation Summary
+# HarnessDB Protocol Implementation Summary
 
 ## Overview
 
-RorisDB has successfully implemented **11 database protocol compatibility crates**, transforming it into a multi-model database system that can simulate various Alibaba Cloud database products and popular open-source databases.
+HarnessDB has successfully implemented **11 database protocol compatibility crates**, transforming it into a multi-model database system that can simulate various Alibaba Cloud database products and popular open-source databases.
 
 ## Implemented Protocols (11 Total)
 

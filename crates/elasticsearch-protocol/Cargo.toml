@@ -3,7 +3,7 @@ name = "elasticsearch-protocol"
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Elasticsearch REST API implementation for RorisDB - OpenSearch compatible"
+description = "Elasticsearch REST API implementation for HarnessDB - OpenSearch compatible"
 
 [dependencies]
 tokio = { workspace = true }

@@ -46,7 +46,7 @@ pub static SYSTEM_VARIABLE_DEFS: &[VarDef] = &[
     },
     VarDef {
         name: "version_comment",
-        default_value: "RorisDB",
+        default_value: "HarnessDB",
         scope: VarScope::Global,
         kind: VarKind::String,
         description: "Server version comment",

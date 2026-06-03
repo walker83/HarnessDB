@@ -3,7 +3,7 @@ name = "cassandra-protocol"
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Apache Cassandra native protocol implementation for RorisDB"
+description = "Apache Cassandra native protocol implementation for HarnessDB"
 
 [dependencies]
 tokio = { workspace = true }

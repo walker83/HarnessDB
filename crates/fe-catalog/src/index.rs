@@ -1,4 +1,4 @@
-//! Index management for RorisDB
+//! Index management for HarnessDB
 //! Supports: BTree, Hash, Bitmap, Full-text, Vector (HNSW)
 
 use serde::{Deserialize, Serialize};

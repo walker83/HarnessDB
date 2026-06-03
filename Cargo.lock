@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adb-mysql-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -481,7 +481,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "be-rocks"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "rocksdb",
  "serde",
@@ -671,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "cassandra-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -819,7 +819,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clickhouse-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "serde",
@@ -1756,7 +1756,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "elasticsearch-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1805,7 +1805,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fe-backup"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "fe-catalog"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "be-rocks",
@@ -1840,7 +1840,7 @@ dependencies = [
 
 [[package]]
 name = "fe-common"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "common",
  "serde",
@@ -1852,7 +1852,7 @@ dependencies = [
 
 [[package]]
 name = "fe-config"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "fe-datafusion"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "fe-monitor"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1893,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "fe-sql-parser"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "common",
  "datafusion",
@@ -1905,7 +1905,7 @@ dependencies = [
 
 [[package]]
 name = "fe-storage"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "arrow",
  "arrow-arith",
@@ -2178,6 +2178,47 @@ dependencies = [
  "crunchy",
  "num-traits",
  "zerocopy",
+]
+
+[[package]]
+name = "harness-server"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "chrono",
+ "clap",
+ "common",
+ "datafusion",
+ "fe-backup",
+ "fe-catalog",
+ "fe-common",
+ "fe-config",
+ "fe-datafusion",
+ "fe-monitor",
+ "fe-sql-parser",
+ "fe-storage",
+ "itoa",
+ "lazy_static",
+ "maxcompute-protocol",
+ "mysql-protocol",
+ "parking_lot",
+ "parquet",
+ "pg-protocol",
+ "prometheus",
+ "redis-protocol",
+ "ryu",
+ "serde",
+ "serde_json",
+ "sql-translators",
+ "sysinfo",
+ "tokio",
+ "toml",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "types",
 ]
 
 [[package]]
@@ -2514,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "influxdb-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2538,7 +2579,7 @@ checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
 name = "integration-tests"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -2749,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "lindorm-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2847,7 +2888,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "maxcompute-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2929,7 +2970,7 @@ dependencies = [
 
 [[package]]
 name = "mongodb-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bson",
@@ -2985,7 +3026,7 @@ dependencies = [
 
 [[package]]
 name = "mysql-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3278,7 +3319,7 @@ dependencies = [
 
 [[package]]
 name = "oracle-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3394,7 +3435,7 @@ dependencies = [
 
 [[package]]
 name = "pg-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3744,7 +3785,7 @@ dependencies = [
 
 [[package]]
 name = "redis-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3858,47 +3899,6 @@ checksum = "26ec73b20525cb235bad420f911473b69f9fe27cc856c5461bccd7e4af037f43"
 dependencies = [
  "libc",
  "librocksdb-sys",
-]
-
-[[package]]
-name = "roris-server"
-version = "0.3.3"
-dependencies = [
- "anyhow",
- "axum",
- "bytes",
- "chrono",
- "clap",
- "common",
- "datafusion",
- "fe-backup",
- "fe-catalog",
- "fe-common",
- "fe-config",
- "fe-datafusion",
- "fe-monitor",
- "fe-sql-parser",
- "fe-storage",
- "itoa",
- "lazy_static",
- "maxcompute-protocol",
- "mysql-protocol",
- "parking_lot",
- "parquet",
- "pg-protocol",
- "prometheus",
- "redis-protocol",
- "ryu",
- "serde",
- "serde_json",
- "sql-translators",
- "sysinfo",
- "tokio",
- "toml",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "types",
 ]
 
 [[package]]
@@ -4233,7 +4233,7 @@ dependencies = [
 
 [[package]]
 name = "sql-translators"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "regex",
  "thiserror 2.0.18",
@@ -4370,7 +4370,7 @@ dependencies = [
 
 [[package]]
 name = "tablestore-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4724,7 +4724,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tpch-bench"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4831,7 +4831,7 @@ checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
 
 [[package]]
 name = "types"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -4921,7 +4921,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vector-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",

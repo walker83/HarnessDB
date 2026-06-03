@@ -3,7 +3,7 @@ name = "oracle-protocol"
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Oracle TNS protocol simulation for RorisDB - PolarDB-O compatible"
+description = "Oracle TNS protocol simulation for HarnessDB - PolarDB-O compatible"
 
 [dependencies]
 tokio = { workspace = true }

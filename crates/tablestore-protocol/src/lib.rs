@@ -1,4 +1,4 @@
-//! Alibaba Cloud TableStore (OTS) REST API implementation for RorisDB
+//! Alibaba Cloud TableStore (OTS) REST API implementation for HarnessDB
 //! Compatible with TableStore wide-column model
 
 pub mod handler;

@@ -33,7 +33,7 @@ public class EditLog {
 // 5. Fencing epoch（防脑裂）
 ```
 
-### RorisDB的创新选择（Raft）
+### HarnessDB的创新选择（Raft）
 
 ```
 为什么选择Raft而不是BDBJE？
@@ -60,7 +60,7 @@ Raft优势：
 ```
 openraft优势：
   1. ✅ 纯Rust实现（无需外部依赖）
-  2. ✅ 灵活存储接口（适配RorisDB）
+  2. ✅ 灵活存储接口（适配HarnessDB）
   3. ✅ 异步友好（tokio集成）
   4. ✅ 性能优化（批量提交、心跳优化）
   5. ✅ 社区活跃（持续维护）
@@ -73,8 +73,8 @@ openraft优势：
 
 use openraft::{Raft, Config, Store, LogStore, StateMachine};
 
-pub struct RorisRaft {
-    raft: Raft<RaftConfig, RorisStore>,
+pub struct HarnessRaft {
+    raft: Raft<RaftConfig, HarnessStore>,
 }
 
 pub struct RaftConfig {
@@ -83,10 +83,10 @@ pub struct RaftConfig {
     peers: Vec<u64>,
 }
 
-impl RorisRaft {
+impl HarnessRaft {
     pub async fn new(config: RaftConfig) -> Result<Self, Error> {
         // 创建Raft节点
-        let store = RorisStore::new();
+        let store = HarnessStore::new();
         
         let raft_config = Config {
             heartbeat_interval: 500,  // 500ms心跳
@@ -173,12 +173,12 @@ impl RorisRaft {
 }
 
 // Raft存储实现
-pub struct RorisStore {
+pub struct HarnessStore {
     log_store: LogStore,
     state_machine: StateMachine,
 }
 
-impl Store for RorisStore {
+impl Store for HarnessStore {
     async fn save_log(&self, log: RaftLog) -> Result<(), Error> {
         // 保存日志到存储
         self.log_store.save(log).await?;
@@ -201,7 +201,7 @@ impl Store for RorisStore {
     }
 }
 
-impl LogStore for RorisStore {
+impl LogStore for HarnessStore {
     async fn save(&self, log: RaftLog) -> Result<(), Error> {
         // 持久化日志
         let path = format!("logs/{}.log", log.index);
@@ -221,7 +221,7 @@ impl LogStore for RorisStore {
     }
 }
 
-impl StateMachine for RorisStore {
+impl StateMachine for HarnessStore {
     async fn apply(&self, edit: Edit) -> Result<(), Error> {
         // 应用Edit到Catalog
         
@@ -273,7 +273,7 @@ impl StateMachine for RorisStore {
 // fe-common/src/edit_log.rs
 
 pub struct EditLog {
-    raft: Arc<RorisRaft>,
+    raft: Arc<HarnessRaft>,
     pending_edits: Arc<Mutex<Vec<Edit>>>,
     batch_size: usize,
 }
@@ -366,7 +366,7 @@ pub struct FeNode {
     node_id: u64,
     role: FeRole,
     addr: String,
-    raft: Arc<RorisRaft>,
+    raft: Arc<HarnessRaft>,
 }
 
 pub enum FeRole {
@@ -532,7 +532,7 @@ impl FencingEpoch {
 
 **Week 1-2: Raft基础**
 - [ ] openraft集成
-- [ ] RorisStore实现
+- [ ] HarnessStore实现
 - [ ] Raft启动流程
 - [ ] 单元测试
 
@@ -577,7 +577,7 @@ impl FencingEpoch {
 
 ## 📊 功能对比
 
-| 功能 | Doris（BDBJE） | RorisDB（Raft） | 优势 |
+| 功能 | Doris（BDBJE） | HarnessDB（Raft） | 优势 |
 |------|---------------|-----------------|------|
 | **分布式日志** | ✅ BDBJE | ✅ Raft | Raft更简单 |
 | **Leader选举** | ✅ BDBJE内置 | ✅ Raft算法 | Raft更清晰 |
@@ -625,7 +625,7 @@ Cargo.toml                      # 添加openraft依赖
 4. ✅ **社区活跃**：持续维护，技术领先
 5. ✅ **异步友好**：tokio集成，异步执行
 
-**FE高可用是RorisDB稳定性的保障！**
+**FE高可用是HarnessDB稳定性的保障！**
 
 ---
 
@@ -646,4 +646,4 @@ Cargo.toml                      # 添加openraft依赖
 4. ✅ Raft社区活跃（持续维护）
 5. ✅ Raft无Java依赖（纯Rust）
 
-**P1-03是RorisDB高可用的基石！**
+**P1-03是HarnessDB高可用的基石！**

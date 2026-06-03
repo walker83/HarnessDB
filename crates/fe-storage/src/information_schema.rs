@@ -183,7 +183,7 @@ impl TableProvider for InformationSchemaTables {
                         .map(|m| m.len())
                         .unwrap_or(0u64);
 
-                    table_catalog.push(Some("roris".to_string()));
+                    table_catalog.push(Some("harness".to_string()));
                     table_schema.push(Some(db_name.clone()));
                     table_name.push(Some(tbl_name.clone()));
                     table_type.push(Some("BASE TABLE".to_string()));
@@ -330,7 +330,7 @@ impl TableProvider for InformationSchemaColumns {
                             let arrow_type = to_arrow_data_type(&col.data_type);
                             let mysql_type = Self::arrow_to_mysql_type(&arrow_type);
 
-                            table_catalog.push(Some("roris".to_string()));
+                            table_catalog.push(Some("harness".to_string()));
                             table_schema.push(Some(db_name.clone()));
                             table_name.push(Some(tbl_name.clone()));
                             column_name.push(Some(col.name.clone()));
@@ -458,7 +458,7 @@ impl TableProvider for InformationSchemaSchemata {
         let mut sql_path: Vec<Option<String>> = Vec::new();
 
         for db_name in self.catalog.list_databases() {
-            catalog_name.push(Some("roris".to_string()));
+            catalog_name.push(Some("harness".to_string()));
             schema_name.push(Some(db_name));
             schema_owner.push(Some("root".to_string()));
             default_character_set_catalog.push(None);
@@ -488,7 +488,7 @@ impl TableProvider for InformationSchemaSchemata {
     }
 }
 
-/// information_schema.TABLE_CONSTRAINTS table (stub - no constraints in RorisDB yet)
+/// information_schema.TABLE_CONSTRAINTS table (stub - no constraints in HarnessDB yet)
 struct InformationSchemaTableConstraints {
     schema: SchemaRef,
     _catalog: Arc<CatalogManager>,
@@ -539,7 +539,7 @@ impl TableProvider for InformationSchemaTableConstraints {
         _filters: &[datafusion::prelude::Expr],
         _limit: Option<usize>,
     ) -> DFResult<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
-        // Return empty result set - RorisDB doesn't support constraints yet
+        // Return empty result set - HarnessDB doesn't support constraints yet
         let batch = RecordBatch::new_empty(self.schema.clone());
 
         Ok(MemorySourceConfig::try_new_exec(
@@ -550,7 +550,7 @@ impl TableProvider for InformationSchemaTableConstraints {
     }
 }
 
-/// information_schema.KEY_COLUMN_USAGE table (stub - no keys in RorisDB yet)
+/// information_schema.KEY_COLUMN_USAGE table (stub - no keys in HarnessDB yet)
 struct InformationSchemaKeyColumnUsage {
     schema: SchemaRef,
     _catalog: Arc<CatalogManager>,
@@ -606,7 +606,7 @@ impl TableProvider for InformationSchemaKeyColumnUsage {
         _filters: &[datafusion::prelude::Expr],
         _limit: Option<usize>,
     ) -> DFResult<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
-        // Return empty result set - RorisDB doesn't support keys yet
+        // Return empty result set - HarnessDB doesn't support keys yet
         let batch = RecordBatch::new_empty(self.schema.clone());
 
         Ok(MemorySourceConfig::try_new_exec(

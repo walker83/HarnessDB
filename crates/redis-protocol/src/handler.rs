@@ -201,7 +201,7 @@ impl DefaultRedisHandler {
         let info = format!(
             "# Server\r\n\
              redis_version:7.0.0\r\n\
-             roris_version:0.3.3\r\n\
+             harness_version:0.3.3\r\n\
              redis_mode:standalone\r\n\
              os:Linux\r\n\
              tcp_port:6379\r\n\

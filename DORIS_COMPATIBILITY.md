@@ -1,12 +1,12 @@
-# RorisDB vs Apache Doris 功能验证对比
+# HarnessDB vs Apache Doris 功能验证对比
 
-本文档验证了 RorisDB 新实现的功能与 Apache Doris 的兼容性。
+本文档验证了 HarnessDB 新实现的功能与 Apache Doris 的兼容性。
 
 ## 测试覆盖范围
 
 ### 1. 位运算函数 (Bitwise Functions)
 
-| 函数 | RorisDB 结果 | Doris 预期 | 状态 |
+| 函数 | HarnessDB 结果 | Doris 预期 | 状态 |
 |------|-------------|-----------|------|
 | bitand(5, 3) | 1 | 1 | ✅ |
 | bitor(5, 3) | 7 | 7 | ✅ |
@@ -27,7 +27,7 @@ SELECT bitshiftright(8, 2); -- 2
 
 ### 2. 扩展数学函数 (Extended Math Functions)
 
-| 函数 | RorisDB 结果 | Doris 预期 | 状态 |
+| 函数 | HarnessDB 结果 | Doris 预期 | 状态 |
 |------|-------------|-----------|------|
 | sign(-5.0) | -1 | -1 | ✅ |
 | sign(0.0) | 0 | 0 | ✅ |
@@ -57,7 +57,7 @@ SELECT sinh(0), cosh(0), tanh(0);
 
 ### 3. 扩展字符串函数 (Extended String Functions)
 
-| 函数 | RorisDB 结果 | Doris 预期 | 状态 |
+| 函数 | HarnessDB 结果 | Doris 预期 | 状态 |
 |------|-------------|-----------|------|
 | ltrim("  hello") | "hello" | "hello" | ✅ |
 | rtrim("hello  ") | "hello" | "hello" | ✅ |
@@ -96,7 +96,7 @@ SELECT format(1234.5678, 2);
 
 ### 4. 哈希函数 (Hash Functions)
 
-| 函数 | RorisDB 结果 | Doris 预期 | 状态 |
+| 函数 | HarnessDB 结果 | Doris 预期 | 状态 |
 |------|-------------|-----------|------|
 | md5("hello") | 5d41402abc4b2a76b9719d911017c592 | 5d41402abc4b2a76b9719d911017c592 | ✅ |
 | md5("") | d41d8cd98f00b204e9800998ecf8427e | d41d8cd98f00b204e9800998ecf8427e | ✅ |

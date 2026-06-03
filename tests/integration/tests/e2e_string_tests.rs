@@ -1,4 +1,4 @@
-// E2E integration tests for string functions on RorisDB.
+// E2E integration tests for string functions on HarnessDB.
 //
 // IMPORTANT: The server returns ALL values as Bytes (strings) over MySQL protocol.
 // ALWAYS use get_i64(), get_f64(), get_string() helpers to extract values.
@@ -29,8 +29,8 @@ impl E2eServer {
     fn start() -> Self {
         let pid = std::process::id();
         let port = MYSQL_PORT;
-        let meta_dir = format!("/tmp/roris_e2e_meta_{}_{}", pid, port);
-        let data_dir = format!("/tmp/roris_e2e_data_{}_{}", pid, port);
+        let meta_dir = format!("/tmp/harness_e2e_meta_{}_{}", pid, port);
+        let data_dir = format!("/tmp/harness_e2e_data_{}_{}", pid, port);
         let _ = std::fs::remove_dir_all(&meta_dir);
         let _ = std::fs::remove_dir_all(&data_dir);
         std::fs::create_dir_all(&meta_dir).unwrap();
@@ -46,7 +46,7 @@ impl E2eServer {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .unwrap_or_else(|e| panic!("Failed to start roris-fe '{}': {}", binary, e));
+            .unwrap_or_else(|e| panic!("Failed to start harness-db '{}': {}", binary, e));
         E2eServer {
             child,
             meta_dir,
@@ -81,14 +81,14 @@ impl Drop for E2eServer {
 fn find_binary() -> String {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     for p in &[
-        format!("{}/../../target/release/roris-fe", manifest_dir),
-        format!("{}/../../target/debug/roris-fe", manifest_dir),
+        format!("{}/../../target/release/harness-db", manifest_dir),
+        format!("{}/../../target/debug/harness-db", manifest_dir),
     ] {
         if Path::new(p).exists() {
             return p.to_string();
         }
     }
-    panic!("roris-fe binary not found. Build with: cargo build --release");
+    panic!("harness-db binary not found. Build with: cargo build --release");
 }
 
 fn make_conn() -> mysql::Conn {

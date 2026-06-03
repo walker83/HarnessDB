@@ -7,10 +7,10 @@ use mysql_protocol::QueryResult;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use types::DataType;
 
-use crate::handler_struct::{RorisQueryHandler, ViewInfo};
+use crate::handler_struct::{HarnessQueryHandler, ViewInfo};
 use crate::utils::{literal_to_string, parse_data_type};
 
-impl RorisQueryHandler {
+impl HarnessQueryHandler {
     // ---- Database DDL ----
 
     pub(crate) fn create_database(
@@ -27,13 +27,13 @@ impl RorisQueryHandler {
                 let _ = catalog;
                 let df_cat = self
                     .session_ctx
-                    .catalog("roris")
-                    .ok_or_else(|| "roris catalog not found".to_string())?;
-                if let Some(roris_cat) = df_cat
+                    .catalog("harness")
+                    .ok_or_else(|| "harness catalog not found".to_string())?;
+                if let Some(harness_cat) = df_cat
                     .as_any()
                     .downcast_ref::<fe_storage::ParquetCatalogProvider>()
                 {
-                    roris_cat.create_database(&stmt.name);
+                    harness_cat.create_database(&stmt.name);
                 }
                 Ok(QueryResult::ok())
             }
@@ -197,14 +197,14 @@ impl RorisQueryHandler {
                     .collect();
                 let arrow_schema =
                     Arc::new(datafusion::arrow::datatypes::Schema::new(arrow_fields));
-                let Some(df_cat) = self.session_ctx.catalog("roris") else {
+                let Some(df_cat) = self.session_ctx.catalog("harness") else {
                     return Ok(QueryResult::with_rows(
                         vec![ColumnDef {
                             name: "Error".to_string(),
                             col_type: ColumnType::String,
                         }],
                         vec![vec![Some(
-                            "Internal error: catalog 'roris' not found".to_string(),
+                            "Internal error: catalog 'harness' not found".to_string(),
                         )]],
                     ));
                 };
@@ -246,7 +246,7 @@ impl RorisQueryHandler {
                     tracing::error!("Failed to save catalog: {}", e);
                 }
                 // Drop Parquet data
-                let df_cat = self.session_ctx.catalog("roris").unwrap();
+                let df_cat = self.session_ctx.catalog("harness").unwrap();
                 if let Some(parquet_cat) = df_cat
                     .as_any()
                     .downcast_ref::<fe_storage::ParquetCatalogProvider>()
@@ -554,16 +554,16 @@ impl RorisQueryHandler {
                                     .map_err(|e| format!("Failed to rename data dir: {}", e))?;
                             }
                             // Update DataFusion catalog
-                            if let Some(df_cat) = self.session_ctx.catalog("roris") {
-                                if let Some(roris_cat) = df_cat
+                            if let Some(df_cat) = self.session_ctx.catalog("harness") {
+                                if let Some(harness_cat) = df_cat
                                     .as_any()
                                     .downcast_ref::<fe_storage::ParquetCatalogProvider>(
                                 ) {
                                     // Get old schema (CatalogManager still has old entry at this point)
-                                    if let Some(schema) = roris_cat.get_table_schema(db, &old_name)
+                                    if let Some(schema) = harness_cat.get_table_schema(db, &old_name)
                                     {
-                                        let _ = roris_cat.create_table(db, new_name, schema);
-                                        let _ = roris_cat.drop_table(db, &old_name);
+                                        let _ = harness_cat.create_table(db, new_name, schema);
+                                        let _ = harness_cat.drop_table(db, &old_name);
                                     }
                                 }
                             }

@@ -1,6 +1,6 @@
-# RorisDB 阿里云全功能复刻 - 总路线图
+# HarnessDB 阿里云全功能复刻 - 总路线图
 
-> 目标：将 RorisDB 打造为复刻阿里云全部大数据+数据库产品功能的超级数据库
+> 目标：将 HarnessDB 打造为复刻阿里云全部大数据+数据库产品功能的超级数据库
 
 ## 已完成 ✅
 
@@ -163,7 +163,7 @@
 ## 配置开关设计
 
 ```toml
-# roris.toml
+# harness.toml
 [server]
 mysql_port = 9030
 maxcompute_port = 9031

@@ -1,4 +1,4 @@
-//! MongoDB wire protocol implementation for RorisDB
+//! MongoDB wire protocol implementation for HarnessDB
 //! Compatible with ApsaraDB MongoDB and all MongoDB drivers
 
 pub mod wire;

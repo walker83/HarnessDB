@@ -1,4 +1,4 @@
-//! RocksDB-based metadata storage for RorisDB.
+//! RocksDB-based metadata storage for HarnessDB.
 //!
 //! This crate provides a RocksDB backend for storing:
 //! - Catalog metadata (databases, tables)

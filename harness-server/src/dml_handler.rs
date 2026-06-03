@@ -12,12 +12,12 @@ use mysql_protocol::server::{ColumnDef, ColumnType};
 
 use fe_sql_parser::ast::{self, DeleteStmt};
 
-use crate::handler_struct::RorisQueryHandler;
+use crate::handler_struct::HarnessQueryHandler;
 use crate::utils::{
     build_arrow_array_from_exprs, expr_to_string_value, merge_columns, update_column_in_batch,
 };
 
-impl RorisQueryHandler {
+impl HarnessQueryHandler {
     pub(crate) fn insert(
         &self,
         conn_id: u32,
@@ -156,11 +156,11 @@ impl RorisQueryHandler {
                 rt.block_on(async {
                     let df_catalog = Arc::new(ParquetCatalogProvider::new(catalog, storage));
                     let df_config = SessionConfig::new()
-                        .with_default_catalog_and_schema("roris", &current_db)
+                        .with_default_catalog_and_schema("harness", &current_db)
                         .with_create_default_catalog_and_schema(false)
                         .with_information_schema(false); // Use custom information_schema from ParquetCatalogProvider
                     let ctx = SessionContext::new_with_config(df_config);
-                    ctx.register_catalog("roris", df_catalog);
+                    ctx.register_catalog("harness", df_catalog);
                     let df = ctx.sql(&select_sql).await.map_err(|e| e.to_string())?;
                     let batches = df.collect().await.map_err(|e| e.to_string())?;
                     Ok::<_, String>(batches)
@@ -569,7 +569,7 @@ fn table_ref_to_sql(t: &ast::TableRef) -> String {
     }
 }
 
-impl RorisQueryHandler {
+impl HarnessQueryHandler {
     /// Evaluate a WHERE expression on a RecordBatch using DataFusion.
     ///
     /// Returns a boolean mask where `true` means the row matches the condition.
@@ -705,7 +705,7 @@ impl RorisQueryHandler {
     }
 }
 
-impl RorisQueryHandler {
+impl HarnessQueryHandler {
     pub(crate) fn update(
         &self,
         conn_id: u32,

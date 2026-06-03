@@ -1,4 +1,4 @@
-# RorisDB Server Configuration
+# HarnessDB Server Configuration
 # All protocols can be independently enabled/disabled
 
 [server]

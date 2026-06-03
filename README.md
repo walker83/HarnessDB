@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🦎 RorisDB
+# 🦎 HarnessDB
 
 ### The Universal Database Chameleon - 14 Protocols, 1 Binary
 
@@ -15,7 +15,7 @@
 [![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)]()
 [![Protocols](https://img.shields.io/badge/Protocols-14-blue.svg)]()
 [![Tests](https://img.shields.io/badge/Tests-180%20passed-brightgreen.svg)]()
-[![Stars](https://img.shields.io/github/stars/walker83/RorisDB.svg?style=social&label=Star)](https://github.com/walker83/RorisDB)
+[![Stars](https://img.shields.io/github/stars/walker83/HarnessDB.svg?style=social&label=Star)](https://github.com/walker83/HarnessDB)
 
 [English](README.md) · [中文文档](docs/zh/README.md) · [Quick Start](#-quick-start) · [Protocols](#-supported-protocols) · [Architecture](#-architecture)
 
@@ -27,9 +27,9 @@
 
 ---
 
-## 🎯 What is RorisDB?
+## 🎯 What is HarnessDB?
 
-RorisDB is a **universal database simulation platform** that speaks **14 different database protocols** simultaneously. Built in Rust with Apache DataFusion, it's the world's first database that can replace:
+HarnessDB is a **universal database simulation platform** that speaks **14 different database protocols** simultaneously. Built in Rust with Apache DataFusion, it's the world's first database that can replace:
 
 - **Relational Databases**: MySQL, PostgreSQL, Oracle
 - **NoSQL Databases**: Redis, MongoDB, Cassandra
@@ -41,11 +41,11 @@ RorisDB is a **universal database simulation platform** that speaks **14 differe
 
 ### 🎪 The Database Chameleon
 
-Like a chameleon adapts to its environment, RorisDB adapts to **any database protocol**:
+Like a chameleon adapts to its environment, HarnessDB adapts to **any database protocol**:
 
 ```bash
-# Start RorisDB
-./roris-fe
+# Start HarnessDB
+./harness-db
 
 # Connect with ANY client
 mysql -h 127.0.0.1 -P 9030          # MySQL client
@@ -57,7 +57,7 @@ clickhouse-client --port 9000       # ClickHouse client
 # ... and 8 more protocols!
 ```
 
-## 🚀 Why RorisDB?
+## 🚀 Why HarnessDB?
 
 ### For Developers
 
@@ -127,15 +127,15 @@ clickhouse-client --port 9000       # ClickHouse client
 ### 1. Build (or download binary)
 
 ```bash
-git clone https://github.com/walker83/RorisDB.git
-cd RorisDB
+git clone https://github.com/walker83/HarnessDB.git
+cd HarnessDB
 cargo build --release
 ```
 
 ### 2. Start
 
 ```bash
-./target/release/roris-fe
+./target/release/harness-db
 ```
 
 That's it! All 14 protocols are now listening on their default ports.
@@ -163,7 +163,7 @@ redis-cli -h 127.0.0.1 -p 6379
 ```
 
 ```redis
-SET mykey "Hello RorisDB"
+SET mykey "Hello HarnessDB"
 GET mykey
 HSET user:1 name "Bob" age 25
 HGETALL user:1
@@ -191,7 +191,7 @@ curl -X POST "http://127.0.0.1:8123/?query=SELECT%20*%20FROM%20users"
 ```bash
 curl -X PUT "http://127.0.0.1:9200/my-index" \
   -H 'Content-Type: application/json' \
-  -d '{"title": "Hello RorisDB"}'
+  -d '{"title": "Hello HarnessDB"}'
 ```
 
 #### MaxCompute (Python)
@@ -199,7 +199,7 @@ curl -X PUT "http://127.0.0.1:9200/my-index" \
 ```python
 from odps import ODPS
 
-o = ODPS('roris', 'roris-secret', 'default',
+o = ODPS('harness', 'harness-secret', 'default',
          endpoint='http://127.0.0.1:9031/api')
 
 o.execute_sql("""
@@ -242,7 +242,7 @@ port = 9200
 Or use command-line flags:
 
 ```bash
-./roris-fe \
+./harness-db \
   --mysql-port 9030 \
   --redis-port 6379 \
   --mongodb-port 27017 \
@@ -311,8 +311,8 @@ cargo test --workspace
 Replace MySQL, Redis, MongoDB installations with one binary:
 
 ```bash
-# Start RorisDB
-./roris-fe
+# Start HarnessDB
+./harness-db
 
 # Your app can now connect to:
 # - MySQL on :9030
@@ -327,8 +327,8 @@ Spin up a full database stack in your CI pipeline:
 
 ```yaml
 # .github/workflows/test.yml
-- name: Start RorisDB
-  run: ./roris-fe &
+- name: Start HarnessDB
+  run: ./harness-db &
 
 - name: Run Tests
   run: cargo test
@@ -341,7 +341,7 @@ Test MaxCompute/Hologres queries locally:
 ```python
 # Test your ODPS SQL without cloud costs
 from odps import ODPS
-o = ODPS('roris', 'roris-secret', 'default',
+o = ODPS('harness', 'harness-secret', 'default',
          endpoint='http://localhost:9031/api')
 o.execute_sql('SELECT * FROM my_table').wait_for_success()
 ```
@@ -441,7 +441,7 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## 🌟 Show Your Support
 
-If you find RorisDB useful, please consider:
+If you find HarnessDB useful, please consider:
 
 - ⭐ **Starring the repo** - helps others discover it
 - 🐦 **Tweeting about it** - spread the word
@@ -452,8 +452,8 @@ If you find RorisDB useful, please consider:
 
 <div align="center">
 
-**Built with ❤️ by the RorisDB Team**
+**Built with ❤️ by the HarnessDB Team**
 
-[Website](https://rorisdb.io) · [Blog](https://blog.rorisdb.io) · [Twitter](https://twitter.com/rorisdb) · [Discord](https://discord.gg/rorisdb)
+[Website](https://harnessdb.io) · [Blog](https://blog.harnessdb.io) · [Twitter](https://twitter.com/harnessdb) · [Discord](https://discord.gg/harnessdb)
 
 </div>

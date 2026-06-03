@@ -165,7 +165,7 @@ impl TpchQueryHandler {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    println!("=== RorisDB MySQL Server ===");
+    println!("=== HarnessDB MySQL Server ===");
     println!("Starting MySQL server on 127.0.0.1:9030...");
 
     let handler = Arc::new(TpchQueryHandler::new());

@@ -40,7 +40,7 @@ public class OlapTable {
 // 5. Rebalancer（负载均衡）
 ```
 
-### RorisDB的缺失
+### HarnessDB的缺失
 
 ```
 当前缺失：
@@ -552,7 +552,7 @@ impl BackendInfo {
 
 ## 📊 功能对比
 
-| 功能 | Doris | RorisDB | 完成度 |
+| 功能 | Doris | HarnessDB | 完成度 |
 |------|-------|---------|--------|
 | **Tablet管理** | ✅ 完整 | ✅ Actor实现 | 100% |
 | **Replica管理** | ✅ 完整 | ✅ Actor实现 | 100% |
@@ -600,7 +600,7 @@ fe-catalog/src/catalog.rs      # Catalog集成TabletManager
 4. ✅ **副本自动分配**：负载均衡，容错分布
 5. ✅ **DashMap存储**：分段无锁，高并发
 
-**Tablet/Replica是RorisDB分布式存储的核心！**
+**Tablet/Replica是HarnessDB分布式存储的核心！**
 
 ---
 
@@ -622,4 +622,4 @@ fe-catalog/src/catalog.rs      # Catalog集成TabletManager
 4. ✅ 依赖P0-02（无锁并发）
 5. ✅ 为P1-02打基础（Fragment调度）
 
-**P1-01是RorisDB分布式存储的起点！**
+**P1-01是HarnessDB分布式存储的起点！**

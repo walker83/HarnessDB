@@ -1,10 +1,10 @@
-# RorisDB Architecture
+# HarnessDB Architecture
 
 > Version 0.3.0 | Single-node OLAP with DataFusion + Parquet
 
 ## Overview
 
-RorisDB is a **single-node OLAP database** with a layered architecture:
+HarnessDB is a **single-node OLAP database** with a layered architecture:
 
 ```
 MySQL Client
@@ -13,7 +13,7 @@ MySQL Client
 ┌─────────────────────┐
 │   mysql-protocol     │  Wire protocol, auth, packet I/O
 ├─────────────────────┤
-│   roris-server       │  Query routing, DDL/DML handlers
+│   harness-server       │  Query routing, DDL/DML handlers
 ├─────────────────────┤
 │   fe-sql-parser      │  SQL text → AST
 │   fe-catalog         │  Metadata management
@@ -30,7 +30,7 @@ MySQL Client
 ## Crate Dependency Graph
 
 ```
-roris-server (binary)
+harness-server (binary)
 ├── fe-sql-parser
 ├── fe-catalog
 │   ├── fe-common
@@ -144,7 +144,7 @@ Full MySQL wire protocol implementation:
 
 ## Data Type Mapping
 
-| RorisDB Type | Arrow Type | Parquet Type |
+| HarnessDB Type | Arrow Type | Parquet Type |
 |-------------|-----------|-------------|
 | Boolean | Boolean | BOOLEAN |
 | Int8/16/32/64 | Int8/16/32/64 | INT32/INT64 |

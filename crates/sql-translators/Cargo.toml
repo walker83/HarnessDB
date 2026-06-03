@@ -2,7 +2,7 @@
 name = "sql-translators"
 version.workspace = true
 edition.workspace = true
-description = "SQL dialect translators for RorisDB database chameleon (MaxCompute, Hologres, etc.)"
+description = "SQL dialect translators for HarnessDB database chameleon (MaxCompute, Hologres, etc.)"
 
 [dependencies]
 tracing = { workspace = true }

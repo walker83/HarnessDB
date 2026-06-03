@@ -2,7 +2,7 @@
 
 ## Overview
 
-MySQL-compatible SQL test scripts for end-to-end testing of RorisDB via the MySQL wire protocol. Each file covers a specific domain and can be executed independently against a running `roris-fe` instance.
+MySQL-compatible SQL test scripts for end-to-end testing of HarnessDB via the MySQL wire protocol. Each file covers a specific domain and can be executed independently against a running `harness-db` instance.
 
 Connect: `mysql -h 127.0.0.1 -P 9030 -uroot < tests/integration/sql/e2e/01_ddl_data_types.sql`
 

@@ -1,4 +1,4 @@
-# RorisDB 开发路线图
+# HarnessDB 开发路线图
 
 基于 Doris Test Suite 测试结果，将开发任务拆分为以下子任务。
 

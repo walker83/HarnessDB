@@ -1,4 +1,4 @@
-//! Oracle TNS protocol simulation for RorisDB
+//! Oracle TNS protocol simulation for HarnessDB
 //! Compatible with Oracle clients and PolarDB-O
 
 pub mod tns;

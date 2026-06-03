@@ -235,9 +235,9 @@ impl Connection {
             "auth_token" => {
                 let jwt_secret = std::env::var("RORIS_JWT_SECRET").unwrap_or_else(|_| {
                     tracing::warn!("RORIS_JWT_SECRET not set — token auth using fallback key");
-                    "rorisdb_dev_fallback_key".to_string()
+                    "harnessdb_dev_fallback_key".to_string()
                 });
-                let config = TokenConfig::new(jwt_secret, 3600, "rorisdb".to_string());
+                let config = TokenConfig::new(jwt_secret, 3600, "harnessdb".to_string());
                 let auth = TokenAuth::new(config);
                 auth.authenticate(username, auth_response, &self.auth_salt)
                     .await
@@ -467,7 +467,7 @@ impl Connection {
                         name: "@@version_comment".to_string(),
                         col_type: ColumnType::String,
                     }],
-                    vec![vec![Some("RorisDB".to_string())]],
+                    vec![vec![Some("HarnessDB".to_string())]],
                 );
                 return self.send_result_set(result).await;
             }
@@ -507,7 +507,7 @@ impl Connection {
 
                 let (value, col_type) = match clean_var {
                     "max_allowed_packet" => (4194304.to_string(), ColumnType::Int), // 4MB default
-                    "version" | "version_comment" => ("RorisDB".to_string(), ColumnType::String),
+                    "version" | "version_comment" => ("HarnessDB".to_string(), ColumnType::String),
                     "character_set_client"
                     | "character_set_connection"
                     | "character_set_results" => ("utf8mb4".to_string(), ColumnType::String),

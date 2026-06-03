@@ -17,8 +17,8 @@ use mysql_protocol::server::{ColumnDef, ColumnType, QueryHandler, QueryResult};
 // ---------------------------------------------------------------------------
 
 const TEST_DATE: &str = "Mon, 01 Jan 2024 00:00:00 GMT";
-const TEST_ACCESS_KEY: &str = "roris";
-const TEST_SECRET_KEY: &str = "roris-secret";
+const TEST_ACCESS_KEY: &str = "harness";
+const TEST_SECRET_KEY: &str = "harness-secret";
 
 // ---------------------------------------------------------------------------
 // Mock query handler

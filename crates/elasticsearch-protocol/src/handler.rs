@@ -29,14 +29,14 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
             // GET / - Cluster health
             ("GET", [""]) | ("GET", []) => {
                 json!({
-                    "name": "roris",
-                    "cluster_name": "roris-cluster",
-                    "cluster_uuid": "roris-uuid",
+                    "name": "harness",
+                    "cluster_name": "harness-cluster",
+                    "cluster_uuid": "harness-uuid",
                     "version": {
                         "number": "7.10.2",
                         "build_flavor": "default",
                         "build_type": "docker",
-                        "build_hash": "roris",
+                        "build_hash": "harness",
                         "build_date": "2024-01-01",
                         "build_snapshot": false,
                         "lucene_version": "8.7.0",
@@ -50,7 +50,7 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
             // GET /_cluster/health
             ("GET", ["_cluster", "health"]) => {
                 json!({
-                    "cluster_name": "roris-cluster",
+                    "cluster_name": "harness-cluster",
                     "status": "green",
                     "timed_out": false,
                     "number_of_nodes": 1,
@@ -70,7 +70,7 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                     .iter()
                     .map(|name| {
                         let index = self.storage.get_index(name).unwrap();
-                        format!("green open {} roris-uuid 1 0 {} 0 0b 0b", name, index.count())
+                        format!("green open {} harness-uuid 1 0 {} 0 0b 0b", name, index.count())
                     })
                     .collect();
                 json!(result.join("\n").to_string())

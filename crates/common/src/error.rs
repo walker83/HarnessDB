@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum DrorisError {
+pub enum DharnessError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -157,9 +157,9 @@ pub enum RpcError {
     InternalError,
 }
 
-impl DrorisError {
+impl DharnessError {
     pub fn storage(kind: StorageError, message: impl Into<String>) -> Self {
-        DrorisError::Storage {
+        DharnessError::Storage {
             kind,
             tablet_id: None,
             message: message.into(),
@@ -171,7 +171,7 @@ impl DrorisError {
         tablet_id: u64,
         message: impl Into<String>,
     ) -> Self {
-        DrorisError::Storage {
+        DharnessError::Storage {
             kind,
             tablet_id: Some(tablet_id),
             message: message.into(),
@@ -179,7 +179,7 @@ impl DrorisError {
     }
 
     pub fn query(kind: QueryError, message: impl Into<String>) -> Self {
-        DrorisError::Query {
+        DharnessError::Query {
             kind,
             query_id: None,
             message: message.into(),
@@ -191,7 +191,7 @@ impl DrorisError {
         query_id: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
-        DrorisError::Query {
+        DharnessError::Query {
             kind,
             query_id: Some(query_id.into()),
             message: message.into(),
@@ -199,7 +199,7 @@ impl DrorisError {
     }
 
     pub fn catalog(kind: CatalogError, message: impl Into<String>) -> Self {
-        DrorisError::Catalog {
+        DharnessError::Catalog {
             kind,
             database_name: None,
             table_name: None,
@@ -212,7 +212,7 @@ impl DrorisError {
         database_name: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
-        DrorisError::Catalog {
+        DharnessError::Catalog {
             kind,
             database_name: Some(database_name.into()),
             table_name: None,
@@ -226,7 +226,7 @@ impl DrorisError {
         table_name: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
-        DrorisError::Catalog {
+        DharnessError::Catalog {
             kind,
             database_name: Some(database_name.into()),
             table_name: Some(table_name.into()),
@@ -235,7 +235,7 @@ impl DrorisError {
     }
 
     pub fn parse(kind: ParseError, message: impl Into<String>) -> Self {
-        DrorisError::Parse {
+        DharnessError::Parse {
             kind,
             position: None,
             message: message.into(),
@@ -247,7 +247,7 @@ impl DrorisError {
         position: usize,
         message: impl Into<String>,
     ) -> Self {
-        DrorisError::Parse {
+        DharnessError::Parse {
             kind,
             position: Some(position),
             message: message.into(),
@@ -255,14 +255,14 @@ impl DrorisError {
     }
 
     pub fn plan(kind: PlanError, message: impl Into<String>) -> Self {
-        DrorisError::Plan {
+        DharnessError::Plan {
             kind,
             message: message.into(),
         }
     }
 
     pub fn rpc(kind: RpcError, message: impl Into<String>) -> Self {
-        DrorisError::Rpc {
+        DharnessError::Rpc {
             kind,
             endpoint: None,
             message: message.into(),
@@ -274,7 +274,7 @@ impl DrorisError {
         endpoint: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
-        DrorisError::Rpc {
+        DharnessError::Rpc {
             kind,
             endpoint: Some(endpoint.into()),
             message: message.into(),

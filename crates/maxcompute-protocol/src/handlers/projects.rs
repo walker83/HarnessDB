@@ -1,7 +1,7 @@
 //! Handler for `GET /api/projects/{project}`.
 //!
 //! Returns project metadata as XML. The MaxCompute project concept maps to a
-//! RorisDB database. If the project name differs from the configured default
+//! HarnessDB database. If the project name differs from the configured default
 //! project, a 404 error is returned.
 
 use axum::{

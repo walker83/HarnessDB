@@ -3,7 +3,7 @@ name = "redis-protocol"
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Redis protocol (RESP2/RESP3) implementation for RorisDB - Tair compatible"
+description = "Redis protocol (RESP2/RESP3) implementation for HarnessDB - Tair compatible"
 
 [dependencies]
 tokio = { workspace = true }

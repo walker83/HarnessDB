@@ -1,11 +1,11 @@
-# 🎉 RorisDB v1.0.0 Release Notes
+# 🎉 HarnessDB v1.0.0 Release Notes
 
 ## Release Date
 2026-06-03
 
 ## Overview
 
-We are thrilled to announce **RorisDB v1.0.0** - the world's first universal database chameleon that supports **14 different database protocols** in a single binary!
+We are thrilled to announce **HarnessDB v1.0.0** - the world's first universal database chameleon that supports **14 different database protocols** in a single binary!
 
 This marks the completion of our ambitious goal to replicate all major Alibaba Cloud database products and create a truly universal database simulation platform.
 
@@ -13,7 +13,7 @@ This marks the completion of our ambitious goal to replicate all major Alibaba C
 
 ### 14 Database Protocols
 
-RorisDB now supports **14 different database protocols**, making it the most versatile database simulator available:
+HarnessDB now supports **14 different database protocols**, making it the most versatile database simulator available:
 
 #### Relational Databases
 - **MySQL** (Port 9030) - MySQL 5.7/8.0, RDS, Doris, StarRocks compatible
@@ -45,8 +45,8 @@ RorisDB now supports **14 different database protocols**, making it the most ver
 ### One Binary, Fourteen Protocols
 
 ```bash
-# Start RorisDB - all 14 protocols are ready!
-./roris-fe
+# Start HarnessDB - all 14 protocols are ready!
+./harness-db
 
 # Connect with any client
 mysql -h 127.0.0.1 -P 9030          # MySQL
@@ -178,8 +178,8 @@ This project wouldn't be possible without:
 
 ### From Source
 ```bash
-git clone https://github.com/walker83/RorisDB.git
-cd RorisDB
+git clone https://github.com/walker83/HarnessDB.git
+cd HarnessDB
 cargo build --release
 ```
 
@@ -196,18 +196,18 @@ Apache License 2.0
 
 ---
 
-**Full Changelog**: https://github.com/walker83/RorisDB/compare/v0.3.3...v1.0.0
+**Full Changelog**: https://github.com/walker83/HarnessDB/compare/v0.3.3...v1.0.0
 
-**Documentation**: https://github.com/walker83/RorisDB/tree/main/docs
+**Documentation**: https://github.com/walker83/HarnessDB/tree/main/docs
 
-**Report Issues**: https://github.com/walker83/RorisDB/issues
+**Report Issues**: https://github.com/walker83/HarnessDB/issues
 
 ---
 
 <div align="center">
 
-**Thank you for using RorisDB! 🦎**
+**Thank you for using HarnessDB! 🦎**
 
-Built with ❤️ by the RorisDB Team
+Built with ❤️ by the HarnessDB Team
 
 </div>

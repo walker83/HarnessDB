@@ -3,7 +3,7 @@ use std::time::Instant;
 use data_io::parquet_reader::ParquetReader;
 
 fn main() {
-    println!("RorisDB Parquet Benchmark");
+    println!("HarnessDB Parquet Benchmark");
     println!("========================\n");
 
     // Read test

@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整中文文档翻译
 - 多数据库协议兼容性强调（MySQL、Hologres、MaxCompute）
 
-[0.3.3]: https://github.com/walker83/RorisDB/compare/v0.3.2...v0.3.3
-[0.3.2]: https://github.com/walker83/RorisDB/compare/v0.3.1...v0.3.2
-[0.3.1]: https://github.com/walker83/RorisDB/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/walker83/RorisDB/releases/tag/v0.3.0
+[0.3.3]: https://github.com/walker83/HarnessDB/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/walker83/HarnessDB/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/walker83/HarnessDB/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/walker83/HarnessDB/releases/tag/v0.3.0

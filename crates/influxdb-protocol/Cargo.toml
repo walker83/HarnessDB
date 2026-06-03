@@ -3,7 +3,7 @@ name = "influxdb-protocol"
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "InfluxDB line protocol implementation for RorisDB - TSDB compatible"
+description = "InfluxDB line protocol implementation for HarnessDB - TSDB compatible"
 
 [dependencies]
 tokio = { workspace = true }

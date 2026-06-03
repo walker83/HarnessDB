@@ -1,6 +1,6 @@
 // Block ↔ Arrow RecordBatch conversion utilities.
 //
-// RorisDB has its own type system (types::Vector / types::Block).
+// HarnessDB has its own type system (types::Vector / types::Block).
 // DataFusion works with Arrow (RecordBatch / Array).
 // This module bridges the two.
 
@@ -17,7 +17,7 @@ use types::Block;
 // Block → RecordBatch  (IMPLEMENTED)
 // ---------------------------------------------------------------------------
 
-/// Convert a RorisDB `Block` into an Arrow `RecordBatch`.
+/// Convert a HarnessDB `Block` into an Arrow `RecordBatch`.
 pub fn block_to_record_batch(block: &Block) -> Result<RecordBatch, String> {
     let schema = block.schema();
     let arrow_fields: Vec<Field> = schema

@@ -1,4 +1,4 @@
-//! Partition management for RorisDB
+//! Partition management for HarnessDB
 //! Supports: Range, List, Hash partitioning
 
 use serde::{Deserialize, Serialize};

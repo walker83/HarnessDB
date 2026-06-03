@@ -2,7 +2,7 @@
 name = "pg-protocol"
 version.workspace = true
 edition.workspace = true
-description = "PostgreSQL wire protocol v3 compatibility layer for RorisDB (Hologres compatible)"
+description = "PostgreSQL wire protocol v3 compatibility layer for HarnessDB (Hologres compatible)"
 
 [dependencies]
 tokio = { workspace = true }

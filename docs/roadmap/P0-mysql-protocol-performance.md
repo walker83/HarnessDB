@@ -1,8 +1,8 @@
-# RorisDB 性能优化计划
+# HarnessDB 性能优化计划
 
 ## Context
 
-RorisDB 查询 129,200 行数据耗时 894.8ms，而 DuckDB 只需 3.5ms（慢 255 倍）。
+HarnessDB 查询 129,200 行数据耗时 894.8ms，而 DuckDB 只需 3.5ms（慢 255 倍）。
 经过深度分析，瓶颈不在 Parquet 读取（~50ms），而在 **MySQL 协议序列化**（~800ms，占 89%）。
 
 ### 瓶颈拆解
@@ -72,7 +72,7 @@ async fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
 ### Phase 2: 消除 String 中间层（预计再提速 3-5 倍）
 
 #### 2.1 Arrow → MySQL 字节直接编码
-**文件**: `roris-server/src/utils.rs:144-317`, `crates/mysql-protocol/src/connection.rs`
+**文件**: `harness-server/src/utils.rs:144-317`, `crates/mysql-protocol/src/connection.rs`
 
 当前的数据转换路径：
 ```
@@ -93,7 +93,7 @@ Arrow Array → write_to_mysql_buf(&mut BytesMut) → TCP
 **预期效果**: 消除每格 2-3 次堆分配，129K 行 × 13 列 ≈ 1.7M 次分配变为 0。
 
 #### 2.2 流式发送结果
-**文件**: `roris-server/src/utils.rs`, `crates/mysql-protocol/src/connection.rs`
+**文件**: `harness-server/src/utils.rs`, `crates/mysql-protocol/src/connection.rs`
 
 当前流程：`df.collect()` → 全量 RecordBatches → 全量 String 矩阵 → 逐行发送
 改为：边从 RecordBatch 读取边编码边发送，无需中间 `Vec<Vec<Option<String>>>`
@@ -112,7 +112,7 @@ async fn send_result_set_streaming(
 ### Phase 3: 查询执行优化（预计再提速 2-3 倍）
 
 #### 3.1 复用 SessionContext
-**文件**: `roris-server/src/fe_main.rs:88-112`
+**文件**: `harness-server/src/fe_main.rs:88-112`
 
 当前每次 SELECT 都创建新的 `SessionContext`，重新注册 catalog 和 UDFs。
 改为：为每个连接维护一个 `SessionContext`，仅更新 `default_catalog`/`default_schema`。
@@ -126,7 +126,7 @@ SQL 被 `to_lowercase()` 了两次，产生两次全量字符串拷贝。
 改为只 lower一次，传递引用。
 
 #### 3.3 将 QueryHandler 改为 async
-**文件**: `crates/mysql-protocol/src/server.rs`, `roris-server/src/fe_main.rs`
+**文件**: `crates/mysql-protocol/src/server.rs`, `harness-server/src/fe_main.rs`
 
 当前 `handle_query` 是同步方法，DataFusion 的 async 通过 `thread::spawn + block_on` 桥接。
 改为 async trait，让 DataFusion 在 tokio runtime 上直接运行。
@@ -169,6 +169,6 @@ SQL 被 `to_lowercase()` 了两次，产生两次全量字符串拷贝。
 | `Cargo.toml` | opt-level: "z" → 3 |
 | `crates/mysql-protocol/src/connection.rs` | 批量 flush, 缓冲区复用, send_result_set 重构 |
 | `crates/mysql-protocol/src/packet.rs` | write_into 方法, PacketBuilder 复用 |
-| `roris-server/src/utils.rs` | arrow_column_to_mysql_text(), 流式编码 |
-| `roris-server/src/fe_main.rs` | SessionContext 复用 |
+| `harness-server/src/utils.rs` | arrow_column_to_mysql_text(), 流式编码 |
+| `harness-server/src/fe_main.rs` | SessionContext 复用 |
 | `crates/mysql-protocol/src/server.rs` | QueryHandler async 化 |

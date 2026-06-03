@@ -79,13 +79,13 @@ impl EditLog {
         let mut file = tokio::fs::File::create(&path).await?;
         for entry in &self.entries {
             let line = serde_json::to_string(entry)
-                .map_err(|e| common::DrorisError::Internal(e.to_string()))?;
+                .map_err(|e| common::DharnessError::Internal(e.to_string()))?;
             file.write_all(line.as_bytes()).await?;
             file.write_all(b"\n").await?;
         }
         // Ensure edit log is flushed to disk (critical for durability)
         file.sync_all().await.map_err(|e| {
-            common::DrorisError::Internal(format!("Failed to sync edit log: {}", e))
+            common::DharnessError::Internal(format!("Failed to sync edit log: {}", e))
         })?;
         self.last_applied_index = self
             .entries

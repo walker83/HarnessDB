@@ -49,7 +49,7 @@ public class Coordinator {
 // 5. Runtime Filter分配
 ```
 
-### RorisDB的缺失
+### HarnessDB的缺失
 
 ```
 当前缺失：
@@ -556,7 +556,7 @@ impl BackendClient {
 
 ## 📊 功能对比
 
-| 功能 | Doris | RorisDB | 完成度 |
+| 功能 | Doris | HarnessDB | 完成度 |
 |------|-------|---------|--------|
 | **Fragment划分** | ✅ 完整 | ✅ 实现 | 100% |
 | **ScanRange分配** | ✅ 完整 | ✅ 实现 | 100% |
@@ -604,7 +604,7 @@ fe-scheduler/src/coordinator.rs # 替换为Actor
 4. ✅ **异步RPC**：不阻塞等待结果
 5. ✅ **分布式查询**：多BE协作执行
 
-**Fragment调度是RorisDB分布式查询的核心！**
+**Fragment调度是HarnessDB分布式查询的核心！**
 
 ---
 
@@ -626,4 +626,4 @@ fe-scheduler/src/coordinator.rs # 替换为Actor
 4. ✅ 依赖P1-01（Tablet/Replica）
 5. ✅ ScanRange分配核心功能
 
-**P1-02是RorisDB分布式查询的起点！**
+**P1-02是HarnessDB分布式查询的起点！**

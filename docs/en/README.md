@@ -1,4 +1,4 @@
-# RorisDB Documentation
+# HarnessDB Documentation
 
 [← Back to README](../../README.md)
 

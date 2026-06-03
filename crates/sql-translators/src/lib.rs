@@ -1,7 +1,7 @@
-//! SQL dialect translators for RorisDB database chameleon.
+//! SQL dialect translators for HarnessDB database chameleon.
 //!
 //! This crate provides SQL translation between different database dialects
-//! and RorisDB's internal SQL format. Each translator handles the specific
+//! and HarnessDB's internal SQL format. Each translator handles the specific
 //! syntax differences of a target database.
 //!
 //! # Supported Dialects
@@ -16,7 +16,7 @@ pub use maxcompute::MaxComputeTranslator;
 
 /// Trait for SQL dialect translators.
 pub trait DialectTranslator {
-    /// Translate SQL from the target dialect to RorisDB-compatible SQL.
+    /// Translate SQL from the target dialect to HarnessDB-compatible SQL.
     fn translate(&self, sql: &str) -> TranslateResult;
 
     /// Return the name of this dialect.

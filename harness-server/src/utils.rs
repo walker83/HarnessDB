@@ -1598,7 +1598,7 @@ mod tests {
         assert!(like_match("%", "anything"));
         assert!(like_match("a%", "abc"));
         assert!(like_match("%c", "abc"));
-        assert!(like_match("%or%", "roris"));
+        assert!(like_match("%or%", "harness"));
     }
 
     #[test]

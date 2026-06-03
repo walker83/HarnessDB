@@ -1,4 +1,4 @@
-//! Redis protocol (RESP2/RESP3) implementation for RorisDB
+//! Redis protocol (RESP2/RESP3) implementation for HarnessDB
 //! Compatible with Tair and all Redis clients (redis-cli, redis-py, Jedis, etc.)
 
 pub mod resp;

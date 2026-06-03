@@ -1,7 +1,7 @@
-# RorisDB Data Tool Integration Test Report
+# HarnessDB Data Tool Integration Test Report
 
 **Date**: 2026-05-26  
-**RorisDB Version**: 0.3.0  
+**HarnessDB Version**: 0.3.0  
 **Test Environment**: macOS ARM64, MySQL Protocol Port 9030
 
 ## Executive Summary
@@ -30,7 +30,7 @@ Successfully tested integration with **10 popular GitHub data tools** (combined 
 - **Setup**: Downloaded binary v11.6.0 (Docker unavailable)
 - **Connection**: MySQL datasource to `127.0.0.1:9030` - SUCCESS
 - **Queries**: All query types work (SELECT, JOIN, GROUP BY, aggregation)
-- **Dashboard**: Created "RorisDB User Dashboard" with panels - SUCCESS
+- **Dashboard**: Created "HarnessDB User Dashboard" with panels - SUCCESS
 - **Data Types**: Int32→int64, DateTime→time, Decimal→string mapping works
 
 #### ✅ Apache Superset (63k⭐) - SUCCESS
@@ -133,7 +133,7 @@ Successfully tested integration with **10 popular GitHub data tools** (combined 
 #### ✅ Streamlit - SUCCESS
 - pymysql connections work for all data loading patterns
 - Pandas `read_sql()` works with SQLAlchemy engines
-- Visualization components work with RorisDB data
+- Visualization components work with HarnessDB data
 
 #### ❌ Redash (26k⭐) - FAILED
 - **Issue**: Docker Hub network unreachable
@@ -150,7 +150,7 @@ Successfully tested integration with **10 popular GitHub data tools** (combined 
 ### 1. SQLAlchemy Connection Initialization Failure
 **Root Cause**: 
 - SQLAlchemy sends `SELECT @@lower_case_table_names` during initialization
-- RorisDB returned empty string for variables with `@@session.` or `@@global.` prefixes
+- HarnessDB returned empty string for variables with `@@session.` or `@@global.` prefixes
 - `connection.rollback()` on fresh connections caused "Command Out of Sync" error
 
 **Fix Applied**:
@@ -166,7 +166,7 @@ Successfully tested integration with **10 popular GitHub data tools** (combined 
 ### 2. SHOW FULL TABLES Incompatibility
 **Root Cause**: 
 - SQLAlchemy's `inspector.get_table_names()` uses `SHOW FULL TABLES`
-- RorisDB only returned 1 column instead of 2
+- HarnessDB only returned 1 column instead of 2
 
 **Fix Applied**:
 - Added `is_full: bool` field to `ShowTables` AST variant
@@ -175,12 +175,12 @@ Successfully tested integration with **10 popular GitHub data tools** (combined 
 **Files Changed**:
 - `crates/fe-sql-parser/src/ast.rs`
 - `crates/fe-sql-parser/src/parser.rs`
-- `roris-server/src/query_executor.rs`
+- `harness-server/src/query_executor.rs`
 
 ### 3. Missing System Variables
 **Root Cause**: 
 - Various tools query `@@have_ssl`, `@@innodb_version`, `@@protocol_version`, etc.
-- RorisDB didn't have these variables defined
+- HarnessDB didn't have these variables defined
 
 **Fix Applied**:
 - Added 8 new system variables: `lower_case_table_names`, `have_ssl`, `have_query_cache`, `license`, `innodb_version`, `protocol_version`, `tmpdir`, `datadir`
@@ -217,7 +217,7 @@ Successfully tested integration with **10 popular GitHub data tools** (combined 
 ## Known Limitations
 
 ### 1. mysql-connector-python C Extension
-- **Issue**: C extension (`use_pure=False`) incompatible with RorisDB text protocol
+- **Issue**: C extension (`use_pure=False`) incompatible with HarnessDB text protocol
 - **Impact**: dbt, some Airflow configurations fail
 - **Workaround**: Use `use_pure=True` or PyMySQL instead
 - **Priority**: Medium - affects Python-based ETL tools
@@ -275,13 +275,13 @@ Successfully tested integration with **10 popular GitHub data tools** (combined 
 - **Python Integration Test**: `scripts/python_integration_test.py` (48 tests, 100% pass rate)
 - **Test Database**: `integration_test` with `users` (5 rows), `orders` (10 rows), `products` (5 rows)
 - **BI Tools**: Grafana running on port 3000, Superset on port 8088
-- **Agent Reports**: See individual agent output files in `.claude/projects/-Users-walker-code-RorisDB/47090328-adb2-4cc4-aff2-be372f7f93bf/tasks/`
+- **Agent Reports**: See individual agent output files in `.claude/projects/-Users-walker-code-HarnessDB/47090328-adb2-4cc4-aff2-be372f7f93bf/tasks/`
 
 ---
 
 ## Conclusion
 
-RorisDB demonstrates **strong MySQL protocol compatibility** with the modern data stack. The database successfully integrates with:
+HarnessDB demonstrates **strong MySQL protocol compatibility** with the modern data stack. The database successfully integrates with:
 - ✅ Major BI tools (Grafana, Superset)
 - ✅ Python data ecosystem (SQLAlchemy, Pandas, PyMySQL)
 - ✅ Interactive tools (Jupyter, Streamlit, mycli)

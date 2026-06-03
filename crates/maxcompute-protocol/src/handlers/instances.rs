@@ -58,7 +58,7 @@ pub async fn submit_instance(
 
     info!("MaxCompute SQL: {}", sql);
 
-    // Translate MaxCompute SQL to RorisDB SQL
+    // Translate MaxCompute SQL to HarnessDB SQL
     let (translated_sql, is_noop) = crate::sql::translate_mc_sql(&sql);
 
     if is_noop {

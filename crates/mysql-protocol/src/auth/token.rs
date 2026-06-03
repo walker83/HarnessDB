@@ -211,7 +211,7 @@ mod tests {
             "user1".to_string(),
             vec!["role1".to_string()],
             3600,
-            "rorisdb".to_string(),
+            "harnessdb".to_string(),
         );
         assert!(!claims.is_expired());
     }
@@ -223,7 +223,7 @@ mod tests {
             "testuser".to_string(),
             vec!["admin".to_string()],
             3600,
-            "rorisdb".to_string(),
+            "harnessdb".to_string(),
         );
 
         let token = generate_jwt_token(&claims, secret).unwrap();

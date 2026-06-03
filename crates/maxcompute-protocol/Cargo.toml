@@ -2,7 +2,7 @@
 name = "maxcompute-protocol"
 version.workspace = true
 edition.workspace = true
-description = "MaxCompute (ODPS) REST API protocol compatibility layer for RorisDB"
+description = "MaxCompute (ODPS) REST API protocol compatibility layer for HarnessDB"
 
 [dependencies]
 tokio = { workspace = true }

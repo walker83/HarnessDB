@@ -2,7 +2,7 @@
 name = "vector-protocol"
 version = "1.0.0"
 edition = "2024"
-description = "Vector database protocol implementation for RorisDB"
+description = "Vector database protocol implementation for HarnessDB"
 
 [dependencies]
 tokio.workspace = true

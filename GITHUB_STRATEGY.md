@@ -1,4 +1,4 @@
-# RorisDB GitHub Star策略 - 目标100 Stars
+# HarnessDB GitHub Star策略 - 目标100 Stars
 
 ## 当前状态
 - 项目定位：Apache Doris单机版，MySQL兼容，DataFusion + Parquet
@@ -20,7 +20,7 @@
 - [ ] 添加使用案例展示
 
 #### 1.2 文档完善
-- [ ] 创建独立文档站点（docs.rorisdb.com）
+- [ ] 创建独立文档站点（docs.harnessdb.com）
 - [ ] 编写安装指南（macOS、Linux、Docker）
 - [ ] 编写SQL参考手册
 - [ ] 添加配置示例
@@ -45,11 +45,11 @@
 - [ ] 微信公众号文章
 
 #### 2.2 技术博客
-- [ ] "为什么我需要RorisDB：单机OLAP的痛点"
-- [ ] "RorisDB架构设计：从Doris到单机版"
+- [ ] "为什么我需要HarnessDB：单机OLAP的痛点"
+- [ ] "HarnessDB架构设计：从Doris到单机版"
 - [ ] "Rust + DataFusion：构建现代数据库"
 - [ ] "MySQL兼容性：137个真实场景测试"
-- [ ] "性能测试：RorisDB vs SQLite vs DuckDB"
+- [ ] "性能测试：HarnessDB vs SQLite vs DuckDB"
 
 #### 2.3 社区互动
 - [ ] 回复GitHub Issues
@@ -159,7 +159,7 @@
 - **备选**: 专注细分市场（个人开发者、小团队）
 
 ## 预算
-- **域名**: $10/年（rorisdb.com）
+- **域名**: $10/年（harnessdb.com）
 - **文档托管**: 免费（GitHub Pages/Netlify）
 - **视频制作**: $0（自己录制）
 - **设计工具**: $0（Figma免费计划）

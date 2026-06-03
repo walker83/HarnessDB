@@ -26,7 +26,7 @@
   - SIMD使用: 部分
 ```
 
-### RorisDB的列式原生设计
+### HarnessDB的列式原生设计
 
 ```
 Arrow生态优势：
@@ -58,7 +58,7 @@ Arrow生态优势：
   5. Apache官方标准（生态成熟）
   
 架构：
-  RorisDB存储层（Arrow格式）
+  HarnessDB存储层（Arrow格式）
     ↓ Arrow IPC零拷贝
   Datafusion查询引擎（Arrow格式）
     ↓ Arrow compute kernels
@@ -653,7 +653,7 @@ impl ColumnCompressor {
 
 ## 📊 性能预期对比
 
-| 指标 | Doris（改造列式） | RorisDB（原生列式） | 提升倍数 |
+| 指标 | Doris（改造列式） | HarnessDB（原生列式） | 提升倍数 |
 |------|-----------------|-------------------|---------|
 | **Scan吞吐** | 1M rows/sec | 5-10M rows/sec | 5-10倍 |
 | **编码压缩率** | 30% | 70% | 2倍改善 |
@@ -707,7 +707,7 @@ be-execution/src/lib.rs        # 导出simd模块
 4. ✅ **Arrow生态**：跨语言支持（C++/Python/Java）
 5. ✅ **零拷贝传输**：Arrow IPC
 
-**列式存储原生设计是RorisDB性能的核心！**
+**列式存储原生设计是HarnessDB性能的核心！**
 
 ---
 
@@ -729,4 +729,4 @@ be-execution/src/lib.rs        # 导出simd模块
 4. ✅ 零拷贝传输（Arrow IPC）
 5. ✅ Apache官方标准（技术领先）
 
-**P1-00是RorisDB列式存储的核心竞争力！**
+**P1-00是HarnessDB列式存储的核心竞争力！**

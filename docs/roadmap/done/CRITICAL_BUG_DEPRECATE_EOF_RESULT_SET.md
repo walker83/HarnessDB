@@ -9,13 +9,13 @@
 
 ## 问题描述
 
-MySQL 8.0+ 客户端（包括 mysql CLI、JDBC、Go MySQL Driver 等）连接 RorisDB 后，所有 SELECT 查询永久挂起，无任何返回。服务本身正常运行，端口监听正常，TCP 连接可建立，但查询响应无法被客户端正确解析。
+MySQL 8.0+ 客户端（包括 mysql CLI、JDBC、Go MySQL Driver 等）连接 HarnessDB 后，所有 SELECT 查询永久挂起，无任何返回。服务本身正常运行，端口监听正常，TCP 连接可建立，但查询响应无法被客户端正确解析。
 
 ### 复现步骤
 
 ```bash
 # 启动服务
-./target/release/roris-fe --mysql-port 9030
+./target/release/harness-db --mysql-port 9030
 
 # 另一个终端连接
 mysql -h 127.0.0.1 -P 9030 -uroot

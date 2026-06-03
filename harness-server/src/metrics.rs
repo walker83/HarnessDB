@@ -1,4 +1,4 @@
-//! Prometheus metrics for RorisDB observability
+//! Prometheus metrics for HarnessDB observability
 //!
 //! Provides key metrics: query latency distribution, query counts by type,
 //! active connections, slow queries, and memory usage.
@@ -11,7 +11,7 @@ use prometheus::{
 lazy_static! {
     /// Query latency distribution in milliseconds, bucketed by query type
     pub static ref QUERY_DURATION_MS: HistogramVec = register_histogram_vec!(
-        "roris_query_duration_ms",
+        "harness_query_duration_ms",
         "Query latency distribution in milliseconds",
         &["query_type"],
         vec![
@@ -23,7 +23,7 @@ lazy_static! {
 
     /// Total number of queries processed, by type and status
     pub static ref QUERIES_TOTAL: CounterVec = register_counter_vec!(
-        "roris_queries_total",
+        "harness_queries_total",
         "Total number of queries processed",
         &["query_type", "status"],
     )
@@ -31,14 +31,14 @@ lazy_static! {
 
     /// Currently active (open) connections
     pub static ref ACTIVE_CONNECTIONS: Gauge = register_gauge!(
-        "roris_active_connections",
+        "harness_active_connections",
         "Number of currently active connections",
     )
     .unwrap();
 
     /// Total number of slow queries (above configurable threshold), by type
     pub static ref SLOW_QUERIES_TOTAL: CounterVec = register_counter_vec!(
-        "roris_slow_queries_total",
+        "harness_slow_queries_total",
         "Total number of slow queries (exceeding slow_query_threshold)",
         &["query_type"],
     )
@@ -46,15 +46,15 @@ lazy_static! {
 
     /// Current process memory usage in bytes
     pub static ref PROCESS_MEMORY_BYTES: Gauge = register_gauge!(
-        "roris_process_memory_bytes",
+        "harness_process_memory_bytes",
         "Current process memory usage in bytes",
     )
     .unwrap();
 
     /// Server info metric (constant value with version label)
     pub static ref RORIS_SERVER_INFO: Gauge = register_gauge!(
-        "roris_server_info",
-        "RorisDB server info (version encoded in label value)",
+        "harness_server_info",
+        "HarnessDB server info (version encoded in label value)",
     )
     .unwrap();
 }

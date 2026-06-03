@@ -15,7 +15,7 @@
 12. [HTTP Headers Reference](#http-headers-reference)
 13. [Query Parameters Reference](#query-parameters-reference)
 14. [JSON Response Schemas](#json-response-schemas)
-15. [Implementation Strategy for RorisDB](#implementation-strategy-for-rorisdb)
+15. [Implementation Strategy for HarnessDB](#implementation-strategy-for-harnessdb)
 
 ---
 
@@ -51,7 +51,7 @@ Response: plain text body containing the tunnel server address (e.g., `dt.cn-sha
 
 The client prepends the protocol scheme from the ODPS endpoint to form the full tunnel URL.
 
-**For RorisDB mock**: You can skip this by having the client use a direct tunnel endpoint URL, or implement this simple endpoint on your ODPS-compatible service.
+**For HarnessDB mock**: You can skip this by having the client use a direct tunnel endpoint URL, or implement this simple endpoint on your ODPS-compatible service.
 
 ---
 
@@ -94,7 +94,7 @@ Authorization: ODPS {AccessKeyId}/{Date}/{Region}/odps/aliyun_v4_request:{Signat
 - Key derivation: `kSecret → kDate → kRegion → kService → kSigning`
 - The canonical string is the same format as V2 but signed with the derived key
 
-**For RorisDB mock**: You can implement a simple signature verification or skip authentication entirely for testing. The signature uses standard HMAC-SHA1 (V2) or HMAC-SHA256 (V4).
+**For HarnessDB mock**: You can implement a simple signature verification or skip authentication entirely for testing. The signature uses standard HMAC-SHA1 (V2) or HMAC-SHA256 (V4).
 
 ---
 
@@ -523,7 +523,7 @@ odps-tunnel-tags: tag1,tag2
 
 ---
 
-## Implementation Strategy for RorisDB
+## Implementation Strategy for HarnessDB
 
 ### Minimal Viable Implementation
 

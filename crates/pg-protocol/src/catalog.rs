@@ -383,7 +383,7 @@ fn handle_version() -> QueryResult {
             name: "version".to_string(),
             col_type: ColumnType::String,
         }],
-        vec![vec![Some("PostgreSQL 15.0 (RorisDB 0.3.0)".to_string())]],
+        vec![vec![Some("PostgreSQL 15.0 (HarnessDB 0.3.0)".to_string())]],
     )
 }
 
@@ -758,8 +758,8 @@ fn handle_pg_attribute(catalog: &CatalogManager, current_db: &str) -> QueryResul
         for table_name in tables {
             if let Some(table) = catalog.get_table(db_name, &table_name) {
                 for (i, col) in table.columns.iter().enumerate() {
-                    let type_oid = map_roris_type_to_pg_oid(&col.data_type);
-                    let type_len = map_roris_type_to_len(&col.data_type);
+                    let type_oid = map_harness_type_to_pg_oid(&col.data_type);
+                    let type_len = map_harness_type_to_len(&col.data_type);
                     let not_null_str = if col.nullable { "false" } else { "true" };
 
                     rows.push(vec![
@@ -1154,7 +1154,7 @@ fn handle_pg_available_extensions() -> QueryResult {
             Some("hologres".to_string()),
             Some("0.1".to_string()),
             Some("0.1".to_string()),
-            Some("Hologres compatibility layer for RorisDB".to_string()),
+            Some("Hologres compatibility layer for HarnessDB".to_string()),
         ]],
     )
 }
@@ -1303,7 +1303,7 @@ fn handle_information_schema_columns(catalog: &CatalogManager, current_db: &str)
             if let Some(table) = catalog.get_table(db_name, &table_name) {
                 for (i, col) in table.columns.iter().enumerate() {
                     let nullable_str = if col.nullable { "YES" } else { "NO" };
-                    let data_type_str = map_roris_type_to_sql_type(&col.data_type);
+                    let data_type_str = map_harness_type_to_sql_type(&col.data_type);
                     let char_len = match &col.data_type {
                         types::DataType::Varchar(n) => Some(n.to_string()),
                         types::DataType::Char(n) => Some(n.to_string()),
@@ -1416,8 +1416,8 @@ fn handle_information_schema_views(catalog: &CatalogManager, current_db: &str) -
 // Helper Functions
 // ============================================================================
 
-/// Map a RorisDB DataType to a PostgreSQL type OID.
-fn map_roris_type_to_pg_oid(data_type: &types::DataType) -> i32 {
+/// Map a HarnessDB DataType to a PostgreSQL type OID.
+fn map_harness_type_to_pg_oid(data_type: &types::DataType) -> i32 {
     use types::DataType;
     match data_type {
         DataType::Null => 0,
@@ -1444,9 +1444,9 @@ fn map_roris_type_to_pg_oid(data_type: &types::DataType) -> i32 {
     }
 }
 
-/// Map a RorisDB DataType to its size in bytes (for pg_attribute.attlen).
+/// Map a HarnessDB DataType to its size in bytes (for pg_attribute.attlen).
 /// -1 means variable length.
-fn map_roris_type_to_len(data_type: &types::DataType) -> i16 {
+fn map_harness_type_to_len(data_type: &types::DataType) -> i16 {
     use types::DataType;
     match data_type {
         DataType::Null => 0,
@@ -1473,8 +1473,8 @@ fn map_roris_type_to_len(data_type: &types::DataType) -> i16 {
     }
 }
 
-/// Map a RorisDB DataType to a SQL type name string.
-fn map_roris_type_to_sql_type(data_type: &types::DataType) -> String {
+/// Map a HarnessDB DataType to a SQL type name string.
+fn map_harness_type_to_sql_type(data_type: &types::DataType) -> String {
     use types::DataType;
     match data_type {
         DataType::Null => "NULL".to_string(),
@@ -1494,7 +1494,7 @@ fn map_roris_type_to_sql_type(data_type: &types::DataType) -> String {
         DataType::String => "text".to_string(),
         DataType::Binary => "bytea".to_string(),
         DataType::Json => "json".to_string(),
-        DataType::Array(inner) => format!("{}[]", map_roris_type_to_sql_type(inner)),
+        DataType::Array(inner) => format!("{}[]", map_harness_type_to_sql_type(inner)),
         DataType::Map(_, _) => "text".to_string(),
         DataType::Struct(_) => "text".to_string(),
         DataType::Float32Vector(dim) => format!("float32_vector({})", dim),
@@ -1512,7 +1512,7 @@ mod tests {
         assert_eq!(result.columns.len(), 1);
         assert_eq!(result.rows.len(), 1);
         assert!(result.rows[0][0].as_ref().unwrap().contains("PostgreSQL"));
-        assert!(result.rows[0][0].as_ref().unwrap().contains("RorisDB"));
+        assert!(result.rows[0][0].as_ref().unwrap().contains("HarnessDB"));
     }
 
     #[test]
@@ -2411,48 +2411,48 @@ mod tests {
 
     #[test]
     fn test_map_type_oids() {
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int32), 23);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Boolean), 16);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::String), 25);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Int32), 23);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Boolean), 16);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::String), 25);
         assert_eq!(
-            map_roris_type_to_pg_oid(&types::DataType::Varchar(255)),
+            map_harness_type_to_pg_oid(&types::DataType::Varchar(255)),
             1043
         );
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Float64), 701);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Null), 0);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int8), 21);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int16), 21);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Int64), 20);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Float32), 700);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Float64), 701);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Null), 0);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Int8), 21);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Int16), 21);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Int64), 20);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Float32), 700);
         assert_eq!(
-            map_roris_type_to_pg_oid(&types::DataType::Decimal(types::DecimalType {
+            map_harness_type_to_pg_oid(&types::DataType::Decimal(types::DecimalType {
                 precision: 38,
                 scale: 10
             })),
             1700
         );
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Date), 1082);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::DateTime), 1114);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Char(10)), 1042);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Binary), 17);
-        assert_eq!(map_roris_type_to_pg_oid(&types::DataType::Json), 25);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Date), 1082);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::DateTime), 1114);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Char(10)), 1042);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Binary), 17);
+        assert_eq!(map_harness_type_to_pg_oid(&types::DataType::Json), 25);
         assert_eq!(
-            map_roris_type_to_pg_oid(&types::DataType::Array(Box::new(types::DataType::String))),
+            map_harness_type_to_pg_oid(&types::DataType::Array(Box::new(types::DataType::String))),
             1009
         );
         assert_eq!(
-            map_roris_type_to_pg_oid(&types::DataType::Map(
+            map_harness_type_to_pg_oid(&types::DataType::Map(
                 Box::new(types::DataType::String),
                 Box::new(types::DataType::Int32)
             )),
             25
         );
         assert_eq!(
-            map_roris_type_to_pg_oid(&types::DataType::Struct(vec![])),
+            map_harness_type_to_pg_oid(&types::DataType::Struct(vec![])),
             25
         );
         assert_eq!(
-            map_roris_type_to_pg_oid(&types::DataType::Float32Vector(128)),
+            map_harness_type_to_pg_oid(&types::DataType::Float32Vector(128)),
             25
         );
     }
@@ -2460,45 +2460,45 @@ mod tests {
     #[test]
     fn test_map_type_to_len() {
         // Fixed-length types
-        assert_eq!(map_roris_type_to_len(&types::DataType::Null), 0);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Boolean), 1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Int8), 2);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Int16), 2);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Int32), 4);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Int64), 8);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Float32), 4);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Float64), 8);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Date), 4);
-        assert_eq!(map_roris_type_to_len(&types::DataType::DateTime), 8);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Null), 0);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Boolean), 1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Int8), 2);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Int16), 2);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Int32), 4);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Int64), 8);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Float32), 4);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Float64), 8);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Date), 4);
+        assert_eq!(map_harness_type_to_len(&types::DataType::DateTime), 8);
 
         // Variable-length types
-        assert_eq!(map_roris_type_to_len(&types::DataType::Int128), -1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Int128), -1);
         assert_eq!(
-            map_roris_type_to_len(&types::DataType::Decimal(types::DecimalType {
+            map_harness_type_to_len(&types::DataType::Decimal(types::DecimalType {
                 precision: 38,
                 scale: 10
             })),
             -1
         );
-        assert_eq!(map_roris_type_to_len(&types::DataType::Varchar(255)), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Char(10)), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::String), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Binary), -1);
-        assert_eq!(map_roris_type_to_len(&types::DataType::Json), -1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Varchar(255)), -1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Char(10)), -1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::String), -1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Binary), -1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Json), -1);
         assert_eq!(
-            map_roris_type_to_len(&types::DataType::Array(Box::new(types::DataType::Int32))),
+            map_harness_type_to_len(&types::DataType::Array(Box::new(types::DataType::Int32))),
             -1
         );
         assert_eq!(
-            map_roris_type_to_len(&types::DataType::Map(
+            map_harness_type_to_len(&types::DataType::Map(
                 Box::new(types::DataType::String),
                 Box::new(types::DataType::String)
             )),
             -1
         );
-        assert_eq!(map_roris_type_to_len(&types::DataType::Struct(vec![])), -1);
+        assert_eq!(map_harness_type_to_len(&types::DataType::Struct(vec![])), -1);
         assert_eq!(
-            map_roris_type_to_len(&types::DataType::Float32Vector(256)),
+            map_harness_type_to_len(&types::DataType::Float32Vector(256)),
             -1
         );
     }
@@ -2506,24 +2506,24 @@ mod tests {
     #[test]
     fn test_map_type_to_sql() {
         assert_eq!(
-            map_roris_type_to_sql_type(&types::DataType::Int32),
+            map_harness_type_to_sql_type(&types::DataType::Int32),
             "integer"
         );
-        assert_eq!(map_roris_type_to_sql_type(&types::DataType::String), "text");
+        assert_eq!(map_harness_type_to_sql_type(&types::DataType::String), "text");
         assert_eq!(
-            map_roris_type_to_sql_type(&types::DataType::Varchar(100)),
+            map_harness_type_to_sql_type(&types::DataType::Varchar(100)),
             "character varying(100)"
         );
         assert_eq!(
-            map_roris_type_to_sql_type(&types::DataType::Boolean),
+            map_harness_type_to_sql_type(&types::DataType::Boolean),
             "boolean"
         );
         assert_eq!(
-            map_roris_type_to_sql_type(&types::DataType::Float64),
+            map_harness_type_to_sql_type(&types::DataType::Float64),
             "double precision"
         );
         assert_eq!(
-            map_roris_type_to_sql_type(&types::DataType::Decimal(types::DecimalType {
+            map_harness_type_to_sql_type(&types::DataType::Decimal(types::DecimalType {
                 precision: 38,
                 scale: 10
             })),

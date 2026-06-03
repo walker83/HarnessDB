@@ -1,4 +1,4 @@
-# RorisDB TPC-H Performance Report
+# HarnessDB TPC-H Performance Report
 
 **Date**: 2026-05-04
 **Platform**: Apple Silicon Mac
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-RorisDB has implemented key optimizations for TPC-H workloads on Apple Silicon, achieving **significant performance improvements** through bitmap vectorization, preallocated memory operations, and efficient set-bit iteration.
+HarnessDB has implemented key optimizations for TPC-H workloads on Apple Silicon, achieving **significant performance improvements** through bitmap vectorization, preallocated memory operations, and efficient set-bit iteration.
 
 ## Key Optimizations Implemented
 

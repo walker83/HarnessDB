@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Top-level RorisDB configuration
+/// Top-level HarnessDB configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RorisConfig {
+pub struct HarnessConfig {
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -172,7 +172,7 @@ fn default_audit_log_max_files() -> u32 {
     10
 }
 
-impl Default for RorisConfig {
+impl Default for HarnessConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig::default(),
@@ -242,7 +242,7 @@ impl Default for SecurityConfig {
     }
 }
 
-impl RorisConfig {
+impl HarnessConfig {
     /// Load configuration from a TOML file
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
         let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
@@ -285,7 +285,7 @@ impl RorisConfig {
 
     /// Default config file path
     pub fn default_path() -> &'static str {
-        "roris.toml"
+        "harness.toml"
     }
 
     /// Apply CLI argument overrides (CLI takes precedence over config file)
@@ -308,7 +308,7 @@ impl RorisConfig {
 
     /// Generate a default TOML configuration string
     pub fn generate_default_toml() -> String {
-        r#"# RorisDB Configuration File
+        r#"# HarnessDB Configuration File
 
 [server]
 mysql_port = 9030

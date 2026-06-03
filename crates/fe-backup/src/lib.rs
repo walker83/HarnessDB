@@ -1,4 +1,4 @@
-//! RorisDB Backup, Restore, Export, and Import
+//! HarnessDB Backup, Restore, Export, and Import
 //!
 //! This crate provides data backup/restore and table export/import functionality.
 

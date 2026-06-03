@@ -21,7 +21,7 @@
   5. 并发受限（单线程处理1000任务）
 ```
 
-### RorisDB的创新目标
+### HarnessDB的创新目标
 
 ```
 异步架构优势：
@@ -606,7 +606,7 @@ impl AsyncBackendClient {
 
 ## 📊 性能预期对比
 
-| 指标 | Doris（同步） | RorisDB（异步） | 提升倍数 |
+| 指标 | Doris（同步） | HarnessDB（异步） | 提升倍数 |
 |------|--------------|----------------|---------|
 | **并发任务数** | 1000 | 10000+ | 10倍 |
 | **吞吐量** | 基准 | 3-5倍 | 3-5倍 |
@@ -710,7 +710,7 @@ impl AsyncOperator for AsyncFilterOperator {
 4. ✅ **资源效率**：内存节省10倍，线程减少250倍
 5. ✅ **技术领先**：Doris无法实现（线程模型限制）
 
-**异步架构是RorisDB的核心竞争力！**
+**异步架构是HarnessDB的核心竞争力！**
 
 ---
 
@@ -733,4 +733,4 @@ impl AsyncOperator for AsyncFilterOperator {
 4. ✅ Rust独有优势（async/await生态）
 5. ✅ 为后续创新打基础（无锁并发、内存池依赖异步）
 
-**P0-01是RorisDB最核心的创新！**
+**P0-01是HarnessDB最核心的创新！**

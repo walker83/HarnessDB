@@ -130,7 +130,7 @@ pub struct PropertyXml {
 /// ```xml
 /// <Instance>
 ///   <Name>instance_id</Name>
-///   <Owner>ALIYUN$roris</Owner>
+///   <Owner>ALIYUN$harness</Owner>
 ///   <StartTime>2024-01-01T00:00:00Z</StartTime>
 ///   <EndTime>2024-01-01T00:00:01Z</EndTime>
 ///   <Status>Terminated</Status>
@@ -363,7 +363,7 @@ pub struct ResultDetails {
 /// <Tables>
 ///   <Table>
 ///     <Name>table_name</Name>
-///     <Owner>ALIYUN$roris</Owner>
+///     <Owner>ALIYUN$harness</Owner>
 ///     <CreationTime>2024-01-01T00:00:00Z</CreationTime>
 ///     <LastModifiedTime>2024-01-01T00:00:00Z</LastModifiedTime>
 ///     <Type>MANUAL</Type>
@@ -422,7 +422,7 @@ pub struct TableSummary {
 /// ```xml
 /// <Table>
 ///   <Name>table_name</Name>
-///   <Owner>ALIYUN$roris</Owner>
+///   <Owner>ALIYUN$harness</Owner>
 ///   <CreationTime>2024-01-01T00:00:00Z</CreationTime>
 ///   <LastModifiedTime>2024-01-01T00:00:00Z</LastModifiedTime>
 ///   <Type>MANUAL</Type>
@@ -545,7 +545,7 @@ pub struct ColumnDef {
 /// ```xml
 /// <Project>
 ///   <Name>project_name</Name>
-///   <Owner>ALIYUN$roris</Owner>
+///   <Owner>ALIYUN$harness</Owner>
 ///   <CreationTime>2024-01-01T00:00:00Z</CreationTime>
 ///   <LastModifiedTime>2024-01-01T00:00:00Z</LastModifiedTime>
 ///   <Status>AVAILABLE</Status>
@@ -796,7 +796,7 @@ mod tests {
     fn test_instance_response_to_xml() {
         let resp = InstanceResponse {
             name: "20240101000001abcdef".to_string(),
-            owner: "ALIYUN$roris".to_string(),
+            owner: "ALIYUN$harness".to_string(),
             start_time: "2024-01-01T00:00:00Z".to_string(),
             end_time: Some("2024-01-01T00:00:01Z".to_string()),
             status: "Terminated".to_string(),
@@ -804,7 +804,7 @@ mod tests {
         let xml = resp.to_xml().expect("serialize");
         assert!(xml.contains("<Instance>"));
         assert!(xml.contains("<Name>20240101000001abcdef</Name>"));
-        assert!(xml.contains("<Owner>ALIYUN$roris</Owner>"));
+        assert!(xml.contains("<Owner>ALIYUN$harness</Owner>"));
         assert!(xml.contains("<Status>Terminated</Status>"));
     }
 
@@ -826,7 +826,7 @@ mod tests {
     #[test]
     fn test_instance_response_round_trip() {
         let resp =
-            InstanceResponse::new("i-abc", "ALIYUN$roris", "2024-01-01T00:00:00Z", "Running");
+            InstanceResponse::new("i-abc", "ALIYUN$harness", "2024-01-01T00:00:00Z", "Running");
         let xml = resp.to_xml().expect("serialize");
         let parsed = InstanceResponse::from_xml(&xml).expect("deserialize round-trip");
         assert_eq!(parsed.name, "i-abc");
@@ -1038,14 +1038,14 @@ mod tests {
         let tables = vec![
             TableSummary {
                 name: "table1".to_string(),
-                owner: "ALIYUN$roris".to_string(),
+                owner: "ALIYUN$harness".to_string(),
                 creation_time: "2024-01-01T00:00:00Z".to_string(),
                 last_modified_time: "2024-01-01T00:00:00Z".to_string(),
                 table_type: "MANUAL".to_string(),
             },
             TableSummary {
                 name: "table2".to_string(),
-                owner: "ALIYUN$roris".to_string(),
+                owner: "ALIYUN$harness".to_string(),
                 creation_time: "2024-01-02T00:00:00Z".to_string(),
                 last_modified_time: "2024-01-02T00:00:00Z".to_string(),
                 table_type: "MANUAL".to_string(),
@@ -1063,7 +1063,7 @@ mod tests {
         let xml = r#"<Tables>
   <Table>
     <Name>test_table</Name>
-    <Owner>ALIYUN$roris</Owner>
+    <Owner>ALIYUN$harness</Owner>
     <CreationTime>2024-01-01T00:00:00Z</CreationTime>
     <LastModifiedTime>2024-01-01T00:00:00Z</LastModifiedTime>
     <Type>MANUAL</Type>
@@ -1095,7 +1095,7 @@ mod tests {
     fn test_table_detail_response_to_xml() {
         let resp = TableDetailResponse::new(
             "test_table",
-            "ALIYUN$roris",
+            "ALIYUN$harness",
             "2024-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z",
             "MANUAL",
@@ -1157,7 +1157,7 @@ mod tests {
     fn test_table_detail_response_no_schema() {
         let resp = TableDetailResponse::new(
             "empty",
-            "ALIYUN$roris",
+            "ALIYUN$harness",
             "2024-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z",
             "MANUAL",
@@ -1177,7 +1177,7 @@ mod tests {
     fn test_project_response_to_xml() {
         let resp = ProjectResponse::new(
             "my_project",
-            "ALIYUN$roris",
+            "ALIYUN$harness",
             "2024-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z",
             "AVAILABLE",

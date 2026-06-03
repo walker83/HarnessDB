@@ -1,15 +1,15 @@
-//! Web-based SQL Editor for RorisDB
+//! Web-based SQL Editor for HarnessDB
 
 pub mod routes;
 
 use crate::connection_tracker::ConnectionTracker;
-use crate::handler_struct::RorisQueryHandler;
+use crate::handler_struct::HarnessQueryHandler;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
 pub struct WebState {
-    pub handler: Arc<RorisQueryHandler>,
+    pub handler: Arc<HarnessQueryHandler>,
     pub connection_tracker: Arc<ConnectionTracker>,
     pub query_history: TokioRwLock<Vec<QueryHistoryEntry>>,
 }
@@ -27,7 +27,7 @@ pub struct QueryHistoryEntry {
 
 impl WebState {
     pub fn new(
-        handler: Arc<RorisQueryHandler>,
+        handler: Arc<HarnessQueryHandler>,
         connection_tracker: Arc<ConnectionTracker>,
     ) -> Self {
         Self {

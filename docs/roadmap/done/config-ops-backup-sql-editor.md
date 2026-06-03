@@ -1,8 +1,8 @@
-# RorisDB 内核参数配置、运维、备份、SQL编辑器 实施计划
+# HarnessDB 内核参数配置、运维、备份、SQL编辑器 实施计划
 
 ## Context
 
-RorisDB 当前缺乏生产级运维能力：配置仅靠 CLI 参数、SET/SHOW 被 MySQL 协议层拦截返回空值、备份/恢复是 stub、无审计日志集成、无 SQL 开发工具。本计划新增 4 大功能模块，使数据库具备可配置、可运维、可备份、可开发的能力。
+HarnessDB 当前缺乏生产级运维能力：配置仅靠 CLI 参数、SET/SHOW 被 MySQL 协议层拦截返回空值、备份/恢复是 stub、无审计日志集成、无 SQL 开发工具。本计划新增 4 大功能模块，使数据库具备可配置、可运维、可备份、可开发的能力。
 
 ---
 
@@ -58,7 +58,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 "crates/fe-backup",
 ```
 
-**文件**: `roris-server/Cargo.toml`
+**文件**: `harness-server/Cargo.toml`
 
 新增依赖: `fe-config`, `fe-backup`, `toml`, `sysinfo`, `axum`, `tower-http`
 
@@ -74,12 +74,12 @@ tower-http = { version = "0.6", features = ["cors"] }
 - `crates/fe-config/src/config.rs` — TOML 配置加载
 - `crates/fe-config/src/variables.rs` — 系统变量管理
 
-### 1b: RorisConfig — TOML 配置文件结构
+### 1b: HarnessConfig — TOML 配置文件结构
 
 文件: `crates/fe-config/src/config.rs`
 
 ```toml
-# roris.toml 示例
+# harness.toml 示例
 [server]
 mysql_port = 9030
 bind_addr = "127.0.0.1"
@@ -109,9 +109,9 @@ audit_log_max_files = 10
 auth_enabled = false
 ```
 
-`RorisConfig` 结构体使用 `serde::Deserialize` 从 TOML 文件加载，所有字段有 `#[serde(default)]` 提供默认值。
+`HarnessConfig` 结构体使用 `serde::Deserialize` 从 TOML 文件加载，所有字段有 `#[serde(default)]` 提供默认值。
 
-CLI 参数覆盖配置文件值: `--config-file` (默认 `roris.toml`), 现有 `--mysql-port`/`--data-dir`/`--meta-dir` 变为可选覆盖。
+CLI 参数覆盖配置文件值: `--config-file` (默认 `harness.toml`), 现有 `--mysql-port`/`--data-dir`/`--meta-dir` 变为可选覆盖。
 
 ### 1c: SystemVariableManager — 全局+会话变量
 
@@ -128,7 +128,7 @@ CLI 参数覆盖配置文件值: `--config-file` (默认 `roris.toml`), 现有 `
 | 变量名 | 默认值 | 作用域 | 说明 |
 |--------|--------|--------|------|
 | `version` | `"5.7.42"` | Global | 服务器版本 |
-| `version_comment` | `"RorisDB"` | Global | 版本注释 |
+| `version_comment` | `"HarnessDB"` | Global | 版本注释 |
 | `max_connections` | `"100"` | Global | 最大连接数 |
 | `query_timeout` | `"300"` | Both | 查询超时（秒） |
 | `max_allowed_packet` | `"4194304"` | Both | 最大包大小 |
@@ -144,22 +144,22 @@ CLI 参数覆盖配置文件值: `--config-file` (默认 `roris.toml`), 现有 `
 | `http_port` | `"8080"` | Global | HTTP 管理端口 |
 | ... 等 | | | |
 
-### 1d: 改造 RorisQueryHandler
+### 1d: 改造 HarnessQueryHandler
 
-**文件**: `roris-server/src/handler_struct.rs`
+**文件**: `harness-server/src/handler_struct.rs`
 
 新增字段:
 ```rust
-pub(crate) config: RorisConfig,
+pub(crate) config: HarnessConfig,
 pub(crate) sys_vars: Arc<SystemVariableManager>,
 pub(crate) session_vars: Arc<PlRwLock<SessionVariables>>,
 ```
 
-修改 `RorisQueryHandler::new()` 接受 `RorisConfig` 和 `Arc<SystemVariableManager>`。
+修改 `HarnessQueryHandler::new()` 接受 `HarnessConfig` 和 `Arc<SystemVariableManager>`。
 
 ### 1e: 实现 SET / SHOW VARIABLES
 
-**文件**: `roris-server/src/query_executor.rs`
+**文件**: `harness-server/src/query_executor.rs`
 
 替换 stub `set_variable()`:
 - 解析变量名和值
@@ -177,9 +177,9 @@ pub(crate) session_vars: Arc<PlRwLock<SessionVariables>>,
 ### 2a: 接入审计日志
 
 **文件修改**:
-- `roris-server/src/handler_struct.rs` — 添加 `audit_logger: Arc<AuditLogger>` 字段
-- `roris-server/src/fe_main.rs` — 将 `monitoring.audit_log` 传入 handler
-- `roris-server/src/fe_main.rs` 的 `handle_query()` — 在执行前后记录审计信息
+- `harness-server/src/handler_struct.rs` — 添加 `audit_logger: Arc<AuditLogger>` 字段
+- `harness-server/src/fe_main.rs` — 将 `monitoring.audit_log` 传入 handler
+- `harness-server/src/fe_main.rs` 的 `handle_query()` — 在执行前后记录审计信息
 
 实现:
 ```rust
@@ -210,7 +210,7 @@ tokio::spawn(async move { audit.log_entry(entry).await; });
 
 ### 2b: ConnectionTracker — 连接追踪
 
-**新文件**: `roris-server/src/connection_tracker.rs`
+**新文件**: `harness-server/src/connection_tracker.rs`
 
 ```rust
 pub struct ConnectionTracker {
@@ -245,11 +245,11 @@ pub connection_tracker: Option<Arc<ConnectionTracker>>,
 
 需要给 `QueryHandler` trait 添加可选的连接上下文，或通过共享 Arc 的方式让 handler 可以访问 tracker。
 
-**最简方案**: ConnectionTracker 存放在 RorisQueryHandler 中（通过 Arc 共享），MysqlServer 也持有同一个 Arc。Connection 在创建时从 tracker 获取 ID，查询时通过 handler 的 `set_current_conn_id()` 方法通知 handler。
+**最简方案**: ConnectionTracker 存放在 HarnessQueryHandler 中（通过 Arc 共享），MysqlServer 也持有同一个 Arc。Connection 在创建时从 tracker 获取 ID，查询时通过 handler 的 `set_current_conn_id()` 方法通知 handler。
 
 ### 2d: 实现 SHOW PROCESSLIST
 
-**文件**: `roris-server/src/query_executor.rs`
+**文件**: `harness-server/src/query_executor.rs`
 
 替换 stub `show_processlist()`:
 - 从 `connection_tracker.list()` 获取连接信息
@@ -257,7 +257,7 @@ pub connection_tracker: Option<Arc<ConnectionTracker>>,
 
 ### 2e: 实现 SHOW STATUS
 
-**文件**: `roris-server/src/query_executor.rs`
+**文件**: `harness-server/src/query_executor.rs`
 
 新增 `show_status()` 方法:
 - 从 `connection_tracker` 获取运行时指标
@@ -281,7 +281,7 @@ pub connection_tracker: Option<Arc<ConnectionTracker>>,
 
 ### 2f: 实现 KILL QUERY 和 ADMIN 命令
 
-**文件**: `roris-server/src/query_executor.rs`
+**文件**: `harness-server/src/query_executor.rs`
 
 - `kill_query(id)` — 调用 `connection_tracker.kill(id)`
 - `admin_check_table(table)` — 读取 Parquet 文件验证完整性，返回行数、文件大小
@@ -397,8 +397,8 @@ IMPORT TABLE:
 ### 3g: 接入 QueryHandler
 
 **文件修改**:
-- `roris-server/src/handler_struct.rs` — 添加 `backup_manager: Arc<BackupManager>`
-- `roris-server/src/ddl_handler.rs` — 替换 stub:
+- `harness-server/src/handler_struct.rs` — 添加 `backup_manager: Arc<BackupManager>`
+- `harness-server/src/ddl_handler.rs` — 替换 stub:
   - `create_repository()` → 调用 `backup_manager.create_repository()`
   - `drop_repository()` → 调用 `backup_manager.drop_repository()`
   - `backup_database()` → 调用 `backup_manager.backup_database()`
@@ -412,18 +412,18 @@ IMPORT TABLE:
 
 ### 4a: Web 模块结构
 
-**新文件**（在 `roris-server` 内部）:
-- `roris-server/src/web/mod.rs` — Axum HTTP 服务器启动
-- `roris-server/src/web/routes.rs` — REST API 处理器
-- `roris-server/src/web/editor.html` — 嵌入式 SQL 编辑器（单 HTML 文件）
+**新文件**（在 `harness-server` 内部）:
+- `harness-server/src/web/mod.rs` — Axum HTTP 服务器启动
+- `harness-server/src/web/routes.rs` — REST API 处理器
+- `harness-server/src/web/editor.html` — 嵌入式 SQL 编辑器（单 HTML 文件）
 
 ### 4b: Axum HTTP 服务器
 
-文件: `roris-server/src/web/mod.rs`
+文件: `harness-server/src/web/mod.rs`
 
 ```rust
 pub struct WebState {
-    pub handler: Arc<RorisQueryHandler>,
+    pub handler: Arc<HarnessQueryHandler>,
     pub query_history: Arc<RwLock<Vec<QueryHistoryEntry>>>,
 }
 
@@ -476,14 +476,14 @@ pub async fn start_web_server(state: Arc<WebState>, port: u16) {
 
 ### 4d: SQL 编辑器前端（单 HTML 文件）
 
-文件: `roris-server/src/web/editor.html`
+文件: `harness-server/src/web/editor.html`
 
 一个自包含的 HTML 文件（内嵌 CSS + JS，无需构建工具）:
 
 **布局**:
 ```
 +----------------------------------------------------------+
-|  RorisDB SQL Editor                    [DB: ▼] [Execute] |
+|  HarnessDB SQL Editor                    [DB: ▼] [Execute] |
 +------------------+---------------------------------------+
 | Database Browser |  SQL Editor                            |
 |                  |  +-----------------------------------+ |
@@ -524,14 +524,14 @@ pub async fn start_web_server(state: Arc<WebState>, port: u16) {
 
 ### 4e: 启动集成
 
-**文件**: `roris-server/src/fe_main.rs`
+**文件**: `harness-server/src/fe_main.rs`
 
 在 main() 中:
 1. 加载配置文件（如果存在）
 2. 创建 `SystemVariableManager`
 3. 创建 `ConnectionTracker`
 4. 创建 `BackupManager`
-5. 创建 `RorisQueryHandler`（传入所有组件）
+5. 创建 `HarnessQueryHandler`（传入所有组件）
 6. 启动 MySQL 服务器
 7. **新增**: 如果 `http_port > 0`，启动 Web SQL 编辑器服务器
 8. 启动后台任务（EditLog flush, Catalog save）
@@ -559,34 +559,34 @@ if config.server.http_port > 0 {
 |----------|------|
 | `crates/fe-config/Cargo.toml` | 配置 crate |
 | `crates/fe-config/src/lib.rs` | 导出 |
-| `crates/fe-config/src/config.rs` | RorisConfig + TOML 加载 |
+| `crates/fe-config/src/config.rs` | HarnessConfig + TOML 加载 |
 | `crates/fe-config/src/variables.rs` | SystemVariableManager |
 | `crates/fe-backup/Cargo.toml` | 备份 crate |
 | `crates/fe-backup/src/lib.rs` | 导出 |
 | `crates/fe-backup/src/backup_manager.rs` | BackupManager + backup/restore |
 | `crates/fe-backup/src/repository.rs` | 仓库管理 |
 | `crates/fe-backup/src/export.rs` | EXPORT/IMPORT |
-| `roris-server/src/connection_tracker.rs` | 连接追踪 |
-| `roris-server/src/web/mod.rs` | Web 服务器启动 |
-| `roris-server/src/web/routes.rs` | REST API |
-| `roris-server/src/web/editor.html` | SQL 编辑器前端 |
-| `roris.toml` | 默认配置文件示例 |
+| `harness-server/src/connection_tracker.rs` | 连接追踪 |
+| `harness-server/src/web/mod.rs` | Web 服务器启动 |
+| `harness-server/src/web/routes.rs` | REST API |
+| `harness-server/src/web/editor.html` | SQL 编辑器前端 |
+| `harness.toml` | 默认配置文件示例 |
 
 ## 修改文件清单
 
 | 文件路径 | 修改说明 |
 |----------|----------|
 | `Cargo.toml` | 添加 toml/sysinfo/axum/tower-http 依赖，添加 fe-config/fe-backup 成员 |
-| `roris-server/Cargo.toml` | 添加新依赖 |
+| `harness-server/Cargo.toml` | 添加新依赖 |
 | `crates/fe-sql-parser/src/ast.rs` | 添加 ShowStatus/KillQuery/Admin* 变体 |
 | `crates/fe-sql-parser/src/parser.rs` | 添加对应解析逻辑 |
 | `crates/mysql-protocol/src/connection.rs` | 移除 SET/SHOW VARIABLES/STATUS/PROCESSLIST 拦截 |
 | `crates/mysql-protocol/src/server.rs` | 可选: 集成 ConnectionTracker |
 | `crates/fe-monitor/src/audit_log.rs` | 添加 log_entry() 方法 |
-| `roris-server/src/handler_struct.rs` | 添加 config/sys_vars/audit_logger/backup_manager 字段 |
-| `roris-server/src/fe_main.rs` | 加载配置、创建组件、启动 Web 服务器 |
-| `roris-server/src/query_executor.rs` | 实现所有新命令，替换 stub |
-| `roris-server/src/ddl_handler.rs` | 替换 backup/restore/repository stub |
+| `harness-server/src/handler_struct.rs` | 添加 config/sys_vars/audit_logger/backup_manager 字段 |
+| `harness-server/src/fe_main.rs` | 加载配置、创建组件、启动 Web 服务器 |
+| `harness-server/src/query_executor.rs` | 实现所有新命令，替换 stub |
+| `harness-server/src/ddl_handler.rs` | 替换 backup/restore/repository stub |
 
 ## 实施顺序
 
@@ -608,7 +608,7 @@ Step 12: 集成测试，修复编译错误
 ## 验证方案
 
 1. **配置系统验证**:
-   - 创建 `roris.toml`，启动服务器，`SHOW VARIABLES LIKE '%port%'` 显示配置值
+   - 创建 `harness.toml`，启动服务器，`SHOW VARIABLES LIKE '%port%'` 显示配置值
    - `SET GLOBAL query_timeout = 600` → `SHOW VARIABLES LIKE 'query_timeout'` 验证
    - `SET @user_var = 'hello'` → `SELECT @user_var` 验证
 
@@ -619,7 +619,7 @@ Step 12: 集成测试，修复编译错误
 
 3. **备份验证**:
    ```sql
-   CREATE REPOSITORY local_repo WITH BROKER ON '/tmp/roris_backup';
+   CREATE REPOSITORY local_repo WITH BROKER ON '/tmp/harness_backup';
    BACKUP DATABASE test_db TO local_repo AS 'backup_20260525';
    DROP TABLE test_db.users;
    RESTORE DATABASE test_db FROM local_repo AS 'backup_20260525';

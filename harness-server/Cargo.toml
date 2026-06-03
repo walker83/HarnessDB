@@ -1,10 +1,10 @@
 [package]
-name = "roris-server"
+name = "harness-server"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "roris-fe"
+name = "harness-db"
 path = "src/fe_main.rs"
 
 [dependencies]

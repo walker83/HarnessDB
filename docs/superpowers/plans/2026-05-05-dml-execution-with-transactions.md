@@ -5,8 +5,8 @@
 **Goal:** Implement end-to-end UPDATE/DELETE execution with session-scoped transaction support (BEGIN/COMMIT/ROLLBACK).
 
 **Architecture:**
-- Wire existing UpdateExecNode/DeleteExecNode in `be-execution` to `RorisQueryHandler` via the planner layer
-- Add `TransactionContext` in `RorisQueryHandler` for session-scoped transaction tracking
+- Wire existing UpdateExecNode/DeleteExecNode in `be-execution` to `HarnessQueryHandler` via the planner layer
+- Add `TransactionContext` in `HarnessQueryHandler` for session-scoped transaction tracking
 - DML operations record pending writes, COMMIT flushes them atomically
 
 **Tech Stack:** Rust, async_trait, parking_lot, Arc
@@ -16,7 +16,7 @@
 ## File Structure
 
 ```
-roris-server/src/fe_main.rs          - Add TransactionContext, wire update/delete handlers
+harness-server/src/fe_main.rs          - Add TransactionContext, wire update/delete handlers
 crates/fe-sql-parser/src/ast.rs      - Add StartTransaction/Commit/Rollback variants
 crates/fe-execution/src/exec_node.rs - UpdateExecNode already implemented
 crates/be-execution/src/planner.rs   - Already has create_update_node/create_delete_node
@@ -55,10 +55,10 @@ git commit -m "feat: add transaction statement variants (StartTransaction/Commit
 
 ---
 
-## Task 2: Add TransactionContext to RorisQueryHandler
+## Task 2: Add TransactionContext to HarnessQueryHandler
 
 **Files:**
-- Modify: `roris-server/src/fe_main.rs:43-48`
+- Modify: `harness-server/src/fe_main.rs:43-48`
 
 - [ ] **Step 1: Add PendingWrite struct and TransactionContext**
 
@@ -138,12 +138,12 @@ impl TransactionContext {
 }
 ```
 
-- [ ] **Step 2: Add transaction field to RorisQueryHandler**
+- [ ] **Step 2: Add transaction field to HarnessQueryHandler**
 
-In `struct RorisQueryHandler {` (lines 43-48), add:
+In `struct HarnessQueryHandler {` (lines 43-48), add:
 
 ```rust
-struct RorisQueryHandler {
+struct HarnessQueryHandler {
     catalog: Arc<StdRwLock<CatalogManager>>,
     current_database: Arc<StdRwLock<String>>,
     storage: Arc<StorageEngine>,
@@ -152,7 +152,7 @@ struct RorisQueryHandler {
 }
 ```
 
-- [ ] **Step 3: Initialize transaction in RorisQueryHandler::new**
+- [ ] **Step 3: Initialize transaction in HarnessQueryHandler::new**
 
 Find `fn new()` (line 59) and update:
 
@@ -176,8 +176,8 @@ Expected: SUCCESS (may have warnings about unused imports)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add roris-server/src/fe_main.rs
-git commit -m "feat: add TransactionContext to RorisQueryHandler"
+git add harness-server/src/fe_main.rs
+git commit -m "feat: add TransactionContext to HarnessQueryHandler"
 ```
 
 ---
@@ -185,7 +185,7 @@ git commit -m "feat: add TransactionContext to RorisQueryHandler"
 ## Task 3: Wire UPDATE Handler to Execution Layer
 
 **Files:**
-- Modify: `roris-server/src/fe_main.rs:965-967`
+- Modify: `harness-server/src/fe_main.rs:965-967`
 
 - [ ] **Step 1: Implement update() method using planner and execution layer**
 
@@ -350,7 +350,7 @@ This step depends on actual compilation results. If there are type mismatches, f
 - [ ] **Step 4: Commit**
 
 ```bash
-git add roris-server/src/fe_main.rs
+git add harness-server/src/fe_main.rs
 git commit -m "feat: wire UPDATE handler to planner and execution layer"
 ```
 
@@ -359,7 +359,7 @@ git commit -m "feat: wire UPDATE handler to planner and execution layer"
 ## Task 4: Wire DELETE Handler to Execution Layer
 
 **Files:**
-- Modify: `roris-server/src/fe_main.rs:969-971`
+- Modify: `harness-server/src/fe_main.rs:969-971`
 
 - [ ] **Step 1: Implement delete() method**
 
@@ -435,7 +435,7 @@ Run: `cargo build --release 2>&1 | grep -E "error" | head -30`
 - [ ] **Step 4: Commit**
 
 ```bash
-git add roris-server/src/fe_main.rs
+git add harness-server/src/fe_main.rs
 git commit -m "feat: wire DELETE handler to planner and execution layer"
 ```
 
@@ -444,7 +444,7 @@ git commit -m "feat: wire DELETE handler to planner and execution layer"
 ## Task 5: Implement BEGIN/COMMIT/ROLLBACK Handlers
 
 **Files:**
-- Modify: `roris-server/src/fe_main.rs:execute_statement()`
+- Modify: `harness-server/src/fe_main.rs:execute_statement()`
 
 - [ ] **Step 1: Add transaction handlers to execute_statement()**
 
@@ -553,7 +553,7 @@ Run: `cargo build --release 2>&1 | grep -E "error" | head -30`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add roris-server/src/fe_main.rs
+git add harness-server/src/fe_main.rs
 git commit -m "feat: implement BEGIN/COMMIT/ROLLBACK handlers"
 ```
 
@@ -679,7 +679,7 @@ Add `transaction_ctx` field and modify `get_next()` to record pending deletes.
 
 - [ ] **Step 6: Add TransactionContext types to be-execution crate**
 
-Add a new file or import the types from roris-server. Actually, since roris-server and be-execution are separate crates, we need to either:
+Add a new file or import the types from harness-server. Actually, since harness-server and be-execution are separate crates, we need to either:
 - Define TransactionContext in a shared crate
 - Duplicate the types
 - Use a simpler approach: pass the transaction closure/function instead
@@ -688,7 +688,7 @@ Add a new file or import the types from roris-server. Actually, since roris-serv
 
 For this implementation, let me use a simpler approach:
 - Add `commit_fn` and `rollback_fn` to ExecutionContext as `Option<Box<dyn Fn()>>`
-- Or just make the exec nodes return the operations and let the caller (RorisQueryHandler) decide what to do with them
+- Or just make the exec nodes return the operations and let the caller (HarnessQueryHandler) decide what to do with them
 
 Actually, the cleanest approach is to define a `PendingDml` struct in be-execution that carries the pending operations, and let the caller (fe_main) handle the transaction state.
 

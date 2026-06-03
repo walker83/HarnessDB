@@ -1,4 +1,4 @@
-//! InfluxDB line protocol implementation for RorisDB
+//! InfluxDB line protocol implementation for HarnessDB
 //! Compatible with InfluxDB and Alibaba Cloud TSDB
 
 pub mod handler;

@@ -968,7 +968,7 @@ pub fn create_version_udf() -> ScalarUDF {
             _args: ScalarFunctionArgs,
         ) -> datafusion::error::Result<ColumnarValue> {
             Ok(ColumnarValue::Scalar(ScalarValue::Utf8(Some(
-                "5.7.38-roris-0.3.0".to_string(),
+                "5.7.38-harness-0.3.0".to_string(),
             ))))
         }
     }

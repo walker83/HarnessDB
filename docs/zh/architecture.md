@@ -1,10 +1,10 @@
-# RorisDB 架构设计
+# HarnessDB 架构设计
 
 > 版本 0.3.0 | 单机 OLAP，基于 DataFusion + Parquet
 
 ## 概述
 
-RorisDB 是一个**单机 OLAP 数据库**，分层架构：
+HarnessDB 是一个**单机 OLAP 数据库**，分层架构：
 
 ```
 MySQL 客户端
@@ -13,7 +13,7 @@ MySQL 客户端
 ┌─────────────────────┐
 │   mysql-protocol     │  线协议、认证、包 I/O
 ├─────────────────────┤
-│   roris-server       │  查询路由、DDL/DML 处理
+│   harness-server       │  查询路由、DDL/DML 处理
 ├─────────────────────┤
 │   fe-sql-parser      │  SQL 文本 → AST
 │   fe-catalog         │  元数据管理
@@ -30,7 +30,7 @@ MySQL 客户端
 ## Crate 依赖关系图
 
 ```
-roris-server（二进制入口）
+harness-server（二进制入口）
 ├── fe-sql-parser
 ├── fe-catalog
 │   ├── fe-common
@@ -144,7 +144,7 @@ struct Table {
 
 ## 数据类型映射
 
-| RorisDB 类型 | Arrow 类型 | Parquet 类型 |
+| HarnessDB 类型 | Arrow 类型 | Parquet 类型 |
 |-------------|-----------|-------------|
 | Boolean | Boolean | BOOLEAN |
 | Int8/16/32/64 | Int8/16/32/64 | INT32/INT64 |

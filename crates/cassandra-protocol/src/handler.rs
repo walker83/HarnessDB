@@ -26,7 +26,7 @@ impl DefaultCassandraHandler {
 
         if upper.starts_with("SELECT") {
             if upper.contains("FROM SYSTEM.LOCAL") {
-                return "key|cluster_name|cql_version\n-----|------------|-------------\nlocal|RorisDB|3.3.1\n".to_string();
+                return "key|cluster_name|cql_version\n-----|------------|-------------\nlocal|HarnessDB|3.3.1\n".to_string();
             }
         }
 

@@ -39,7 +39,7 @@ public class PartitionPruner {
 // 5. 分区统计信息
 ```
 
-### RorisDB的缺失
+### HarnessDB的缺失
 
 ```
 当前缺失：
@@ -472,7 +472,7 @@ fe-sql-planner/src/lib.rs      # 导出模块
 4. ✅ **性能提升**：10-100倍（分区表）
 5. ✅ **ZoneMap集成**：深度优化
 
-**Partition Pruning是RorisDB查询优化的关键！**
+**Partition Pruning是HarnessDB查询优化的关键！**
 
 ---
 
@@ -492,4 +492,4 @@ fe-sql-planner/src/lib.rs      # 导出模块
 3. ✅ 性能提升明显（10-100倍）
 4. ✅ 标准优化功能（数据库必备）
 
-**P1-04是RorisDB查询优化的重要组成部分！**
+**P1-04是HarnessDB查询优化的重要组成部分！**

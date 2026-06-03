@@ -1,7 +1,7 @@
 use regex::Regex;
 use tracing::warn;
 
-/// Translate MaxCompute SQL to RorisDB-compatible SQL.
+/// Translate MaxCompute SQL to HarnessDB-compatible SQL.
 ///
 /// Returns `(translated_sql, is_noop)` where `is_noop` means the statement
 /// should be silently ignored (like SET, SETPROJECT, ADD JAR, ADD FILE).
@@ -76,7 +76,7 @@ fn is_noop_statement(sql: &str) -> bool {
     // ALTER TABLE statement with lifecycle (MaxCompute-specific, no-op for now)
     if upper.starts_with("ALTER TABLE") {
         warn!(
-            "ALTER TABLE statement is not supported in RorisDB, ignoring: {}",
+            "ALTER TABLE statement is not supported in HarnessDB, ignoring: {}",
             sql
         );
         return true;

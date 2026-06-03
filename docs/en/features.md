@@ -1,4 +1,4 @@
-# RorisDB Features
+# HarnessDB Features
 
 > Version 0.3.0
 
@@ -80,7 +80,7 @@
 
 ## Data Types
 
-| RorisDB Type | SQL Syntax | Arrow Type | Notes |
+| HarnessDB Type | SQL Syntax | Arrow Type | Notes |
 |-------------|-----------|-----------|-------|
 | `Boolean` | `BOOLEAN`, `BOOL` | Boolean | |
 | `Int8` | `TINYINT` | Int8 | |

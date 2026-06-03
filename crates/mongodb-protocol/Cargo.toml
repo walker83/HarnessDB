@@ -3,7 +3,7 @@ name = "mongodb-protocol"
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "MongoDB wire protocol implementation for RorisDB - ApsaraDB MongoDB compatible"
+description = "MongoDB wire protocol implementation for HarnessDB - ApsaraDB MongoDB compatible"
 
 [dependencies]
 tokio = { workspace = true }

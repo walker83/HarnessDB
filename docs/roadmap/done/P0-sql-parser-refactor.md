@@ -71,7 +71,7 @@
 **任务清单:**
 - [ ] 添加Datafusion依赖到Cargo.toml
 - [ ] 创建`datafusion_parser.rs`文件
-- [ ] 定义`RorisParser`结构体
+- [ ] 定义`HarnessParser`结构体
 - [ ] 实现`parse()`入口函数
 
 **代码框架:**
@@ -81,11 +81,11 @@ use datafusion::sql::parser::DFParser;
 use datafusion::sql::planner::SqlToRel;
 use datafusion::logical_plan::LogicalPlan;
 
-pub struct RorisParser {
-    catalog_provider: Arc<RorisSchemaProvider>,
+pub struct HarnessParser {
+    catalog_provider: Arc<HarnessSchemaProvider>,
 }
 
-impl RorisParser {
+impl HarnessParser {
     pub fn parse(sql: &str) -> Result<LogicalPlan, ParseError> {
         let statements = DFParser::parse_sql(sql)?;
         let planner = SqlToRel::new(&self.catalog_provider);
@@ -105,9 +105,9 @@ cargo build -p fe-sql-parser  # 编译成功
 #### Day 3-5: 适配Schema Provider
 
 **任务清单:**
-- [ ] 实现`RorisSchemaProvider` trait
-- [ ] 实现`RorisTableProvider` trait
-- [ ] 连接RorisDB Catalog和Datafusion
+- [ ] 实现`HarnessSchemaProvider` trait
+- [ ] 实现`HarnessTableProvider` trait
+- [ ] 连接HarnessDB Catalog和Datafusion
 - [ ] 支持表名解析
 
 **代码框架:**
@@ -115,14 +115,14 @@ cargo build -p fe-sql-parser  # 编译成功
 // crates/fe-catalog/src/schema_provider.rs
 use datafusion::catalog::SchemaProvider;
 
-pub struct RorisSchemaProvider {
+pub struct HarnessSchemaProvider {
     catalog: Arc<CatalogManager>,
 }
 
-impl SchemaProvider for RorisSchemaProvider {
+impl SchemaProvider for HarnessSchemaProvider {
     fn table(&self, name: &str) -> Option<Arc<dyn TableProvider>> {
         let table = self.catalog.get_table(None, name)?;
-        Some(Arc::new(RorisTableProvider(table)))
+        Some(Arc::new(HarnessTableProvider(table)))
     }
     
     fn table_names(&self) -> Vec<String> {
@@ -130,15 +130,15 @@ impl SchemaProvider for RorisSchemaProvider {
     }
 }
 
-pub struct RorisTableProvider(Arc<Table>);
+pub struct HarnessTableProvider(Arc<Table>);
 
-impl TableProvider for RorisTableProvider {
+impl TableProvider for HarnessTableProvider {
     fn schema(&self) -> SchemaRef {
         self.0.arrow_schema()  // 返回Arrow Schema
     }
     
     fn scan(&self, projection, filters, limit) -> ExecutionPlan {
-        Arc::new(RorisScanExecNode::new(...))
+        Arc::new(HarnessScanExecNode::new(...))
     }
 }
 ```
@@ -165,21 +165,21 @@ cargo test -p fe-catalog --test schema_provider  # 能解析表名
 #[test]
 fn test_basic_select() {
     let sql = "SELECT id, name FROM users WHERE age > 18";
-    let plan = RorisParser::parse(sql).unwrap();
+    let plan = HarnessParser::parse(sql).unwrap();
     assert!(plan.is_select());
 }
 
 #[test]
 fn test_cte() {
     let sql = "WITH cte AS (SELECT * FROM t1) SELECT * FROM cte";
-    let plan = RorisParser::parse(sql).unwrap();
+    let plan = HarnessParser::parse(sql).unwrap();
     assert!(plan.has_cte());
 }
 
 #[test]
 fn test_window_function() {
     let sql = "SELECT id, ROW_NUMBER() OVER (ORDER BY id) FROM t";
-    let plan = RorisParser::parse(sql).unwrap();
+    let plan = HarnessParser::parse(sql).unwrap();
     assert!(plan.has_window_function());
 }
 ```
@@ -425,19 +425,19 @@ fn test_doris_create_table() {
 #### Day 13-14: 替换旧Parser
 
 **任务清单:**
-- [ ] 在roris-server中切换到新Parser
+- [ ] 在harness-server中切换到新Parser
 - [ ] 运行全量测试
 - [ ] 对比新旧Parser错误率
 - [ ] 性能测试（解析速度）
 
 **代码修改:**
 ```rust
-// crates/roris-server/src/main.rs
-use fe_sql_parser::datafusion_parser::RorisParser;
+// crates/harness-server/src/main.rs
+use fe_sql_parser::datafusion_parser::HarnessParser;
 
 fn handle_query(sql: &str) -> Result<QueryResult, Error> {
     // 使用新Parser
-    let plan = RorisParser::parse(sql)?;
+    let plan = HarnessParser::parse(sql)?;
     let typed_stmt = Analyzer::analyze(&plan, &catalog)?;
     
     // 执行查询
@@ -449,7 +449,7 @@ fn handle_query(sql: &str) -> Result<QueryResult, Error> {
 ```bash
 cargo test --workspace  # 所有测试通过
 cargo build --release   # 编译成功
-./target/release/roris-fe  # 启动成功
+./target/release/harness-db  # 启动成功
 
 # 对比SQL错误率：
 # 旧Parser：~5000 errors（roadmap统计）
@@ -518,7 +518,7 @@ crates/fe-sql-parser/src/
 ├── parser.rs                # 保留为legacy，逐步废弃
 └── ast.rs                   # 扩展AST定义（添加TypedStatement）
 
-crates/roris-server/src/
+crates/harness-server/src/
 └── main.rs                  # 切换到新Parser
 
 Cargo.toml                   # 添加datafusion依赖
@@ -589,7 +589,7 @@ Week 2: 语义分析 + Doris扩展
 
 ```bash
 # 1. 添加Datafusion依赖
-cd ~/code/RorisDB
+cd ~/code/HarnessDB
 cargo add datafusion --version 42
 
 # 2. 创建新Parser文件

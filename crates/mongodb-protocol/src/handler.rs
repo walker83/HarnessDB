@@ -61,7 +61,7 @@ impl DefaultMongoDBHandler {
     fn cmd_build_info(&self) -> Document {
         doc! {
             "version": "7.0.0",
-            "gitVersion": "roris",
+            "gitVersion": "harness",
             "modules": [],
             "allocator": "system",
             "bits": 64,
@@ -73,9 +73,9 @@ impl DefaultMongoDBHandler {
 
     fn cmd_server_status(&self) -> Document {
         doc! {
-            "host": "roris",
+            "host": "harness",
             "version": "7.0.0",
-            "process": "roris",
+            "process": "harness",
             "pid": std::process::id() as i64,
             "uptime": 1i64,
             "ok": 1

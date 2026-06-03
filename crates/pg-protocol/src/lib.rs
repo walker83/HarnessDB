@@ -1,7 +1,7 @@
-//! PostgreSQL wire protocol v3 compatibility layer for RorisDB.
+//! PostgreSQL wire protocol v3 compatibility layer for HarnessDB.
 //!
 //! This crate implements the PostgreSQL wire protocol v3, enabling standard
-//! PostgreSQL clients (psql, psycopg2, JDBC) to connect to RorisDB.
+//! PostgreSQL clients (psql, psycopg2, JDBC) to connect to HarnessDB.
 //! This is the foundation for Hologres protocol compatibility.
 //!
 //! # Protocol Overview

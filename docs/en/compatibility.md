@@ -1,12 +1,12 @@
-# RorisDB — Doris Compatibility
+# HarnessDB — Doris Compatibility
 
 > Version 0.3.0
 
-RorisDB aims for **SQL-level compatibility** with Apache Doris while using a completely different internal architecture (DataFusion + Parquet instead of custom storage engine).
+HarnessDB aims for **SQL-level compatibility** with Apache Doris while using a completely different internal architecture (DataFusion + Parquet instead of custom storage engine).
 
 ## SQL Compatibility Summary
 
-| Category | Doris | RorisDB | Compatibility |
+| Category | Doris | HarnessDB | Compatibility |
 |----------|-------|---------|---------------|
 | DDL | Full MySQL DDL | Core DDL | ~80% |
 | DML | Full MySQL DML | INSERT/UPDATE/DELETE | ~70% |
@@ -17,7 +17,7 @@ RorisDB aims for **SQL-level compatibility** with Apache Doris while using a com
 
 ## Key Differences from Apache Doris
 
-| Aspect | Apache Doris | RorisDB |
+| Aspect | Apache Doris | HarnessDB |
 |--------|-------------|---------|
 | Architecture | Distributed MPP (FE + BE cluster) | Single-node (DataFusion) |
 | Storage | Custom Tablet/Rowset/Segment | Apache Parquet files |
@@ -31,7 +31,7 @@ RorisDB aims for **SQL-level compatibility** with Apache Doris while using a com
 
 ## DDL Compatibility
 
-| Statement | Doris | RorisDB | Notes |
+| Statement | Doris | HarnessDB | Notes |
 |-----------|-------|---------|-------|
 | `CREATE DATABASE` | ✅ | ✅ | Compatible |
 | `CREATE TABLE` | ✅ | ✅ | Supports Doris `KEYS` type syntax |
@@ -46,7 +46,7 @@ RorisDB aims for **SQL-level compatibility** with Apache Doris while using a com
 
 ## DML Compatibility
 
-| Statement | Doris | RorisDB | Notes |
+| Statement | Doris | HarnessDB | Notes |
 |-----------|-------|---------|-------|
 | `INSERT INTO ... VALUES` | ✅ | ✅ | Multi-row, partial column |
 | `INSERT INTO ... SELECT` | ✅ | ⚠️ | Not yet executed |
@@ -60,9 +60,9 @@ RorisDB aims for **SQL-level compatibility** with Apache Doris while using a com
 
 ## Query Compatibility
 
-RorisDB delegates all query execution to **Apache DataFusion**, which provides excellent SQL coverage:
+HarnessDB delegates all query execution to **Apache DataFusion**, which provides excellent SQL coverage:
 
-| Feature | Doris | RorisDB | Notes |
+| Feature | Doris | HarnessDB | Notes |
 |---------|-------|---------|-------|
 | `SELECT` / `WHERE` / `ORDER BY` / `LIMIT` | ✅ | ✅ | Full support via DataFusion |
 | `GROUP BY` + aggregates | ✅ | ✅ | |
@@ -79,7 +79,7 @@ RorisDB delegates all query execution to **Apache DataFusion**, which provides e
 
 ## Data Type Compatibility
 
-| Doris Type | RorisDB Type | Status |
+| Doris Type | HarnessDB Type | Status |
 |-----------|-------------|--------|
 | `BOOLEAN` | `Boolean` | ✅ |
 | `TINYINT` | `Int8` | ✅ |
@@ -105,7 +105,7 @@ RorisDB delegates all query execution to **Apache DataFusion**, which provides e
 
 ## Function Compatibility
 
-### Doris UDFs Implemented in RorisDB
+### Doris UDFs Implemented in HarnessDB
 
 | Function | Category | Status |
 |----------|---------|--------|
@@ -140,7 +140,7 @@ DataFusion provides 100+ built-in functions including:
 
 ## Protocol Compatibility
 
-| Feature | Doris | RorisDB | Notes |
+| Feature | Doris | HarnessDB | Notes |
 |---------|-------|---------|-------|
 | MySQL wire protocol | ✅ | ✅ | |
 | `mysql_native_password` | ✅ | ✅ | Any password accepted |
