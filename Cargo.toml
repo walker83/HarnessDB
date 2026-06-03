@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     # Main entry point
-    "roris-server",
+    "harness-server",
 
     # Frontend (FE) - SQL parsing, query planning, catalog management
     "crates/fe-sql-parser",
