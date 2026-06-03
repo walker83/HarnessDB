@@ -26,22 +26,75 @@ impl DefaultOracleHandler {
         let upper = sql.to_uppercase();
 
         if upper.starts_with("SELECT") {
-            // Simple SELECT simulation
-            if upper.contains("FROM DUAL") {
-                return "DUMMY\n-----\nX\n".to_string();
-            }
+            // Extract the select expression (between SELECT and FROM)
+            let expr = if let Some(from_pos) = upper.find(" FROM ") {
+                sql[7..from_pos].trim()
+            } else {
+                sql[7..].trim()
+            };
+            let expr_upper = expr.to_uppercase();
 
-            if upper.contains("USER") {
+            // SELECT USER / SELECT USER FROM DUAL
+            if expr_upper == "USER" {
                 return format!("USER\n-----\n{}\n", schema);
             }
 
-            if upper.contains("SYSDATE") {
+            // SELECT SYSDATE FROM DUAL
+            if expr_upper == "SYSDATE" {
                 let now = chrono::Utc::now();
                 return format!("SYSDATE\n-------\n{}\n", now.format("%Y-%m-%d %H:%M:%S"));
             }
 
-            if upper.contains("VERSION") {
-                return "VERSION\n-------\n19.0.0.0.0\n".to_string();
+            // SELECT * FROM v$version
+            if expr == "*" && upper.contains("V$VERSION") {
+                return "BANNER\n----------------------------------------\nHarnessDB Oracle Compatibility 19.0.0.0.0\n".to_string();
+            }
+
+            // SELECT LENGTH('xxx') FROM DUAL
+            if let Some(rest) = expr_upper.strip_prefix("LENGTH(").and_then(|s| s.strip_suffix(')')) {
+                let inner = expr["LENGTH(".len()..expr.len()-1].trim().trim_matches('\'');
+                return format!("LENGTH('{}')\n----------\n{}\n", inner, inner.len());
+            }
+
+            // SELECT 'literal' FROM DUAL
+            if expr.starts_with('\'') && expr.ends_with('\'') && expr.len() >= 2 {
+                let literal = &expr[1..expr.len()-1];
+                return format!("'{}'\n------\n{}\n", literal, literal);
+            }
+
+            // SELECT <number> FROM DUAL (integer)
+            if let Ok(n) = expr.parse::<i64>() {
+                return format!("{}\n-----\n{}\n", expr, n);
+            }
+
+            // Arithmetic: SELECT a + b, SELECT a * b, etc.
+            for (op_str, op_char) in &[
+                (" + ", '+'), (" - ", '-'), (" * ", '*'), (" / ", '/'),
+            ] {
+                if let Some(pos) = expr.find(op_str) {
+                    let left = expr[..pos].trim();
+                    let right = expr[pos+op_str.len()..].trim();
+                    if let (Ok(a), Ok(b)) = (left.parse::<f64>(), right.parse::<f64>()) {
+                        let result = match op_char {
+                            '+' => a + b,
+                            '-' => a - b,
+                            '*' => a * b,
+                            '/' => if b != 0.0 { a / b } else { f64::NAN },
+                            _ => 0.0,
+                        };
+                        let formatted = if result.fract() == 0.0 {
+                            format!("{}", result as i64)
+                        } else {
+                            format!("{}", result)
+                        };
+                        return format!("{}\n------\n{}\n", expr, formatted);
+                    }
+                }
+            }
+
+            // SELECT ... FROM DUAL (fallback)
+            if upper.contains("FROM DUAL") {
+                return format!("EXPR\n----\n{}\n", expr);
             }
         }
 

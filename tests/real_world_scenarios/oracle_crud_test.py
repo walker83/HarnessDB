@@ -37,7 +37,7 @@ class OracleClient:
 
     PACKET_CONNECT = 1
     PACKET_ACCEPT = 2
-    PACKET_DATA = 6
+    PACKET_DATA = 8  # TNS Data packet type = 8
 
     def __init__(self, host, port):
         self.host = host
@@ -51,24 +51,25 @@ class OracleClient:
 
         # Send CONNECT packet with connection options
         connect_data = (
-            "(CONNECT_DATA=(COMMAND=ping))"
+            "(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=ORCL)))"
             "(ADDRESS=(PROTOCOL=TCP)(HOST=127.0.0.1)(PORT=1521))"
         )
-        # Simplified TNS connect packet
         connect_bytes = connect_data.encode()
-        length = len(connect_bytes) + 34
 
-        # TNS header: length(2) + packet_type(1) + flags(1) + length(2) + 0 + 0 + connect_data
-        header = struct.pack("!HBBHBB", length, self.PACKET_CONNECT, 0, length, 0, 0)
-        # Oracle connect options
-        options = struct.pack("!HHHHHH", 0, 52, 0, 52, 0x10000000, 0x00000000)
+        # TNS connect options: 6 x u32 (version, compatible, options, flags, facility, reserved)
+        # Version 0x0136 = 310 (Oracle 19c), compatible 0x0136
+        options = struct.pack("!IIIIII", 0x0136, 0x0136, 0, 0, 0, 0)
+        # Total length = TNS header (8) + options (24) + connect_data
+        length = 8 + len(options) + len(connect_bytes)
+
+        # TNS header: packet_length(2) + header_checksum(2) + packet_type(1) + flags(1) + header_checksum2(2)
+        header = struct.pack("!HHBBH", length, 0, self.PACKET_CONNECT, 0, 0)
         self.sock.sendall(header + options + connect_bytes)
 
         # Read ACCEPT packet
         resp = self.sock.recv(4096)
-        if len(resp) >= 2:
-            pkt_len = struct.unpack("!H", resp[:2])[0]
-            pkt_type = resp[2]
+        if len(resp) >= 8:
+            pkt_type = resp[4]  # packet_type is at byte 4 in TNS header
             if pkt_type == self.PACKET_ACCEPT:
                 return True
         return False
@@ -77,9 +78,9 @@ class OracleClient:
         """Send a SQL query via TNS DATA packet"""
         data = sql.encode() + b'\x00'
 
-        # TNS DATA packet header
-        length = len(data) + 8  # header + data
-        header = struct.pack("!HBBHBB", length, self.PACKET_DATA, 0, length, 0, 0)
+        # TNS DATA packet: header(8) + data
+        length = 8 + len(data)
+        header = struct.pack("!HHBBH", length, 0, self.PACKET_DATA, 0, 0)
 
         self.sock.sendall(header + data)
 
@@ -88,6 +89,8 @@ class OracleClient:
             resp = self.sock.recv(8192)
             if len(resp) < 8:
                 return ""
+            # Parse TNS response header to get packet length
+            pkt_len = struct.unpack("!H", resp[:2])[0]
             # Skip TNS header (8 bytes)
             body = resp[8:]
             # Parse Oracle response - simple text extraction

@@ -124,18 +124,20 @@ pub struct ConnectData {
 
 impl ConnectData {
     pub fn parse(data: &[u8]) -> Option<Self> {
-        if data.len() < 58 {
+        if data.len() < 24 {
             return None;
         }
 
         let mut buf = BytesMut::from(&data[..]);
-        let version = buf.get_u16();
-        let compatible = buf.get_u16();
+        // Read 6 x u32 connect options: version, compatible, options, flags, facility, reserved
+        let version = buf.get_u32() as u16;
+        let compatible = buf.get_u32() as u16;
+        let _ns_options = buf.get_u32();
+        let _flags = buf.get_u32();
+        let _facility = buf.get_u32();
+        let _reserved = buf.get_u32();
 
-        // Skip fixed fields (50 bytes)
-        buf.advance(50);
-
-        // Read connect string (simplified)
+        // Remaining bytes are the connect descriptor string
         let connect_string = String::from_utf8_lossy(&buf[..]).to_string();
         let service = connect_string
             .split("SERVICE_NAME=")
