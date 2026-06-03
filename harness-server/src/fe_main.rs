@@ -45,7 +45,7 @@ use vector_protocol::VectorServer;
 
 use connection_tracker::ConnectionTracker;
 use handler_struct::HarnessQueryHandler;
-use utils::{df_schema_to_column_defs, encode_arrow_batches_to_mysql_rows};
+use utils::{encode_arrow_batches_to_mysql_rows, record_batches_to_query_result_with_df_schema};
 use web::{WebState, start_web_server};
 
 #[derive(Parser)]
@@ -165,15 +165,20 @@ impl QueryHandler for HarnessQueryHandler {
                 match result {
                     Ok((batches, df_schema)) => {
                         let convert_start = Instant::now();
-                        let columns = df_schema_to_column_defs(&df_schema);
                         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                        // Build result with `rows` populated (needed by PG protocol)
+                        let mut query_result =
+                            record_batches_to_query_result_with_df_schema(&batches, &df_schema);
+                        // Also populate pre_encoded_rows for MySQL protocol fast path
                         let encoded_rows = encode_arrow_batches_to_mysql_rows(&batches);
+                        query_result.pre_encoded_rows = Some(encoded_rows);
+                        query_result.pre_encoded_row_count = total_rows;
                         let convert_ms = convert_start.elapsed().as_millis();
                         tracing::info!(
                             "Query timing: DataFusion={}ms, Arrow->MySQL={}ms, rows={}",
                             datafusion_ms, convert_ms, total_rows
                         );
-                        QueryResult::with_encoded_rows(columns, encoded_rows, total_rows)
+                        query_result
                     }
                     Err(e) => {
                         tracing::error!("DataFusion error: {}", e);

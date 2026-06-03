@@ -408,15 +408,7 @@ async fn test_extended_query_flow() {
     let execute = encode_execute("", 0);
     writer.write_all(&execute).await.unwrap();
 
-    // RowDescription
-    let (msg_type, body) = read_message(&mut reader).await;
-    assert_eq!(
-        msg_type, b'T',
-        "expected RowDescription, got 0x{:02x}",
-        msg_type
-    );
-    let num_fields = u16::from_be_bytes(body[..2].try_into().unwrap());
-    assert_eq!(num_fields, 1);
+    // Execute sends DataRow + CommandComplete (NOT RowDescription — that's Describe's job)
 
     // DataRow
     let (msg_type, body) = read_message(&mut reader).await;

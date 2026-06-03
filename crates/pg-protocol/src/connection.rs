@@ -349,11 +349,15 @@ impl PgConnection {
 
         let result = self.handler.handle_query(self.conn_id, trimmed);
 
-        if result.columns.is_empty() {
-            let tag = infer_command_tag(trimmed, 0);
-            BackendMessage::CommandComplete { tag }.encode(&mut self.write_buf);
-        } else {
+        if is_row_returning_query(trimmed) {
+            // Row-returning query: send RowDescription + DataRows + CommandComplete
             self.send_query_result(&result, trimmed).await?;
+        } else {
+            // DML (INSERT/UPDATE/DELETE) or DDL: send CommandComplete only.
+            // Extract affected row count from result if available.
+            let row_count = extract_affected_rows(&result);
+            let tag = infer_command_tag(trimmed, row_count);
+            BackendMessage::CommandComplete { tag }.encode(&mut self.write_buf);
         }
 
         self.send_ready_for_query().await
@@ -489,27 +493,123 @@ impl PgConnection {
                 } else {
                     name.to_string()
                 };
-                if let Some(stmt) = self.session.prepared_statements.get(&stmt_name) {
-                    if !stmt.param_types.is_empty() {
+                // Extract SQL and cached state (drop borrow before mutating)
+                let cached = self
+                    .session
+                    .prepared_statements
+                    .get(&stmt_name)
+                    .map(|stmt| (stmt.sql.clone(), stmt.param_types.clone(), stmt.fields.clone()));
+
+                if let Some((sql, param_types, cached_fields)) = cached {
+                    if !param_types.is_empty() {
                         BackendMessage::ParameterDescription {
-                            type_oids: stmt.param_types.clone(),
+                            type_oids: param_types,
                         }
                         .encode(&mut self.write_buf);
                     }
-                    if !stmt.fields.is_empty() {
+                    if !cached_fields.is_empty() {
                         BackendMessage::RowDescription {
-                            fields: stmt.fields.clone(),
+                            fields: cached_fields,
                         }
                         .encode(&mut self.write_buf);
                     } else {
-                        BackendMessage::NoData.encode(&mut self.write_buf);
+                        // Fields not yet cached — execute query to determine columns
+                        let trimmed = sql.trim().trim_end_matches(';');
+                        if trimmed.is_empty() {
+                            BackendMessage::NoData.encode(&mut self.write_buf);
+                        } else {
+                            let result = self.handler.handle_query(self.conn_id, trimmed);
+                            if is_row_returning_query(trimmed) && !result.columns.is_empty() {
+                                let fields: Vec<FieldDescription> = result
+                                    .columns
+                                    .iter()
+                                    .map(|col| {
+                                        let type_oid = map_column_type_to_oid(col.col_type);
+                                        let type_size = map_column_type_to_size(col.col_type);
+                                        FieldDescription::new(&col.name, type_oid, type_size)
+                                    })
+                                    .collect();
+                                // Cache for future Describe calls
+                                if let Some(stmt) =
+                                    self.session.prepared_statements.get_mut(&stmt_name)
+                                {
+                                    stmt.fields = fields.clone();
+                                }
+                                BackendMessage::RowDescription { fields }
+                                    .encode(&mut self.write_buf);
+                            } else {
+                                BackendMessage::NoData.encode(&mut self.write_buf);
+                            }
+                        }
                     }
                 } else {
                     BackendMessage::NoData.encode(&mut self.write_buf);
                 }
             }
             DescribeTarget::Portal => {
-                BackendMessage::NoData.encode(&mut self.write_buf);
+                // For portal describe, look up the portal's statement and determine fields
+                let portal_name = if name.is_empty() {
+                    format!("_pg3_portal_{}", self.conn_id)
+                } else {
+                    name.to_string()
+                };
+                let stmt_name = self.session.portals.get(&portal_name).cloned();
+                let cached_fields = stmt_name
+                    .as_ref()
+                    .and_then(|sn| self.session.prepared_statements.get(sn))
+                    .map(|s| s.fields.clone());
+
+                match cached_fields {
+                    Some(fields) if !fields.is_empty() => {
+                        BackendMessage::RowDescription { fields }
+                            .encode(&mut self.write_buf);
+                    }
+                    _ => {
+                        // Try to determine fields by executing the query
+                        let mut found_fields = false;
+                        if let Some(ref sn) = stmt_name {
+                            let sql = self
+                                .session
+                                .prepared_statements
+                                .get(sn)
+                                .map(|s| s.sql.clone());
+                            if let Some(sql) = sql {
+                                let trimmed = sql.trim().trim_end_matches(';');
+                                if !trimmed.is_empty() && is_row_returning_query(trimmed) {
+                                    let result = self.handler.handle_query(self.conn_id, trimmed);
+                                    if !result.columns.is_empty() {
+                                        let fields: Vec<FieldDescription> = result
+                                            .columns
+                                            .iter()
+                                            .map(|col| {
+                                                let type_oid = map_column_type_to_oid(col.col_type);
+                                                let type_size =
+                                                    map_column_type_to_size(col.col_type);
+                                                FieldDescription::new(
+                                                    &col.name,
+                                                    type_oid,
+                                                    type_size,
+                                                )
+                                            })
+                                            .collect();
+                                        // Cache for future use
+                                        if let Some(stmt) =
+                                            self.session.prepared_statements.get_mut(sn)
+                                        {
+                                            stmt.fields = fields.clone();
+                                        }
+                                        BackendMessage::RowDescription { fields }
+                                            .encode(&mut self.write_buf);
+                                        found_fields = true;
+                                    }
+                                }
+                            }
+                        }
+                        if !found_fields {
+                            BackendMessage::NoData.encode(&mut self.write_buf);
+                        }
+                    }
+                }
             }
         }
         if let Err(e) = self.flush_write().await {
@@ -579,11 +679,9 @@ impl PgConnection {
 
         let result = self.handler.handle_query(self.conn_id, trimmed);
 
-        if result.columns.is_empty() {
-            let tag = infer_command_tag(trimmed, 0);
-            BackendMessage::CommandComplete { tag }.encode(&mut self.write_buf);
-        } else {
-            // Build field descriptions from the result
+        if is_row_returning_query(trimmed) {
+            // Row-returning query: cache fields for Describe, then send DataRows + CommandComplete.
+            // NOTE: Do NOT send RowDescription here — that's only sent by handle_describe.
             let fields: Vec<FieldDescription> = result
                 .columns
                 .iter()
@@ -599,13 +697,7 @@ impl PgConnection {
                 stmt.fields = fields.clone();
             }
 
-            // Send RowDescription
-            BackendMessage::RowDescription {
-                fields: fields.clone(),
-            }
-            .encode(&mut self.write_buf);
-
-            // Send DataRows
+            // Send DataRows (no RowDescription — Execute must not send it)
             for row in &result.rows {
                 let values: Vec<Option<Vec<u8>>> = row
                     .iter()
@@ -627,6 +719,26 @@ impl PgConnection {
             }
 
             let tag = infer_command_tag(trimmed, result.rows.len() as i64);
+            BackendMessage::CommandComplete { tag }.encode(&mut self.write_buf);
+        } else {
+            // DML (INSERT/UPDATE/DELETE) or DDL: send CommandComplete only.
+            // Still cache fields if the result has columns (for Describe).
+            if !result.columns.is_empty() {
+                let fields: Vec<FieldDescription> = result
+                    .columns
+                    .iter()
+                    .map(|col| {
+                        let type_oid = map_column_type_to_oid(col.col_type);
+                        let type_size = map_column_type_to_size(col.col_type);
+                        FieldDescription::new(&col.name, type_oid, type_size)
+                    })
+                    .collect();
+                if let Some(stmt) = self.session.prepared_statements.get_mut(&stmt_name) {
+                    stmt.fields = fields;
+                }
+            }
+            let row_count = extract_affected_rows(&result);
+            let tag = infer_command_tag(trimmed, row_count);
             BackendMessage::CommandComplete { tag }.encode(&mut self.write_buf);
         }
 
@@ -701,6 +813,35 @@ impl PgConnection {
 // ============================================================================
 // Standalone functions
 // ============================================================================
+
+/// Returns true if the SQL statement is expected to return rows in PostgreSQL.
+///
+/// In PG protocol, only row-returning queries get RowDescription + DataRow.
+/// DML (INSERT/UPDATE/DELETE) and DDL only get CommandComplete.
+fn is_row_returning_query(sql: &str) -> bool {
+    let upper = sql.trim().to_uppercase();
+    upper.starts_with("SELECT")
+        || upper.starts_with("WITH")
+        || upper.starts_with("VALUES")
+        || upper.starts_with("SHOW")
+        || upper.starts_with("EXPLAIN")
+        || upper.starts_with("DESCRIBE")
+        || upper.starts_with("DESC ")
+}
+
+/// Extract the affected row count from a QueryResult for DML commands.
+/// The handler may return a single-row result with an "affected_rows" column.
+fn extract_affected_rows(result: &QueryResult) -> i64 {
+    if result.columns.is_empty() || result.rows.is_empty() {
+        return 0;
+    }
+    // Try to parse the first column of the first row as a row count
+    if let Some(Some(val)) = result.rows.first().and_then(|r| r.first()) {
+        val.parse::<i64>().unwrap_or(result.rows.len() as i64)
+    } else {
+        result.rows.len() as i64
+    }
+}
 
 /// Infer a PostgreSQL command tag from SQL text (e.g., "SELECT 5", "INSERT 0 1").
 fn infer_command_tag(sql: &str, row_count: i64) -> String {
@@ -1181,33 +1322,24 @@ mod tests {
         );
 
         // === Describe(Portal) ===
+        // After fix: Describe executes query to determine columns, returns RowDescription
         let describe_msg = build_describe_message(b'P', "");
         writer.write_all(&describe_msg).await.unwrap();
 
-        let (msg_type, _body) = read_pg_message(&mut reader).await;
-        assert_eq!(
-            msg_type, b'n',
-            "expected NoData for portal, got 0x{:02x}",
-            msg_type
-        );
-
-        // === Execute ===
-        let execute_msg = build_execute_message("", 0);
-        writer.write_all(&execute_msg).await.unwrap();
-
-        // Should get RowDescription + DataRow + CommandComplete
-        // (No ReadyForQuery until Sync)
-
-        // RowDescription ('T')
         let (msg_type, body) = read_pg_message(&mut reader).await;
         assert_eq!(
             msg_type, b'T',
-            "expected RowDescription, got 0x{:02x}",
+            "expected RowDescription from Describe(Portal), got 0x{:02x}",
             msg_type
         );
         let num_fields = u16::from_be_bytes(body[..2].try_into().unwrap());
         assert_eq!(num_fields, 1, "expected 1 column in RowDescription");
 
+        // === Execute ===
+        let execute_msg = build_execute_message("", 0);
+        writer.write_all(&execute_msg).await.unwrap();
+
+        // Execute sends DataRow + CommandComplete (NOT RowDescription)
         // DataRow ('D')
         let (msg_type, body) = read_pg_message(&mut reader).await;
         assert_eq!(msg_type, b'D', "expected DataRow, got 0x{:02x}", msg_type);
@@ -1289,7 +1421,7 @@ mod tests {
             .write_all(&build_execute_message("", 0))
             .await
             .unwrap();
-        // Read RowDescription + DataRow + CommandComplete
+        // Read DataRow + CommandComplete (Execute does NOT send RowDescription)
         loop {
             let (msg_type, _body) = read_pg_message(&mut reader).await;
             if msg_type == b'C' {

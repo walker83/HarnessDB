@@ -143,6 +143,7 @@ pub(crate) fn like_match(pattern: &str, text: &str) -> bool {
     dp[p.len()][t.len()]
 }
 
+#[allow(dead_code)]
 pub(crate) fn df_schema_to_column_defs(
     df_schema: &datafusion::common::DFSchema,
 ) -> Vec<ColumnDef> {
@@ -209,7 +210,6 @@ pub(crate) fn encode_arrow_batches_to_mysql_rows(
     buf
 }
 
-#[allow(dead_code)]
 pub(crate) fn record_batches_to_query_result_with_df_schema(
     batches: &[datafusion::arrow::record_batch::RecordBatch],
     df_schema: &datafusion::common::DFSchema,
