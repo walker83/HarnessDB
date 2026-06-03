@@ -70,7 +70,7 @@ struct Args {
     config_file: String,
 
     // Additional protocol ports (0 = disabled)
-    #[arg(long, default_value = "0")]
+    #[arg(long, default_value_t = false)]
     enable_all_protocols: bool,
 
     #[arg(long, default_value = "6379")]
