@@ -23,11 +23,17 @@ impl DefaultElasticsearchHandler {
 
 impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
     fn handle_request(&self, method: &str, path: &str, body: Option<&str>) -> serde_json::Value {
-        let path_parts: Vec<&str> = path.trim_matches('/').split('/').collect();
+        // Helper: parse path parts
+        let path_parts: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+
+        // Strip query string from body if accidentally included
+        let body = body.map(|b| {
+            if b.starts_with('?') { None } else { Some(b) }
+        }).flatten();
 
         match (method, path_parts.as_slice()) {
-            // GET / - Cluster health
-            ("GET", [""]) | ("GET", []) => {
+            // GET / - Cluster root
+            ("GET", []) => {
                 json!({
                     "name": "harness",
                     "cluster_name": "harness-cluster",
@@ -63,17 +69,76 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                 })
             }
 
-            // GET /_cat/indices
+            // GET /_cat/health
+            ("GET", ["_cat", "health"]) => {
+                json!([{
+                    "cluster": "harness-cluster",
+                    "status": "green",
+                    "node.total": "1",
+                    "node.data": "1",
+                    "shards": "0",
+                    "pri": "0",
+                    "relo": "0",
+                    "init": "0",
+                    "unassign": "0",
+                    "pending_tasks": "0",
+                    "max_task_wait_time": "0s",
+                    "active_shards_percent": "100.0%"
+                }])
+            }
+
+            // GET /_cat/indices (all)
             ("GET", ["_cat", "indices"]) => {
                 let indices = self.storage.list_indices();
-                let result: Vec<String> = indices
+                let result: Vec<serde_json::Value> = indices
                     .iter()
                     .map(|name| {
-                        let index = self.storage.get_index(name).unwrap();
-                        format!("green open {} harness-uuid 1 0 {} 0 0b 0b", name, index.count())
+                        let index = self.storage.get_index(&name).unwrap();
+                        json!({
+                            "health": "green",
+                            "status": "open",
+                            "index": name,
+                            "uuid": "harness-uuid",
+                            "pri": "1",
+                            "rep": "0",
+                            "docs.count": index.count().to_string(),
+                            "docs.deleted": "0",
+                            "store.size": "0b",
+                            "pri.store.size": "0b"
+                        })
                     })
                     .collect();
-                json!(result.join("\n").to_string())
+                json!(result)
+            }
+
+            // GET /_cat/indices/{index}
+            ("GET", ["_cat", "indices", index_name]) => {
+                if let Some(index) = self.storage.get_index(index_name) {
+                    json!([{
+                        "health": "green",
+                        "status": "open",
+                        "index": index_name,
+                        "uuid": "harness-uuid",
+                        "pri": "1",
+                        "rep": "0",
+                        "docs.count": index.count().to_string(),
+                        "docs.deleted": "0",
+                        "store.size": "0b",
+                        "pri.store.size": "0b"
+                    }])
+                } else {
+                    json!({
+                        "error": {
+                            "root_cause": [{
+                                "type": "index_not_found_exception",
+                                "reason": "no such index"
+                            }],
+                            "type": "index_not_found_exception",
+                            "reason": "no such index"
+                        },
+                        "status": 404
+                    })
+                }
             }
 
             // PUT /{index} - Create index
@@ -139,8 +204,206 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                 }
             }
 
-            // PUT /{index}/_doc/{id} - Index document
+            // GET /{index}/_settings - Get index settings
+            ("GET", [index_name, "_settings"]) => {
+                if self.storage.index_exists(index_name) {
+                    let mut result = serde_json::Map::new();
+                    result.insert(
+                        index_name.to_string(),
+                        json!({
+                            "settings": {
+                                "index": {
+                                    "number_of_shards": "1",
+                                    "number_of_replicas": "0",
+                                    "creation_date": "1700000000000",
+                                    "uuid": "harness-uuid",
+                                    "version": { "created": "7100299" },
+                                    "provided_name": index_name
+                                }
+                            }
+                        }),
+                    );
+                    json!(result)
+                } else {
+                    json!({
+                        "error": {
+                            "root_cause": [{
+                                "type": "index_not_found_exception",
+                                "reason": "no such index"
+                            }],
+                            "type": "index_not_found_exception",
+                            "reason": "no such index"
+                        },
+                        "status": 404
+                    })
+                }
+            }
+
+            // POST /{index}/_refresh - Refresh index (no-op)
+            ("POST", [index_name, "_refresh"]) => {
+                if self.storage.index_exists(index_name) {
+                    json!({
+                        "_shards": {
+                            "total": 2,
+                            "successful": 1,
+                            "failed": 0
+                        }
+                    })
+                } else {
+                    json!({
+                        "error": {
+                            "root_cause": [{
+                                "type": "index_not_found_exception",
+                                "reason": "no such index"
+                            }],
+                            "type": "index_not_found_exception",
+                            "reason": "no such index"
+                        },
+                        "status": 404
+                    })
+                }
+            }
+
+            // POST /{index}/_bulk - Bulk operations
+            ("POST", [index_name, "_bulk"]) | ("PUT", [index_name, "_bulk"]) => {
+                if let Some(index) = self.storage.get_index(index_name) {
+                    let mut items = Vec::new();
+                    if let Some(body_str) = body {
+                        let lines: Vec<&str> = body_str.lines().collect();
+                        let mut i = 0;
+                        while i + 1 < lines.len() {
+                            let action_line = lines[i].trim();
+                            let source_line = lines[i + 1].trim();
+                            if action_line.is_empty() {
+                                i += 1;
+                                continue;
+                            }
+                            if let Ok(action_val) = serde_json::from_str::<serde_json::Value>(action_line) {
+                                if let Some(action_obj) = action_val.as_object() {
+                                    for (action_type, action_meta) in action_obj {
+                                        let bulk_index = action_meta.get("_index").and_then(|v| v.as_str()).unwrap_or(index_name);
+                                        let doc_id = action_meta.get("_id").and_then(|v| v.as_str()).unwrap_or("");
+                                        match action_type.as_str() {
+                                            "index" | "create" => {
+                                                if let Ok(doc_map) = serde_json::from_str::<HashMap<String, serde_json::Value>>(source_line) {
+                                                    let document = Document { fields: doc_map };
+                                                    let id = if doc_id.is_empty() {
+                                                        uuid::Uuid::new_v4().to_string()
+                                                    } else {
+                                                        doc_id.to_string()
+                                                    };
+                                                    index.index_document(id.clone(), document);
+                                                    items.push(json!({
+                                                        action_type: {
+                                                            "_index": bulk_index,
+                                                            "_type": "_doc",
+                                                            "_id": id,
+                                                            "_version": 1,
+                                                            "result": "created",
+                                                            "_shards": {"total": 2, "successful": 1, "failed": 0},
+                                                            "_seq_no": 0,
+                                                            "_primary_term": 1,
+                                                            "status": 201
+                                                        }
+                                                    }));
+                                                }
+                                            }
+                                            "delete" => {
+                                                let id = doc_id.to_string();
+                                                let deleted = index.delete_document(&id);
+                                                items.push(json!({
+                                                    "delete": {
+                                                        "_index": bulk_index,
+                                                        "_type": "_doc",
+                                                        "_id": id,
+                                                        "_version": 2,
+                                                        "result": if deleted { "deleted" } else { "not_found" },
+                                                        "_shards": {"total": 2, "successful": 1, "failed": 0},
+                                                        "_seq_no": 1,
+                                                        "_primary_term": 1,
+                                                        "status": if deleted { 200 } else { 404 }
+                                                    }
+                                                }));
+                                                // delete has no source line
+                                                i += 1;
+                                                continue;
+                                            }
+                                            "update" => {
+                                                if let Ok(update_val) = serde_json::from_str::<serde_json::Value>(source_line) {
+                                                    let id = doc_id.to_string();
+                                                    if let Some(doc_obj) = update_val.get("doc").and_then(|v| v.as_object()) {
+                                                        if let Some(existing) = index.get_document(&id) {
+                                                            let mut updated_fields = existing.fields.clone();
+                                                            for (k, v) in doc_obj {
+                                                                updated_fields.insert(k.clone(), v.clone());
+                                                            }
+                                                            let updated_doc = Document { fields: updated_fields };
+                                                            index.index_document(id.clone(), updated_doc);
+                                                        }
+                                                        items.push(json!({
+                                                            "update": {
+                                                                "_index": bulk_index,
+                                                                "_type": "_doc",
+                                                                "_id": id,
+                                                                "_version": 2,
+                                                                "result": "updated",
+                                                                "_shards": {"total": 2, "successful": 1, "failed": 0},
+                                                                "_seq_no": 1,
+                                                                "_primary_term": 1,
+                                                                "status": 200
+                                                            }
+                                                        }));
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                            i += 2;
+                        }
+                    }
+                    json!({
+                        "took": 1,
+                        "errors": false,
+                        "items": items
+                    })
+                } else {
+                    json!({"error": "Index not found"})
+                }
+            }
+
+            // PUT /{index}/_doc/{id} - Index document with explicit ID
             ("PUT", [index_name, "_doc", id]) if path_parts.len() == 3 => {
+                let index = self.storage.get_index(index_name);
+                if let Some(idx) = index {
+                    if let Some(body_str) = body {
+                        if let Ok(doc) = serde_json::from_str::<HashMap<String, serde_json::Value>>(body_str) {
+                            let document = Document { fields: doc };
+                            idx.index_document(id.to_string(), document);
+                            return json!({
+                                "_index": index_name,
+                                "_type": "_doc",
+                                "_id": id,
+                                "_version": 1,
+                                "result": "created",
+                                "_shards": {
+                                    "total": 2,
+                                    "successful": 1,
+                                    "failed": 0
+                                },
+                                "_seq_no": 0,
+                                "_primary_term": 1
+                            });
+                        }
+                    }
+                }
+                json!({"error": "Invalid request"})
+            }
+
+            // POST /{index}/_doc/{id} - Index document with explicit ID (POST variant)
+            ("POST", [index_name, "_doc", id]) if path_parts.len() == 3 => {
                 let index = self.storage.get_index(index_name);
                 if let Some(idx) = index {
                     if let Some(body_str) = body {
@@ -194,6 +457,52 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                     }
                 }
                 json!({"error": "Invalid request"})
+            }
+
+            // POST /{index}/_update/{id} - Update document
+            ("POST", [index_name, "_update", id]) if path_parts.len() == 3 => {
+                if let Some(index) = self.storage.get_index(index_name) {
+                    if let Some(body_str) = body {
+                        if let Ok(update_val) = serde_json::from_str::<serde_json::Value>(body_str) {
+                            if let Some(doc_obj) = update_val.get("doc").and_then(|v| v.as_object()) {
+                                if let Some(existing) = index.get_document(id) {
+                                    let mut updated_fields = existing.fields.clone();
+                                    for (k, v) in doc_obj {
+                                        updated_fields.insert(k.clone(), v.clone());
+                                    }
+                                    let updated_doc = Document { fields: updated_fields };
+                                    index.index_document(id.to_string(), updated_doc);
+                                    return json!({
+                                        "_index": index_name,
+                                        "_type": "_doc",
+                                        "_id": id,
+                                        "_version": 2,
+                                        "result": "updated",
+                                        "_shards": {
+                                            "total": 2,
+                                            "successful": 1,
+                                            "failed": 0
+                                        },
+                                        "_seq_no": 1,
+                                        "_primary_term": 1
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    return json!({
+                        "error": {
+                            "root_cause": [{
+                                "type": "document_missing_exception",
+                                "reason": format!("[{}]: document missing", id)
+                            }],
+                            "type": "document_missing_exception",
+                            "reason": format!("[{}]: document missing", id)
+                        },
+                        "status": 404
+                    });
+                }
+                json!({"error": "Index not found"})
             }
 
             // GET /{index}/_doc/{id} - Get document
@@ -290,10 +599,10 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                     "error": {
                         "root_cause": [{
                             "type": "invalid_index_name_exception",
-                            "reason": "Invalid index name"
+                            "reason": format!("Invalid index name - unmatched route: {} {}", method, path)
                         }],
                         "type": "invalid_index_name_exception",
-                        "reason": "Invalid index name"
+                        "reason": format!("Invalid index name - unmatched route: {} {}", method, path)
                     },
                     "status": 400
                 })
