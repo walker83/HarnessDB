@@ -1,5 +1,5 @@
 #!/bin/bash
-# Real-world MySQL compatibility test suite for RorisDB
+# Real-world MySQL compatibility test suite for HarnessDB
 # Tests 15+ scenarios based on real applications
 # Usage: ./run_tests.sh
 
@@ -69,7 +69,7 @@ scenario() {
 }
 
 echo -e "${BOLD}======================================================================${RESET}"
-echo -e "${BOLD}RorisDB Real-World Compatibility Test Suite${RESET}"
+echo -e "${BOLD}HarnessDB Real-World Compatibility Test Suite${RESET}"
 echo -e "${BOLD}======================================================================${RESET}"
 echo "Started at: $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -252,7 +252,7 @@ run_sql "Backup" "SHOW REPOSITORIES" "SHOW REPOSITORIES"
 # Scenario 16: Backup/Restore End-to-End
 # ============================================================
 scenario "Backup/Restore E2E"
-run_sql "Backup E2E" "CREATE REPOSITORY" "CREATE REPOSITORY test_repo WITH BROKER ON '/tmp/roris_test_backup'"
+run_sql "Backup E2E" "CREATE REPOSITORY" "CREATE REPOSITORY test_repo WITH BROKER ON '/tmp/harnessdb_test_backup'"
 run_sql "Backup E2E" "SHOW REPOSITORIES" "SHOW REPOSITORIES"
 run_sql "Backup E2E" "BACKUP DATABASE" "BACKUP DATABASE dbt_test TO test_repo AS 'backup_001'"
 run_sql "Backup E2E" "DROP TABLE" "DROP TABLE IF EXISTS dbt_test.raw_sessions"

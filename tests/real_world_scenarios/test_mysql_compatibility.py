@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Real-world MySQL compatibility test suite for RorisDB
+Real-world MySQL compatibility test suite for HarnessDB
 Tests 15 scenarios based on real applications: Superset, Metabase, Grafana, DBeaver,
 WordPress, phpMyAdmin, Flyway, dbt, Airbyte, Go driver, Node.js driver, JDBC,
 SQLAlchemy, SQLancer, and IoT/MQTT patterns.
@@ -61,7 +61,7 @@ class TestResult:
         return self.failed == 0
 
 def connect_to_db():
-    """Connect to RorisDB"""
+    """Connect to HarnessDB"""
     try:
         conn = mysql.connector.connect(
             host='127.0.0.1',
@@ -73,7 +73,7 @@ def connect_to_db():
         )
         return conn
     except Error as e:
-        print(f"{Colors.RED}Failed to connect to RorisDB: {e}{Colors.RESET}")
+        print(f"{Colors.RED}Failed to connect to HarnessDB: {e}{Colors.RESET}")
         sys.exit(1)
 
 def execute_query(cursor, sql, scenario, test_name, results):
@@ -334,7 +334,7 @@ def test_new_features(cursor, results):
 
 def main():
     print(f"{Colors.BOLD}{'='*70}{Colors.RESET}")
-    print(f"{Colors.BOLD}RorisDB Real-World Compatibility Test Suite{Colors.RESET}")
+    print(f"{Colors.BOLD}HarnessDB Real-World Compatibility Test Suite{Colors.RESET}")
     print(f"{Colors.BOLD}{'='*70}{Colors.RESET}")
     print(f"Testing 15 real application scenarios + new features")
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")

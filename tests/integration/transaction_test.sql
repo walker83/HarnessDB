@@ -1,5 +1,5 @@
 -- ============================================================================
--- RorisDB Transaction and INSERT ON DUPLICATE KEY Test Suite
+-- HarnessDB Transaction and INSERT ON DUPLICATE KEY Test Suite
 -- ============================================================================
 -- Test Coverage:
 -- 1. Transaction basics (BEGIN/COMMIT/ROLLBACK)

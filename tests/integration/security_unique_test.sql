@@ -1,4 +1,4 @@
--- RorisDB Account/Security and UNIQUE Constraint Integration Test Script
+-- HarnessDB Account/Security and UNIQUE Constraint Integration Test Script
 -- Run with: mysql -h 127.0.0.1 -P 9030 -uroot < tests/integration/security_unique_test.sql
 
 -- ============================================================================

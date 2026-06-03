@@ -2886,6 +2886,11 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Result<Expr, ParseError> {
             expr: Box::new(convert_expr(*expr)?),
             negated: false,
         }),
+        sqlparser::ast::Expr::IsNotNull(expr) => Ok(Expr::IsNull {
+            expr: Box::new(convert_expr(*expr)?),
+            negated: true,
+        }),
+        sqlparser::ast::Expr::Nested(expr) => convert_expr(*expr),
         sqlparser::ast::Expr::Like {
             expr,
             pattern,

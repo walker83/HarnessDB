@@ -756,6 +756,20 @@ impl CatalogManager {
         Ok(())
     }
 
+    /// Replaces an existing table in the catalog (used by ALTER TABLE).
+    pub fn update_table(&self, db_name: &str, table: Table) -> Result<()> {
+        let mut db_ref = self.databases.get_mut(db_name).ok_or_else(|| {
+            DharnessError::catalog(
+                CatalogError::DatabaseNotFound,
+                format!("database '{}' not found", db_name),
+            )
+        })?;
+        self.backend.put_table(db_name, &table.name, &table)?;
+        db_ref.drop_table(&table.name);
+        db_ref.add_table(table);
+        Ok(())
+    }
+
     pub fn drop_table(&self, db_name: &str, table_name: &str) -> Result<()> {
         let mut db_ref = self.databases.get_mut(db_name).ok_or_else(|| {
             DharnessError::catalog(

@@ -1,6 +1,6 @@
 -- ============================================================================
 -- E2E Test: JOINs, Aggregates, and Window Functions
--- RorisDB — single-node OLAP database with DataFusion + Parquet
+-- HarnessDB — single-node OLAP database with DataFusion + Parquet
 -- MySQL wire protocol
 --
 -- Requirements: 200+ test cases covering:

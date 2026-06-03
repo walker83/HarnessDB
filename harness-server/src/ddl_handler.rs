@@ -286,7 +286,7 @@ impl HarnessQueryHandler {
                                     col.name = new_name.clone();
                                 }
                             }
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::SetComment(comment) => {
                             let mut table = catalog
@@ -295,7 +295,7 @@ impl HarnessQueryHandler {
                             table
                                 .properties
                                 .insert("comment".to_string(), comment.clone());
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::SetProperty(props) => {
                             let mut table = catalog
@@ -304,7 +304,7 @@ impl HarnessQueryHandler {
                             for (k, v) in props {
                                 table.properties.insert(k.clone(), v.clone());
                             }
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::AddPartition {
                             partition_name,
@@ -331,7 +331,7 @@ impl HarnessQueryHandler {
                                     v.clone(),
                                 );
                             }
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::DropPartition {
                             partition_name,
@@ -352,7 +352,7 @@ impl HarnessQueryHandler {
                             table
                                 .properties
                                 .remove(&format!("__partition_{}_values", partition_name));
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::AddRollup {
                             rollup_name,
@@ -378,7 +378,7 @@ impl HarnessQueryHandler {
                                     .properties
                                     .insert(format!("__rollup_{}_{}", rollup_name, k), v.clone());
                             }
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::DropRollup {
                             rollup_name,
@@ -401,7 +401,7 @@ impl HarnessQueryHandler {
                             table
                                 .properties
                                 .remove(&format!("__rollup_{}_columns", rollup_name));
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::Replace {
                             old_table,
@@ -416,7 +416,7 @@ impl HarnessQueryHandler {
                                 for (k, v) in properties {
                                     table.properties.insert(k.clone(), v.clone());
                                 }
-                                catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                                catalog.update_table(db, table).map_err(|e| e.to_string())?;
                                 if *swap {
                                     if let Some(mut old_tbl) = catalog.get_table(db, old_table) {
                                         old_tbl.name = stmt.table.clone();
@@ -444,7 +444,7 @@ impl HarnessQueryHandler {
                                 comment: col_def.comment.clone().unwrap_or_default(),
                             };
                             table.columns.push(new_col);
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                         }
                         fe_sql_parser::ast::AlterOperation::AddColumn(col_def) => {
                             let mut table = catalog
@@ -474,7 +474,7 @@ impl HarnessQueryHandler {
                                 col_def.nullable,
                             );
                             table.columns.push(new_col);
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                             // Rewrite Parquet data to include the new column (NULL for existing rows)
                             if let Err(e) =
                                 self.storage
@@ -500,7 +500,7 @@ impl HarnessQueryHandler {
                                     );
                                 }
                                 table.columns.remove(idx);
-                                catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                                catalog.update_table(db, table).map_err(|e| e.to_string())?;
                             } else {
                                 return Err(format!("Unknown column '{}'", col_name));
                             }
@@ -526,7 +526,7 @@ impl HarnessQueryHandler {
                                     agg_type: col_def.agg_type.clone(),
                                     comment: col_def.comment.clone().unwrap_or_default(),
                                 };
-                                catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                                catalog.update_table(db, table).map_err(|e| e.to_string())?;
                                 if let Err(e) = self.update_df_table_schema_inner(db, &stmt.table) {
                                     tracing::warn!("Failed to update DataFusion schema: {}", e);
                                 }
@@ -545,7 +545,7 @@ impl HarnessQueryHandler {
                                 .drop_table(db, &old_name)
                                 .map_err(|e| e.to_string())?;
                             // Then create with new name
-                            catalog.create_table(db, table).map_err(|e| e.to_string())?;
+                            catalog.update_table(db, table).map_err(|e| e.to_string())?;
                             // Rename the data directory
                             let old_data_dir = self.storage.table_dir(db, &old_name);
                             let new_data_dir = self.storage.table_dir(db, new_name);

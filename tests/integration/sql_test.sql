@@ -1,4 +1,4 @@
--- RorisDB Integration Test Script
+-- HarnessDB Integration Test Script
 -- Run with: mysql -h 127.0.0.1 -P 9030 -uroot < tests/integration/sql_test.sql
 
 -- ============================================================================
