@@ -26,11 +26,22 @@ use fe_monitor::MonitoringManager;
 use fe_monitor::audit_log::{AuditLogConfig, AuditLogEntry, AuditLogger, QueryStatus, QueryType};
 use fe_sql_parser::{is_dml_sql, parse_sql};
 use fe_storage::ParquetCatalogProvider;
+use clickhouse_protocol::{ClickHouseServer, ClickHouseServerConfig};
+use elasticsearch_protocol::{ElasticsearchServer, ElasticsearchServerConfig};
+use influxdb_protocol::{InfluxDBServer, InfluxDBServerConfig};
 use maxcompute_protocol::{McServerConfig, start_mc_server};
+use mongodb_protocol::{MongoDBServer, MongoDBServerConfig};
 use mysql_protocol::auth::default_credentials;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::{MysqlServer, QueryHandler, QueryResult, ServerConfig, auth::AuthPluginType};
 use pg_protocol::{PgServer, PgServerConfig};
+use redis_protocol::{RedisServer, RedisServerConfig};
+use tablestore_protocol::{TableStoreServer, TableStoreServerConfig};
+use oracle_protocol::{OracleServer, OracleServerConfig};
+use cassandra_protocol::{CassandraServer, CassandraServerConfig};
+use adb_mysql_protocol::AdbMysqlServer;
+use lindorm_protocol::LindormServer;
+use vector_protocol::VectorServer;
 
 use connection_tracker::ConnectionTracker;
 use handler_struct::HarnessQueryHandler;
@@ -57,6 +68,43 @@ struct Args {
 
     #[arg(long, default_value = "harness.toml")]
     config_file: String,
+
+    // Additional protocol ports (0 = disabled)
+    #[arg(long, default_value = "0")]
+    enable_all_protocols: bool,
+
+    #[arg(long, default_value = "6379")]
+    redis_port: u16,
+
+    #[arg(long, default_value = "27017")]
+    mongodb_port: u16,
+
+    #[arg(long, default_value = "8123")]
+    clickhouse_port: u16,
+
+    #[arg(long, default_value = "9200")]
+    elasticsearch_port: u16,
+
+    #[arg(long, default_value = "8086")]
+    influxdb_port: u16,
+
+    #[arg(long, default_value = "9042")]
+    cassandra_port: u16,
+
+    #[arg(long, default_value = "1521")]
+    oracle_port: u16,
+
+    #[arg(long, default_value = "8087")]
+    tablestore_port: u16,
+
+    #[arg(long, default_value = "8124")]
+    adb_mysql_port: u16,
+
+    #[arg(long, default_value = "7070")]
+    lindorm_port: u16,
+
+    #[arg(long, default_value = "9032")]
+    vector_port: u16,
 }
 
 impl QueryHandler for HarnessQueryHandler {
@@ -479,6 +527,170 @@ async fn main() -> Result<()> {
         args.maxcompute_port,
         args.hologres_port
     );
+
+    // ============================================================
+    // Start all 14 protocol servers
+    // ============================================================
+
+    // Redis protocol (RESP2/RESP3)
+    let redis_port = if args.enable_all_protocols { args.redis_port } else { args.redis_port };
+    if redis_port > 0 {
+        tracing::info!("HarnessDB starting Redis server on port {} (may fail silently if port is in use)", redis_port);
+        let redis_config = RedisServerConfig { port: redis_port, password: None, num_databases: 16 };
+        let redis_server = RedisServer::new(redis_config);
+        handles.push(tokio::spawn(async move {
+            if let Err(e) = redis_server.start().await {
+                tracing::error!("Redis server failed: {}", e);
+            }
+        }));
+    }
+
+    // MongoDB protocol (OP_MSG/BSON wire protocol)
+    if args.mongodb_port > 0 || args.enable_all_protocols {
+        let mongo_port = if args.enable_all_protocols && args.mongodb_port == 0 { 27017 } else { args.mongodb_port };
+        if mongo_port > 0 {
+            tracing::info!("HarnessDB starting MongoDB server on port {} (may fail silently if port is in use)", mongo_port);
+            let mongo_config = MongoDBServerConfig { port: mongo_port };
+            let mongo_server = MongoDBServer::new(mongo_config);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = mongo_server.start().await {
+                    tracing::error!("MongoDB server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // ClickHouse protocol (HTTP)
+    if args.clickhouse_port > 0 || args.enable_all_protocols {
+        let ch_port = if args.enable_all_protocols && args.clickhouse_port == 0 { 8123 } else { args.clickhouse_port };
+        if ch_port > 0 {
+            tracing::info!("HarnessDB starting ClickHouse server on port {} (may fail silently if port is in use)", ch_port);
+            let ch_config = ClickHouseServerConfig { port: ch_port };
+            let ch_server = ClickHouseServer::new(ch_config);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = ch_server.start().await {
+                    tracing::error!("ClickHouse server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // Elasticsearch protocol (HTTP REST)
+    if args.elasticsearch_port > 0 || args.enable_all_protocols {
+        let es_port = if args.enable_all_protocols && args.elasticsearch_port == 0 { 9200 } else { args.elasticsearch_port };
+        if es_port > 0 {
+            tracing::info!("HarnessDB starting Elasticsearch server on port {} (may fail silently if port is in use)", es_port);
+            let es_config = ElasticsearchServerConfig { port: es_port };
+            let es_server = ElasticsearchServer::new(es_config);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = es_server.start().await {
+                    tracing::error!("Elasticsearch server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // InfluxDB protocol (HTTP)
+    if args.influxdb_port > 0 || args.enable_all_protocols {
+        let influx_port = if args.enable_all_protocols && args.influxdb_port == 0 { 8086 } else { args.influxdb_port };
+        if influx_port > 0 {
+            tracing::info!("HarnessDB starting InfluxDB server on port {} (may fail silently if port is in use)", influx_port);
+            let influx_config = InfluxDBServerConfig { port: influx_port };
+            let influx_server = InfluxDBServer::new(influx_config);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = influx_server.start().await {
+                    tracing::error!("InfluxDB server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // Cassandra protocol (CQL native v4)
+    if args.cassandra_port > 0 || args.enable_all_protocols {
+        let cass_port = if args.enable_all_protocols && args.cassandra_port == 0 { 9042 } else { args.cassandra_port };
+        if cass_port > 0 {
+            tracing::info!("HarnessDB starting Cassandra server on port {} (may fail silently if port is in use)", cass_port);
+            let cass_config = CassandraServerConfig { port: cass_port };
+            let cass_server = CassandraServer::new(cass_config);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = cass_server.start().await {
+                    tracing::error!("Cassandra server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // Oracle protocol (TNS simulation)
+    if args.oracle_port > 0 || args.enable_all_protocols {
+        let ora_port = if args.enable_all_protocols && args.oracle_port == 0 { 1521 } else { args.oracle_port };
+        if ora_port > 0 {
+            tracing::info!("HarnessDB starting Oracle server on port {} (may fail silently if port is in use)", ora_port);
+            let ora_config = OracleServerConfig { port: ora_port };
+            let ora_server = OracleServer::new(ora_config);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = ora_server.start().await {
+                    tracing::error!("Oracle server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // TableStore protocol (HTTP REST)
+    if args.tablestore_port > 0 || args.enable_all_protocols {
+        let ts_port = if args.enable_all_protocols && args.tablestore_port == 0 { 8087 } else { args.tablestore_port };
+        if ts_port > 0 {
+            tracing::info!("HarnessDB starting TableStore server on port {} (may fail silently if port is in use)", ts_port);
+            let ts_config = TableStoreServerConfig { port: ts_port };
+            let ts_server = TableStoreServer::new(ts_config);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = ts_server.start().await {
+                    tracing::error!("TableStore server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // AnalyticDB MySQL protocol
+    if args.adb_mysql_port > 0 || args.enable_all_protocols {
+        let adb_port = if args.enable_all_protocols && args.adb_mysql_port == 0 { 8124 } else { args.adb_mysql_port };
+        if adb_port > 0 {
+            tracing::info!("HarnessDB starting AnalyticDB MySQL server on port {} (may fail silently if port is in use)", adb_port);
+            let adb_server = AdbMysqlServer::new(adb_port);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = adb_server.start().await {
+                    tracing::error!("AnalyticDB MySQL server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // Lindorm protocol (HBase-compatible)
+    if args.lindorm_port > 0 || args.enable_all_protocols {
+        let lin_port = if args.enable_all_protocols && args.lindorm_port == 0 { 7070 } else { args.lindorm_port };
+        if lin_port > 0 {
+            tracing::info!("HarnessDB starting Lindorm server on port {} (may fail silently if port is in use)", lin_port);
+            let lin_server = LindormServer::new(lin_port);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = lin_server.start().await {
+                    tracing::error!("Lindorm server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // Vector protocol (ANN search)
+    if args.vector_port > 0 || args.enable_all_protocols {
+        let vec_port = if args.enable_all_protocols && args.vector_port == 0 { 9032 } else { args.vector_port };
+        if vec_port > 0 {
+            tracing::info!("HarnessDB starting Vector server on port {} (may fail silently if port is in use)", vec_port);
+            let vec_server = VectorServer::new(vec_port);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = vec_server.start().await {
+                    tracing::error!("Vector server failed: {}", e);
+                }
+            }));
+        }
+    }
 
     // Initialize Prometheus server info metric
     crate::metrics::RORIS_SERVER_INFO.set(1.0);

@@ -2184,13 +2184,17 @@ dependencies = [
 name = "harness-server"
 version = "1.0.0"
 dependencies = [
+ "adb-mysql-protocol",
  "anyhow",
  "axum",
  "bytes",
+ "cassandra-protocol",
  "chrono",
  "clap",
+ "clickhouse-protocol",
  "common",
  "datafusion",
+ "elasticsearch-protocol",
  "fe-backup",
  "fe-catalog",
  "fe-common",
@@ -2199,10 +2203,14 @@ dependencies = [
  "fe-monitor",
  "fe-sql-parser",
  "fe-storage",
+ "influxdb-protocol",
  "itoa",
  "lazy_static",
+ "lindorm-protocol",
  "maxcompute-protocol",
+ "mongodb-protocol",
  "mysql-protocol",
+ "oracle-protocol",
  "parking_lot",
  "parquet",
  "pg-protocol",
@@ -2213,12 +2221,14 @@ dependencies = [
  "serde_json",
  "sql-translators",
  "sysinfo",
+ "tablestore-protocol",
  "tokio",
  "toml",
  "tower-http",
  "tracing",
  "tracing-subscriber",
  "types",
+ "vector-protocol",
 ]
 
 [[package]]

@@ -38,6 +38,16 @@ mysql-protocol = { workspace = true }
 maxcompute-protocol = { workspace = true }
 pg-protocol = { workspace = true }
 redis-protocol = { workspace = true }
+mongodb-protocol = { workspace = true }
+clickhouse-protocol = { workspace = true }
+elasticsearch-protocol = { workspace = true }
+influxdb-protocol = { workspace = true }
+tablestore-protocol = { workspace = true }
+oracle-protocol = { workspace = true }
+cassandra-protocol = { workspace = true }
+adb-mysql-protocol = { workspace = true }
+vector-protocol = { workspace = true }
+lindorm-protocol = { workspace = true }
 sql-translators = { workspace = true }
 common = { workspace = true }
 types = { workspace = true }
