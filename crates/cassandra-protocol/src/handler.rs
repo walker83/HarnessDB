@@ -186,7 +186,7 @@ impl DefaultCassandraHandler {
                 "local".to_string(),
                 "HarnessDB".to_string(),
                 "3.4.5".to_string(),
-                "HarnessDB-0.3.3".to_string(),
+                "HarnessDB-1.1.0".to_string(),
             ]];
             return build_rows_result(stream, columns, &rows);
         }

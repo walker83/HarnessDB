@@ -4,7 +4,7 @@
 
 ## Version
 
-- **Current**: 0.3.3
+- **Current**: 1.1.0
 - **Repository**: https://github.com/walker83/HarnessDB
 
 ## Build

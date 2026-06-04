@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-04
+
+### Features
+- **Spark JDBC 兼容性**: 支持 Apache Spark 3.5.x 通过 MySQL Connector/J 8.0.x 连接
+  - 新增 `SHOW COLLATION` 命令支持（AST + 解析器 + 执行器），返回 13 个 MySQL 兼容的 collation
+  - 新增 Connector/J 初始化所需的 `@@session` 变量：`auto_increment_increment`, `transaction_read_only`, `transaction_isolation`, `character_set_server`, `collation_database` 等
+  - 统一服务器版本号为 `8.0.33-HarnessDB`（原 `5.7.44-RovisDB` / `5.7.42` / `HarnessDB` 不一致）
+  - 添加 `CLIENT_CONNECT_ATTRS` 能力标志，支持 Connector/J 8.0 连接属性
+
 ## [0.3.3] - 2026-05-31
 
 ### Bug Fixes
@@ -51,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整中文文档翻译
 - 多数据库协议兼容性强调（MySQL、Hologres、MaxCompute）
 
+[1.1.0]: https://github.com/walker83/HarnessDB/compare/v1.0.0...v1.1.0
 [0.3.3]: https://github.com/walker83/HarnessDB/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/walker83/HarnessDB/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/walker83/HarnessDB/compare/v0.3.0...v0.3.1
