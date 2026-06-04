@@ -1,0 +1,8 @@
+{
+  "protocol": "elasticsearch",
+  "total": 1095,
+  "passed": 1095,
+  "failed": 0,
+  "elapsed_seconds": 0.39,
+  "failures": []
+}

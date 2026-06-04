@@ -155,6 +155,17 @@ impl AdbMysqlHandler {
                 self.storage.create_database(&name);
                 Self::ok_result()
             }
+            Statement::Truncate { table_names, .. } => {
+                for target in table_names {
+                    let name = target.name.to_string();
+                    if let Some(db) = self.storage.get_database(database) {
+                        if let Some(tbl) = db.get_table(&name) {
+                            tbl.truncate();
+                        }
+                    }
+                }
+                Self::ok_result()
+            }
             _ => {
                 debug!("Unhandled statement: {:?}", stmt);
                 QueryResult::ok()

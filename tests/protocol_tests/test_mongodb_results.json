@@ -1,0 +1,108 @@
+{
+  "protocol": "mongodb",
+  "total": 1006,
+  "passed": 955,
+  "failed": 51,
+  "failures": [
+    {
+      "test": "connection.host_info",
+      "error": "Unknown command: hostInfo, full error: {'ok': 0, 'errmsg': 'Unknown command: hostInfo'}",
+      "type": "OperationFailure"
+    },
+    {
+      "test": "find.find_nin",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_or",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_and",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_nor",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_not",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_gt_string",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_not_in",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_not_gt",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_or_range",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_and_multi",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "find.find_nested_logical",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "database.database_isolation",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "aggregation.agg_double_match",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "aggregation.agg_match_or",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "aggregation.agg_match_and",
+      "error": "",
+      "type": "AssertionError"
+    },
+    {
+      "test": "findAndModify.findAndModify_0",
+      "error": "Unknown command: findAndModify, full error: {'ok': 0, 'errmsg': 'Unknown command: findAndModify'}",
+      "type": "OperationFailure"
+    },
+    {
+      "test": "findAndModify.findAndModify_1",
+      "error": "Unknown command: findAndModify, full error: {'ok': 0, 'errmsg': 'Unknown command: findAndModify'}",
+      "type": "OperationFailure"
+    },
+    {
+      "test": "findAndModify.findAndModify_2",
+      "error": "Unknown command: findAndModify, full error: {'ok': 0, 'errmsg': 'Unknown command: findAndModify'}",
+      "type": "OperationFailure"
+    },
+    {
+      "test": "findAndModify.findAndModify_3",
+      "error": "Unknown command: findAndModify, full error: {'ok': 0, 'errmsg': 'Unknown command: findAndModify'}",
+      "type": "OperationFailure"
+    }
+  ]
+}

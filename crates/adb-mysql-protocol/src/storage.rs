@@ -118,6 +118,11 @@ impl AdbMysqlTable {
         self.rows.insert(row_id, values);
     }
 
+    /// Remove all rows from the table (TRUNCATE).
+    pub fn truncate(&self) {
+        self.rows.clear();
+    }
+
     pub fn select_all(&self) -> Vec<Vec<String>> {
         let mut ids: Vec<u64> = self.rows.iter().map(|r| *r.key()).collect();
         ids.sort();

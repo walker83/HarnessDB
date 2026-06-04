@@ -142,22 +142,24 @@ impl RespParser {
     }
 
     fn parse_array(buf: &mut BytesMut) -> Result<Option<RespValue>, RespError> {
-        // Save initial position
-        let start_len = buf.len();
+        // First, check if the complete array is available without consuming anything
+        match Self::measure_value(buf, 0) {
+            Some(total_size) if total_size <= buf.len() => {
+                // We have all the data, safe to parse
+            }
+            Some(_) => return Ok(None), // Incomplete
+            None => return Ok(None),    // Can't even measure yet
+        }
 
+        // Now parse for real (all data is guaranteed to be available)
         // Find the count line
-        let newline_pos = match Self::find_crlf(buf, 1) {
-            Some(pos) => pos,
-            None => return Ok(None), // Incomplete
-        };
+        let newline_pos = Self::find_crlf(buf, 1).unwrap();
 
-        // Parse count
         let count_str = std::str::from_utf8(&buf[1..newline_pos])
             .map_err(|_| RespError::InvalidData)?;
         let count: i64 = count_str.parse()
             .map_err(|_| RespError::InvalidInteger(count_str.to_string()))?;
 
-        // Null array
         if count < 0 {
             buf.advance(newline_pos + 2);
             return Ok(Some(RespValue::NullArray));
@@ -166,21 +168,95 @@ impl RespParser {
         let count = count as usize;
         buf.advance(newline_pos + 2);
 
-        // Parse each element
         let mut elements = Vec::with_capacity(count);
         for _ in 0..count {
             match Self::parse(buf)? {
                 Some(val) => elements.push(val),
                 None => {
-                    // Incomplete - restore buffer
-                    // This is tricky - we need to handle rollback
-                    // For now, return None and let caller retry
+                    // Should not happen since we verified completeness above
                     return Ok(None);
                 }
             }
         }
 
         Ok(Some(RespValue::Array(elements)))
+    }
+
+    /// Measure the total byte size of a RESP value starting at `offset` in the buffer.
+    /// Returns None if the data is incomplete or invalid.
+    /// Does NOT modify the buffer.
+    fn measure_value(buf: &[u8], offset: usize) -> Option<usize> {
+        if offset >= buf.len() {
+            return None;
+        }
+
+        match buf[offset] {
+            b'+' | b'-' | b':' => {
+                // Simple string, error, or integer - find CRLF
+                let start = offset + 1;
+                for i in start..buf.len().saturating_sub(1) {
+                    if buf[i] == b'\r' && buf[i + 1] == b'\n' {
+                        return Some(i + 2 - offset);
+                    }
+                }
+                None // Incomplete
+            }
+            b'$' => {
+                // Bulk string
+                let newline_pos = Self::find_crlf_in(buf, offset + 1)?;
+                let len_str = std::str::from_utf8(&buf[offset + 1..newline_pos]).ok()?;
+                let len: i64 = len_str.parse().ok()?;
+                if len < 0 {
+                    Some(newline_pos + 2 - offset) // $-1\r\n
+                } else {
+                    let total = newline_pos + 2 + (len as usize) + 2;
+                    if total <= buf.len() {
+                        Some(total - offset)
+                    } else {
+                        None
+                    }
+                }
+            }
+            b'*' => {
+                // Array
+                let newline_pos = Self::find_crlf_in(buf, offset + 1)?;
+                let count_str = std::str::from_utf8(&buf[offset + 1..newline_pos]).ok()?;
+                let count: i64 = count_str.parse().ok()?;
+                if count < 0 {
+                    Some(newline_pos + 2 - offset)
+                } else {
+                    let mut pos = newline_pos + 2;
+                    for _ in 0..count {
+                        let elem_size = Self::measure_value(buf, pos)?;
+                        pos += elem_size;
+                    }
+                    if pos <= buf.len() {
+                        Some(pos - offset)
+                    } else {
+                        None
+                    }
+                }
+            }
+            _ => {
+                // Inline command - find end of line
+                for i in offset..buf.len().saturating_sub(1) {
+                    if buf[i] == b'\r' && buf[i + 1] == b'\n' {
+                        return Some(i + 2 - offset);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Like find_crlf but works on a slice with an arbitrary start offset
+    fn find_crlf_in(buf: &[u8], start: usize) -> Option<usize> {
+        for i in start..buf.len().saturating_sub(1) {
+            if buf[i] == b'\r' && buf[i + 1] == b'\n' {
+                return Some(i);
+            }
+        }
+        None
     }
 
     fn parse_inline(buf: &mut BytesMut) -> Result<Option<RespValue>, RespError> {
