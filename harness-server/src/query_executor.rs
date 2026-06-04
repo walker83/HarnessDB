@@ -209,6 +209,7 @@ impl HarnessQueryHandler {
             Statement::ShowStatus { global, pattern } => self.show_status(*global, pattern.clone()),
             Statement::ShowEngines => self.show_engines(),
             Statement::ShowCharset => self.show_charset(),
+            Statement::ShowCollation { pattern } => self.show_collation(pattern.clone()),
             Statement::KillQuery(id) => self.kill_query(*id),
             Statement::KillConnection(id) => self.kill_connection(*id),
             Statement::AdminCheckTable(table) => self.admin_check_table(conn_id, table.clone()),
@@ -916,6 +917,80 @@ impl HarnessQueryHandler {
                 },
                 ColumnDef {
                     name: "Maxlen".to_string(),
+                    col_type: ColumnType::String,
+                },
+            ],
+            rows,
+        ))
+    }
+
+    pub(crate) fn show_collation(
+        &self,
+        pattern: Option<String>,
+    ) -> Result<QueryResult, String> {
+        // MySQL-compatible collation list
+        // Columns: Collation, Charset, Id, Default, Compiled, Sortlen
+        let all_rows: Vec<(&str, &str, &str, &str, &str, &str)> = vec![
+            ("utf8mb4_general_ci", "utf8mb4", "45", "Yes", "Yes", "1"),
+            ("utf8mb4_unicode_ci", "utf8mb4", "224", "", "Yes", "8"),
+            ("utf8mb4_bin", "utf8mb4", "46", "", "Yes", "1"),
+            ("utf8mb4_0900_ai_ci", "utf8mb4", "255", "", "Yes", "0"),
+            ("utf8_general_ci", "utf8", "33", "Yes", "Yes", "1"),
+            ("utf8_unicode_ci", "utf8", "202", "", "Yes", "8"),
+            ("utf8_bin", "utf8", "83", "", "Yes", "1"),
+            ("latin1_swedish_ci", "latin1", "8", "Yes", "Yes", "1"),
+            ("latin1_general_ci", "latin1", "49", "", "Yes", "1"),
+            ("latin1_bin", "latin1", "47", "", "Yes", "1"),
+            ("binary", "binary", "63", "Yes", "Yes", "1"),
+            ("gbk_chinese_ci", "gbk", "28", "Yes", "Yes", "1"),
+            ("gbk_bin", "gbk", "87", "", "Yes", "1"),
+        ];
+
+        let rows: Vec<Vec<Option<String>>> = all_rows
+            .into_iter()
+            .filter(|(name, _, _, _, _, _)| {
+                if let Some(ref pat) = pattern {
+                    like_match(pat, name)
+                } else {
+                    true
+                }
+            })
+            .map(|(collation, charset, id, default, compiled, sortlen)| {
+                vec![
+                    Some(collation.to_string()),
+                    Some(charset.to_string()),
+                    Some(id.to_string()),
+                    Some(default.to_string()),
+                    Some(compiled.to_string()),
+                    Some(sortlen.to_string()),
+                ]
+            })
+            .collect();
+
+        Ok(QueryResult::with_rows(
+            vec![
+                ColumnDef {
+                    name: "Collation".to_string(),
+                    col_type: ColumnType::String,
+                },
+                ColumnDef {
+                    name: "Charset".to_string(),
+                    col_type: ColumnType::String,
+                },
+                ColumnDef {
+                    name: "Id".to_string(),
+                    col_type: ColumnType::String,
+                },
+                ColumnDef {
+                    name: "Default".to_string(),
+                    col_type: ColumnType::String,
+                },
+                ColumnDef {
+                    name: "Compiled".to_string(),
+                    col_type: ColumnType::String,
+                },
+                ColumnDef {
+                    name: "Sortlen".to_string(),
                     col_type: ColumnType::String,
                 },
             ],

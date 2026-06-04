@@ -515,10 +515,12 @@ impl Connection {
 
                 let (value, col_type) = match clean_var {
                     "max_allowed_packet" => (4194304.to_string(), ColumnType::Int), // 4MB default
-                    "version" | "version_comment" => ("HarnessDB".to_string(), ColumnType::String),
+                    "version" => ("8.0.33".to_string(), ColumnType::String),
+                    "version_comment" => ("HarnessDB".to_string(), ColumnType::String),
                     "character_set_client"
                     | "character_set_connection"
-                    | "character_set_results" => ("utf8mb4".to_string(), ColumnType::String),
+                    | "character_set_results"
+                    | "character_set_server" => ("utf8mb4".to_string(), ColumnType::String),
                     "collation_connection" | "collation_server" => {
                         ("utf8mb4_general_ci".to_string(), ColumnType::String)
                     }
@@ -536,6 +538,22 @@ impl Connection {
                     "protocol_version" => ("10".to_string(), ColumnType::Int),
                     "tmpdir" => ("/tmp".to_string(), ColumnType::String),
                     "datadir" => ("".to_string(), ColumnType::String),
+                    // Variables required by MySQL Connector/J 8.0.x (Spark JDBC compatibility)
+                    "auto_increment_increment" => ("1".to_string(), ColumnType::Int),
+                    "auto_increment_offset" => ("1".to_string(), ColumnType::Int),
+                    "tx_read_only" | "transaction_read_only" => {
+                        ("0".to_string(), ColumnType::Int)
+                    }
+                    "tx_isolation" | "transaction_isolation" => {
+                        ("REPEATABLE-READ".to_string(), ColumnType::String)
+                    }
+                    "version_compile_os" => ("Linux".to_string(), ColumnType::String),
+                    "version_compile_machine" => ("x86_64".to_string(), ColumnType::String),
+                    "init_connect" => ("".to_string(), ColumnType::String),
+                    "character_set_database" => ("utf8mb4".to_string(), ColumnType::String),
+                    "collation_database" => {
+                        ("utf8mb4_general_ci".to_string(), ColumnType::String)
+                    }
                     _ => ("".to_string(), ColumnType::String),
                 };
 

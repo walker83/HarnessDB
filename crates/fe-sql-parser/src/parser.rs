@@ -178,6 +178,9 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     if trimmed.starts_with("SHOW CHARSET") || trimmed.starts_with("SHOW CHARACTER SET") {
         return Ok(vec![Statement::ShowCharset]);
     }
+    if trimmed.starts_with("SHOW COLLATION") {
+        return parse_show_collation(sql);
+    }
     if trimmed.starts_with("SHOW INDEX") || trimmed.starts_with("SHOW KEYS") {
         return parse_show_index(sql);
     }
@@ -1081,6 +1084,26 @@ fn parse_show_status(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
 
     Ok(vec![Statement::ShowStatus { global, pattern }])
+}
+
+fn parse_show_collation(sql: &str) -> Result<Vec<Statement>, ParseError> {
+    let after_show = strip_prefix_ci(sql, "SHOW COLLATION")
+        .ok_or_else(|| ParseError::SyntaxError {
+            position: 0,
+            message: "Expected SHOW COLLATION".to_string(),
+        })?
+        .trim();
+
+    let pattern = if after_show.is_empty() {
+        None
+    } else if strip_prefix_ci(after_show, "LIKE").is_some() {
+        let rest = strip_prefix_ci(after_show, "LIKE").unwrap().trim();
+        Some(rest.trim_matches('\'').to_string())
+    } else {
+        Some(after_show.to_string())
+    };
+
+    Ok(vec![Statement::ShowCollation { pattern }])
 }
 
 fn parse_show_index(sql: &str) -> Result<Vec<Statement>, ParseError> {

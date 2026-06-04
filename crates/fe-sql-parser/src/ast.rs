@@ -135,6 +135,9 @@ pub enum Statement {
     },
     ShowEngines,
     ShowCharset,
+    ShowCollation {
+        pattern: Option<String>,
+    },
     KillQuery(u64),
     KillConnection(u64),
     AdminCheckTable(String),

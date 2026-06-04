@@ -39,7 +39,7 @@ pub struct VarDef {
 pub static SYSTEM_VARIABLE_DEFS: &[VarDef] = &[
     VarDef {
         name: "version",
-        default_value: "5.7.42",
+        default_value: "8.0.33",
         scope: VarScope::Global,
         kind: VarKind::String,
         description: "Server version string",
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn test_global_variables() {
         let globals = GlobalVariables::new();
-        assert_eq!(globals.get("version"), Some("5.7.42".to_string()));
+        assert_eq!(globals.get("version"), Some("8.0.33".to_string()));
         assert_eq!(globals.get("max_connections"), Some("100".to_string()));
 
         globals.set("max_connections", "200").unwrap();
@@ -585,7 +585,7 @@ mod tests {
         let session = SessionVariables::new(globals.clone());
 
         // Session should see global values
-        assert_eq!(session.get("version"), Some("5.7.42".to_string()));
+        assert_eq!(session.get("version"), Some("8.0.33".to_string()));
 
         // Session can override session-scoped vars
         session.set("sql_mode", "STRICT_TRANS_TABLES").unwrap();
@@ -650,9 +650,9 @@ mod tests {
         // Get from global
         assert_eq!(
             mgr.get("version", Some(&session)),
-            Some("5.7.42".to_string())
+            Some("8.0.33".to_string())
         );
-        assert_eq!(mgr.get("version", None), Some("5.7.42".to_string()));
+        assert_eq!(mgr.get("version", None), Some("8.0.33".to_string()));
 
         // Set global
         mgr.set_global("max_connections", "500").unwrap();

@@ -22,7 +22,8 @@ pub const DEFAULT_CAPABILITIES: u32 = CapabilityFlags::PROTOCOL_41
     | CapabilityFlags::MULTI_RESULTS
     | CapabilityFlags::PS_MULTI_RESULTS
     | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA
-    | CapabilityFlags::DEPRECATE_EOF;
+    | CapabilityFlags::DEPRECATE_EOF
+    | CapabilityFlags::CONNECT_ATTRS;
 
 /// Server status flags sent in OK packets.
 pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
@@ -249,7 +250,7 @@ pub struct HandshakeV10 {
 impl HandshakeV10 {
     pub fn new(connection_id: u32, auth_salt: [u8; 20]) -> Self {
         Self {
-            server_version: "5.7.44-RovisDB".to_string(),
+            server_version: "8.0.33-HarnessDB".to_string(),
             connection_id,
             auth_salt,
             capability_flags: DEFAULT_CAPABILITIES,
