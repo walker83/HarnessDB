@@ -1,5 +1,6 @@
-//! Alibaba Cloud AnalyticDB for MySQL protocol implementation
+//! AnalyticDB MySQL protocol implementation
 //! Provides MPP (Massively Parallel Processing) analytical query capabilities
+//! using the standard MySQL wire protocol for compatibility with mysql CLI clients.
 
 pub mod server;
 pub mod handler;

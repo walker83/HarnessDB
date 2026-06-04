@@ -13,3 +13,5 @@ serde_json.workspace = true
 thiserror.workspace = true
 dashmap.workspace = true
 anyhow.workspace = true
+mysql-protocol.workspace = true
+sqlparser.workspace = true

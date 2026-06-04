@@ -1,11 +1,12 @@
-//! AnalyticDB MySQL TCP server (MySQL-compatible with MPP extensions)
+//! AnalyticDB MySQL TCP server — uses mysql-protocol for proper MySQL wire protocol
+//! handshake, authentication, and packet framing.
 
 use crate::handler::AdbMysqlHandler;
 use crate::storage::AdbMysqlStorage;
+use mysql_protocol::server::{MysqlServer, ServerConfig};
+use mysql_protocol::auth::default_credentials;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
-use tracing::{info, error};
+use tracing::info;
 
 pub struct AdbMysqlServer {
     port: u16,
@@ -21,56 +22,24 @@ impl AdbMysqlServer {
     }
 
     pub async fn start(&self) -> anyhow::Result<()> {
-        let addr = format!("0.0.0.0:{}", self.port);
-        let listener = TcpListener::bind(&addr).await?;
-        info!("AnalyticDB MySQL server listening on {}", addr);
+        // Ensure "default" database exists
+        self.storage.create_database("default");
 
-        loop {
-            let (stream, addr) = listener.accept().await?;
-            info!("AnalyticDB MySQL client connected: {}", addr);
+        let handler = Arc::new(AdbMysqlHandler::new(self.storage.clone()));
 
-            let storage = self.storage.clone();
-            tokio::spawn(async move {
-                if let Err(e) = Self::handle_connection(stream, storage).await {
-                    error!("Connection error: {}", e);
-                }
-            });
-        }
-    }
+        let config = ServerConfig {
+            bind_addr: "0.0.0.0".to_string(),
+            port: self.port,
+            default_auth_plugin: mysql_protocol::AuthPluginType::NativePassword,
+            auth_timeout_secs: 30,
+            max_connections: 100,
+            credentials: default_credentials(),
+        };
 
-    async fn handle_connection(stream: TcpStream, storage: Arc<AdbMysqlStorage>) -> anyhow::Result<()> {
-        let (reader, mut writer) = stream.into_split();
-        let mut reader = BufReader::new(reader);
-        let handler = AdbMysqlHandler::new(storage);
-        let mut current_db = "default".to_string();
+        info!("AnalyticDB MySQL server (wire protocol) listening on 0.0.0.0:{}", self.port);
 
-        // Send greeting
-        writer.write_all(b"Welcome to AnalyticDB for MySQL\n").await?;
-        writer.flush().await?;
-
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let bytes_read = reader.read_line(&mut line).await?;
-            if bytes_read == 0 {
-                break;
-            }
-
-            let query = line.trim();
-            if query.is_empty() {
-                continue;
-            }
-
-            if query.to_uppercase().starts_with("USE ") {
-                current_db = query[4..].trim().trim_end_matches(';').to_string();
-                writer.write_all(b"OK\n").await?;
-            } else {
-                let result = handler.handle_query(&current_db, query);
-                writer.write_all(result.as_bytes()).await?;
-            }
-            writer.flush().await?;
-        }
-
+        let server = MysqlServer::new(config, handler);
+        server.run().await?;
         Ok(())
     }
 }

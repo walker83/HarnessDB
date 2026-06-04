@@ -376,7 +376,15 @@ impl Connection {
                     debug!("COM_INIT_DB: {}", db);
                     self.database = Some(db.clone());
                     self.handler.set_database(self.conn_id, &db);
-                    self.send_ok(0, 0).await?;
+                    // Send a result set with "OK" status so clients see visible confirmation
+                    let result = QueryResult::with_rows(
+                        vec![ColumnDef {
+                            name: "status".to_string(),
+                            col_type: ColumnType::String,
+                        }],
+                        vec![vec![Some("OK".to_string())]],
+                    );
+                    self.send_result_set(result).await?;
                 }
                 command::COM_FIELD_LIST => {
                     debug!("COM_FIELD_LIST (returning empty)");
