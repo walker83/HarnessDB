@@ -1,0 +1,12 @@
+[package]
+name = "sybase-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tds-protocol = { path = "../tds-protocol" }
+mysql-protocol = { path = "../mysql-protocol" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"

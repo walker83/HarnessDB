@@ -483,7 +483,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "be-rocks"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "rocksdb",
  "serde",
@@ -854,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bytes",
  "serde",
@@ -1807,7 +1807,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fe-backup"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -1822,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "fe-catalog"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "be-rocks",
@@ -1842,7 +1842,7 @@ dependencies = [
 
 [[package]]
 name = "fe-common"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "common",
  "serde",
@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "fe-config"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "fe-datafusion"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -1884,7 +1884,7 @@ dependencies = [
 
 [[package]]
 name = "fe-monitor"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "fe-sql-parser"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "common",
  "datafusion",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "fe-storage"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arrow",
  "arrow-arith",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "harness-server"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "adb-mysql-protocol",
  "anyhow",
@@ -2222,13 +2222,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sql-translators",
+ "sybase-protocol",
  "sysinfo",
  "tablestore-protocol",
+ "tds-protocol",
  "tokio",
  "toml",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "tsql-executor",
+ "tsql-parser",
  "types",
  "vector-protocol",
 ]
@@ -2591,7 +2595,7 @@ checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
 name = "integration-tests"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -2900,7 +2904,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "maxcompute-protocol"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3039,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "mysql-protocol"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3448,7 +3452,7 @@ dependencies = [
 
 [[package]]
 name = "pg-protocol"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4246,7 +4250,7 @@ dependencies = [
 
 [[package]]
 name = "sql-translators"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "regex",
  "thiserror 2.0.18",
@@ -4314,6 +4318,16 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sybase-protocol"
+version = "1.2.0"
+dependencies = [
+ "mysql-protocol",
+ "tds-protocol",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "syn"
@@ -4403,6 +4417,16 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
+name = "tds-protocol"
+version = "1.2.0"
+dependencies = [
+ "bytes",
+ "mysql-protocol",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "tempfile"
@@ -4737,7 +4761,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tpch-bench"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4831,8 +4855,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "tsql-executor"
+version = "1.2.0"
+dependencies = [
+ "arrow",
+ "chrono",
+ "common",
+ "dashmap 6.1.0",
+ "datafusion",
+ "fe-catalog",
+ "fe-datafusion",
+ "fe-storage",
+ "mysql-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tsql-parser",
+ "types",
+ "uuid",
+]
+
+[[package]]
 name = "tsql-parser"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "common",
  "serde",
@@ -4854,7 +4900,7 @@ checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
 
 [[package]]
 name = "types"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bytes",
  "criterion",

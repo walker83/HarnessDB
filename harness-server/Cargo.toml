@@ -49,6 +49,10 @@ adb-mysql-protocol = { workspace = true }
 vector-protocol = { workspace = true }
 lindorm-protocol = { workspace = true }
 sql-translators = { workspace = true }
+tsql-executor = { path = "../crates/tsql-executor" }
+sybase-protocol = { path = "../crates/sybase-protocol" }
+tds-protocol = { path = "../crates/tds-protocol" }
+tsql-parser = { path = "../crates/tsql-parser" }
 common = { workspace = true }
 types = { workspace = true }
 datafusion = { workspace = true }

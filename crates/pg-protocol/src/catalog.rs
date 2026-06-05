@@ -1441,6 +1441,16 @@ fn map_harness_type_to_pg_oid(data_type: &types::DataType) -> i32 {
         DataType::Map(_, _) => 25,        // text
         DataType::Struct(_) => 25,        // text
         DataType::Float32Vector(_) => 25, // text
+        DataType::UInt8 => 21,            // int2 (unsigned mapped to wider signed)
+        DataType::UInt16 => 23,           // int4
+        DataType::UInt32 => 20,           // int8
+        DataType::UInt64 => 1700,         // numeric
+        DataType::Time => 1083,           // time
+        DataType::DateTimeOffset => 1186, // interval (approximation)
+        DataType::FixedSizeBinary(_) => 17, // bytea
+        DataType::Money => 1700,          // numeric
+        DataType::SmallMoney => 1700,     // numeric
+        DataType::UniqueIdentifier => 2950, // uuid
     }
 }
 
@@ -1470,6 +1480,16 @@ fn map_harness_type_to_len(data_type: &types::DataType) -> i16 {
         DataType::Map(_, _) => -1,
         DataType::Struct(_) => -1,
         DataType::Float32Vector(_) => -1,
+        DataType::UInt8 => 2,
+        DataType::UInt16 => 4,
+        DataType::UInt32 => 8,
+        DataType::UInt64 => -1,
+        DataType::Time => 8,
+        DataType::DateTimeOffset => -1,
+        DataType::FixedSizeBinary(_) => -1,
+        DataType::Money => -1,
+        DataType::SmallMoney => -1,
+        DataType::UniqueIdentifier => 16,
     }
 }
 
@@ -1498,6 +1518,16 @@ fn map_harness_type_to_sql_type(data_type: &types::DataType) -> String {
         DataType::Map(_, _) => "text".to_string(),
         DataType::Struct(_) => "text".to_string(),
         DataType::Float32Vector(dim) => format!("float32_vector({})", dim),
+        DataType::UInt8 => "smallint".to_string(),
+        DataType::UInt16 => "integer".to_string(),
+        DataType::UInt32 => "bigint".to_string(),
+        DataType::UInt64 => "numeric".to_string(),
+        DataType::Time => "time".to_string(),
+        DataType::DateTimeOffset => "timestamp with time zone".to_string(),
+        DataType::FixedSizeBinary(n) => format!("bytea({})", n),
+        DataType::Money => "numeric(19,4)".to_string(),
+        DataType::SmallMoney => "numeric(10,4)".to_string(),
+        DataType::UniqueIdentifier => "uuid".to_string(),
     }
 }
 

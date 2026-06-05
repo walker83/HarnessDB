@@ -35,6 +35,16 @@ fn datatype_to_mysql_type(dt: &HarnessDataType) -> String {
         ),
         HarnessDataType::Struct(_) => "STRUCT".to_string(),
         HarnessDataType::Float32Vector(dim) => format!("FLOAT32_VECTOR({})", dim),
+        HarnessDataType::UInt8 => "TINYINT UNSIGNED".to_string(),
+        HarnessDataType::UInt16 => "SMALLINT UNSIGNED".to_string(),
+        HarnessDataType::UInt32 => "INT UNSIGNED".to_string(),
+        HarnessDataType::UInt64 => "BIGINT UNSIGNED".to_string(),
+        HarnessDataType::Time => "TIME".to_string(),
+        HarnessDataType::DateTimeOffset => "DATETIMEOFFSET".to_string(),
+        HarnessDataType::FixedSizeBinary(n) => format!("BINARY({})", n),
+        HarnessDataType::Money => "DECIMAL(19,4)".to_string(),
+        HarnessDataType::SmallMoney => "DECIMAL(10,4)".to_string(),
+        HarnessDataType::UniqueIdentifier => "CHAR(36)".to_string(),
     }
 }
 

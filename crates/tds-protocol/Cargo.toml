@@ -1,0 +1,12 @@
+[package]
+name = "tds-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mysql-protocol = { path = "../mysql-protocol" }
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+tracing = "0.1"

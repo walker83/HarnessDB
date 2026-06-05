@@ -42,6 +42,8 @@ use cassandra_protocol::{CassandraServer, CassandraServerConfig};
 use adb_mysql_protocol::AdbMysqlServer;
 use lindorm_protocol::LindormServer;
 use vector_protocol::VectorServer;
+use sybase_protocol::{SybaseServer, SybaseServerConfig};
+use tsql_executor::TsqlQueryHandler;
 
 use connection_tracker::ConnectionTracker;
 use handler_struct::HarnessQueryHandler;
@@ -105,6 +107,9 @@ struct Args {
 
     #[arg(long, default_value = "9032")]
     vector_port: u16,
+
+    #[arg(long, default_value = "5000")]
+    sybase_tds_port: u16,
 }
 
 impl QueryHandler for HarnessQueryHandler {
@@ -692,6 +697,32 @@ async fn main() -> Result<()> {
             handles.push(tokio::spawn(async move {
                 if let Err(e) = vec_server.start().await {
                     tracing::error!("Vector server failed: {}", e);
+                }
+            }));
+        }
+    }
+
+    // Start SAP ASE / Sybase TDS protocol server
+    if args.sybase_tds_port > 0 || args.enable_all_protocols {
+        let sybase_port = if args.enable_all_protocols && args.sybase_tds_port == 0 { 5000 } else { args.sybase_tds_port };
+        if sybase_port > 0 {
+            tracing::info!("HarnessDB starting SAP ASE (Sybase) TDS server on port {} (may fail silently if port is in use)", sybase_port);
+            let tsql_storage = Arc::new(
+                fe_storage::ParquetStorage::open(&config.storage.data_dir)
+                    .expect("Failed to open ParquetStorage for TSQL handler")
+            );
+            let tsql_handler = Arc::new(TsqlQueryHandler::new(
+                catalog.clone(),
+                tsql_storage,
+            ));
+            let sybase_config = SybaseServerConfig {
+                port: sybase_port,
+                ..Default::default()
+            };
+            let sybase_server = SybaseServer::new(sybase_config, tsql_handler);
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = sybase_server.run().await {
+                    tracing::error!("SAP ASE TDS server failed: {}", e);
                 }
             }));
         }

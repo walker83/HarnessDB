@@ -4,7 +4,7 @@
 
 ## Version
 
-- **Current**: 1.1.0
+- **Current**: 1.2.0
 - **Repository**: https://github.com/walker83/HarnessDB
 
 ## Build
@@ -60,6 +60,12 @@ HarnessDB is a single-node OLAP database using DataFusion as the query engine wi
 - **types** - DataType, Field, Schema, Vector, Bitmap, Block (columnar memory layout)
 - **common** - Error handling (DharnessError), configuration
 
+### T-SQL / SAP ASE Support
+- **tsql-parser** - Hand-rolled T-SQL recursive descent parser (SAP ASE 16 compatible)
+- **tsql-executor** - T-SQL stored procedure interpreter (control flow, cursors, variables, transactions)
+- **tds-protocol** - TDS 5.0 wire protocol server (Tabular Data Stream)
+- **sybase-protocol** - SAP ASE protocol facade (wraps tds-protocol)
+
 ### Query Flow
 1. MySQL protocol receives SQL
 2. Parser generates AST
@@ -78,4 +84,4 @@ HarnessDB is a single-node OLAP database using DataFusion as the query engine wi
 - sqlparser 0.53, Tokio 1.x
 - RocksDB 0.23
 
-### Crate Count: 11
+### Crate Count: 30
