@@ -5,6 +5,7 @@ pub mod external;
 pub mod index;
 pub mod materialized_view;
 pub mod partition;
+pub mod procedure;
 pub mod replica;
 pub mod stats;
 pub mod table;
@@ -18,5 +19,6 @@ pub use external::{
 };
 pub use index::{IndexDefinition, IndexManager, IndexType};
 pub use materialized_view::{MaterializedView, MaterializedViewColumn, RefreshStrategy};
+pub use procedure::StoredProcedure;
 pub use table::{Table, UniqueKeyDef};
 

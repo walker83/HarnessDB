@@ -1,0 +1,24 @@
+[package]
+name = "tsql-executor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tsql-parser = { path = "../tsql-parser" }
+types = { path = "../types" }
+common = { path = "../common" }
+fe-catalog = { path = "../fe-catalog" }
+fe-storage = { path = "../fe-storage" }
+fe-datafusion = { path = "../fe-datafusion" }
+mysql-protocol = { path = "../mysql-protocol" }
+datafusion = "48"
+arrow = { version = "55", features = ["prettyprint"] }
+tokio = { version = "1", features = ["full"] }
+dashmap = "6"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }

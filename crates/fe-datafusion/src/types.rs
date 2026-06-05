@@ -11,6 +11,10 @@ pub fn to_arrow_data_type(dt: &HarnessDataType) -> arrow_schema::DataType {
         HarnessDataType::Int64 => arrow_schema::DataType::Int64,
         // Int128 stored as Decimal128(38, 0) for wide compatibility
         HarnessDataType::Int128 => arrow_schema::DataType::Decimal128(38, 0),
+        HarnessDataType::UInt8 => arrow_schema::DataType::UInt8,
+        HarnessDataType::UInt16 => arrow_schema::DataType::UInt16,
+        HarnessDataType::UInt32 => arrow_schema::DataType::UInt32,
+        HarnessDataType::UInt64 => arrow_schema::DataType::UInt64,
         HarnessDataType::Float32 => arrow_schema::DataType::Float32,
         HarnessDataType::Float64 => arrow_schema::DataType::Float64,
         HarnessDataType::Decimal(d) => {
@@ -33,12 +37,22 @@ pub fn to_arrow_data_type(dt: &HarnessDataType) -> arrow_schema::DataType {
         HarnessDataType::DateTime => {
             arrow_schema::DataType::Timestamp(arrow_schema::TimeUnit::Second, None)
         }
+        HarnessDataType::Time => arrow_schema::DataType::Time64(arrow_schema::TimeUnit::Nanosecond),
+        HarnessDataType::DateTimeOffset => {
+            arrow_schema::DataType::Timestamp(arrow_schema::TimeUnit::Second, Some("+00:00".into()))
+        }
         HarnessDataType::String | HarnessDataType::Varchar(_) | HarnessDataType::Char(_) => {
             arrow_schema::DataType::Utf8
         }
         HarnessDataType::Binary => arrow_schema::DataType::Binary,
+        HarnessDataType::FixedSizeBinary(n) => arrow_schema::DataType::FixedSizeBinary(*n as i32),
         // JSON stored as UTF-8 string
         HarnessDataType::Json => arrow_schema::DataType::Utf8,
+        // T-SQL MONEY / SMALLMONEY stored as Decimal128
+        HarnessDataType::Money => arrow_schema::DataType::Decimal128(19, 4),
+        HarnessDataType::SmallMoney => arrow_schema::DataType::Decimal128(10, 4),
+        // T-SQL UNIQUEIDENTIFIER stored as FixedSizeBinary(16)
+        HarnessDataType::UniqueIdentifier => arrow_schema::DataType::FixedSizeBinary(16),
         HarnessDataType::Array(inner) => arrow_schema::DataType::List(Arc::new(
             arrow_schema::Field::new("item", to_arrow_data_type(inner), true),
         )),

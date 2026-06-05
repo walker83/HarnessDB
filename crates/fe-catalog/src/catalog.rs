@@ -7,6 +7,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::database::Database;
 use crate::materialized_view::MaterializedView;
+use crate::procedure::StoredProcedure;
 use crate::table::Table;
 use common::{CatalogError, DharnessError, Result};
 
@@ -80,6 +81,18 @@ pub trait MetaBackend: Send + Sync {
     /// List all materialized views in a database
     fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>>;
 
+    /// Store a stored procedure
+    fn put_procedure(&self, db_name: &str, name: &str, proc: &StoredProcedure) -> Result<()>;
+
+    /// Get a stored procedure
+    fn get_procedure(&self, db_name: &str, name: &str) -> Result<Option<StoredProcedure>>;
+
+    /// Delete a stored procedure
+    fn delete_procedure(&self, db_name: &str, name: &str) -> Result<()>;
+
+    /// List all stored procedures in a database
+    fn list_procedures(&self, db_name: &str) -> Result<Vec<StoredProcedure>>;
+
     /// Flush data to persistent storage
     fn flush(&self) -> Result<()>;
 
@@ -93,6 +106,7 @@ pub struct JsonMetaBackend {
     catalog_path: String,
     databases: DashMap<String, Database>,
     materialized_views: DashMap<String, MaterializedView>,
+    procedures: DashMap<String, StoredProcedure>,
     next_id: AtomicU64,
 }
 
@@ -102,6 +116,7 @@ impl JsonMetaBackend {
             catalog_path: catalog_path.into(),
             databases: DashMap::new(),
             materialized_views: DashMap::new(),
+            procedures: DashMap::new(),
             next_id: AtomicU64::new(1),
         }
     }
@@ -209,6 +224,33 @@ impl MetaBackend for JsonMetaBackend {
             .collect())
     }
 
+    fn put_procedure(&self, db_name: &str, name: &str, proc: &StoredProcedure) -> Result<()> {
+        let key = format!("{}.{}", db_name, name);
+        self.procedures.insert(key, proc.clone());
+        Ok(())
+    }
+
+    fn get_procedure(&self, db_name: &str, name: &str) -> Result<Option<StoredProcedure>> {
+        let key = format!("{}.{}", db_name, name);
+        Ok(self.procedures.get(&key).map(|r| r.value().clone()))
+    }
+
+    fn delete_procedure(&self, db_name: &str, name: &str) -> Result<()> {
+        let key = format!("{}.{}", db_name, name);
+        self.procedures.remove(&key);
+        Ok(())
+    }
+
+    fn list_procedures(&self, db_name: &str) -> Result<Vec<StoredProcedure>> {
+        let prefix = format!("{}.", db_name);
+        Ok(self
+            .procedures
+            .iter()
+            .filter(|r| r.key().starts_with(&prefix))
+            .map(|r| r.value().clone())
+            .collect())
+    }
+
     fn flush(&self) -> Result<()> {
         Ok(())
     }
@@ -229,6 +271,9 @@ impl MetaBackend for JsonMetaBackend {
         for (key, value) in state.materialized_views {
             self.materialized_views.insert(key, value);
         }
+        for (key, value) in state.procedures {
+            self.procedures.insert(key, value);
+        }
         self.next_id.store(state.next_id, Ordering::SeqCst);
         Ok(())
     }
@@ -247,6 +292,11 @@ impl JsonMetaBackend {
                 .collect(),
             materialized_views: self
                 .materialized_views
+                .iter()
+                .map(|r| (r.key().clone(), r.value().clone()))
+                .collect(),
+            procedures: self
+                .procedures
                 .iter()
                 .map(|r| (r.key().clone(), r.value().clone()))
                 .collect(),
@@ -276,6 +326,9 @@ impl JsonMetaBackend {
         }
         for (key, value) in state.materialized_views {
             self.materialized_views.insert(key, value);
+        }
+        for (key, value) in state.procedures {
+            self.procedures.insert(key, value);
         }
         self.next_id.store(state.next_id, Ordering::SeqCst);
         Ok(())
@@ -434,6 +487,59 @@ impl MetaBackend for RocksMetaBackend {
         Ok(mvs)
     }
 
+    fn put_procedure(
+        &self,
+        db_name: &str,
+        name: &str,
+        proc: &StoredProcedure,
+    ) -> Result<()> {
+        let key = format!("proc:{}.{}", db_name, name);
+        let value = serde_json::to_vec(proc)
+            .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
+        self.catalog_store
+            .put_raw(&key, &value)
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn get_procedure(&self, db_name: &str, name: &str) -> Result<Option<StoredProcedure>> {
+        let key = format!("proc:{}.{}", db_name, name);
+        let data = self
+            .catalog_store
+            .get_raw(&key)
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+        data.map(|d| serde_json::from_slice(&d))
+            .transpose()
+            .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
+    }
+
+    fn delete_procedure(&self, db_name: &str, name: &str) -> Result<()> {
+        let key = format!("proc:{}.{}", db_name, name);
+        self.catalog_store
+            .delete_raw(&key)
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+    }
+
+    fn list_procedures(&self, db_name: &str) -> Result<Vec<StoredProcedure>> {
+        let prefix = format!("proc:{}.", db_name);
+        let keys = self
+            .catalog_store
+            .list_keys_with_prefix_str(&prefix)
+            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+        let mut procs = Vec::new();
+        for key in keys {
+            if let Some(data) = self
+                .catalog_store
+                .get_raw(&key)
+                .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?
+            {
+                if let Ok(proc) = serde_json::from_slice::<StoredProcedure>(&data) {
+                    procs.push(proc);
+                }
+            }
+        }
+        Ok(procs)
+    }
+
     fn flush(&self) -> Result<()> {
         self.catalog_store
             .flush()
@@ -563,6 +669,39 @@ impl MetaBackend for DualWriteBackend {
         self.primary.list_materialized_views(db_name)
     }
 
+    fn put_procedure(
+        &self,
+        db_name: &str,
+        name: &str,
+        proc: &StoredProcedure,
+    ) -> Result<()> {
+        self.primary.put_procedure(db_name, name, proc)?;
+        if let Err(e) = self.secondary.put_procedure(db_name, name, proc) {
+            tracing::warn!(
+                "dual-write: secondary put_procedure({db_name}.{name}) failed: {e}"
+            );
+        }
+        Ok(())
+    }
+
+    fn get_procedure(&self, db_name: &str, name: &str) -> Result<Option<StoredProcedure>> {
+        self.primary.get_procedure(db_name, name)
+    }
+
+    fn delete_procedure(&self, db_name: &str, name: &str) -> Result<()> {
+        self.primary.delete_procedure(db_name, name)?;
+        if let Err(e) = self.secondary.delete_procedure(db_name, name) {
+            tracing::warn!(
+                "dual-write: secondary delete_procedure({db_name}.{name}) failed: {e}"
+            );
+        }
+        Ok(())
+    }
+
+    fn list_procedures(&self, db_name: &str) -> Result<Vec<StoredProcedure>> {
+        self.primary.list_procedures(db_name)
+    }
+
     fn flush(&self) -> Result<()> {
         self.primary.flush()?;
         if let Err(e) = self.secondary.flush() {
@@ -585,6 +724,7 @@ impl MetaBackend for DualWriteBackend {
 pub struct CatalogManager {
     databases: DashMap<String, Database>,
     materialized_views: DashMap<String, MaterializedView>,
+    procedures: DashMap<String, StoredProcedure>,
     next_id: AtomicU64,
     catalog_path: String,
     backend: Arc<dyn MetaBackend>,
@@ -650,6 +790,7 @@ impl CatalogManager {
         Self {
             databases: dbs,
             materialized_views: DashMap::new(),
+            procedures: DashMap::new(),
             next_id: AtomicU64::new(1),
             catalog_path: config.catalog_path,
             backend,
@@ -682,6 +823,7 @@ impl CatalogManager {
         Self {
             databases: dbs,
             materialized_views: DashMap::new(),
+            procedures: DashMap::new(),
             next_id: AtomicU64::new(1),
             catalog_path: path,
             backend: dual_backend,
@@ -843,6 +985,31 @@ impl CatalogManager {
             .collect()
     }
 
+    pub fn create_procedure(&self, db_name: &str, proc: StoredProcedure) -> Result<()> {
+        let key = format!("{}.{}", db_name, proc.name);
+        self.backend.put_procedure(db_name, &proc.name, &proc)?;
+        self.procedures.insert(key, proc);
+        Ok(())
+    }
+
+    pub fn drop_procedure(&self, db_name: &str, name: &str) -> Result<()> {
+        let key = format!("{}.{}", db_name, name);
+        self.procedures.remove(&key);
+        self.backend.delete_procedure(db_name, name)
+    }
+
+    pub fn get_procedure(&self, db_name: &str, name: &str) -> Result<Option<StoredProcedure>> {
+        let key = format!("{}.{}", db_name, name);
+        if let Some(p) = self.procedures.get(&key) {
+            return Ok(Some(p.value().clone()));
+        }
+        self.backend.get_procedure(db_name, name)
+    }
+
+    pub fn list_procedures(&self, db_name: &str) -> Result<Vec<StoredProcedure>> {
+        self.backend.list_procedures(db_name)
+    }
+
     /// Serialize catalog state to JSON file (for backward compatibility)
     pub fn save(&self) -> common::Result<()> {
         use std::fs;
@@ -855,6 +1022,11 @@ impl CatalogManager {
                 .collect(),
             materialized_views: self
                 .materialized_views
+                .iter()
+                .map(|r| (r.key().clone(), r.value().clone()))
+                .collect(),
+            procedures: self
+                .procedures
                 .iter()
                 .map(|r| (r.key().clone(), r.value().clone()))
                 .collect(),
@@ -910,6 +1082,16 @@ impl CatalogManager {
             self.databases.insert(db_name, db);
         }
 
+        // Load procedures
+        for db_name in self.databases.iter().map(|r| r.key().clone()).collect::<Vec<_>>() {
+            if let Ok(procs) = self.backend.list_procedures(&db_name) {
+                for proc in procs {
+                    let key = format!("{}.{}", db_name, proc.name);
+                    self.procedures.insert(key, proc);
+                }
+            }
+        }
+
         // Load next_id from backend
         if let Ok(id) = self.backend.get_next_id() {
             self.next_id.store(id, Ordering::SeqCst);
@@ -963,6 +1145,8 @@ impl CatalogManager {
 struct CatalogState {
     databases: HashMap<String, Database>,
     materialized_views: HashMap<String, MaterializedView>,
+    #[serde(default)]
+    procedures: HashMap<String, StoredProcedure>,
     next_id: u64,
 }
 
@@ -1097,6 +1281,23 @@ impl MetaBackend for Arc<dyn MetaBackend> {
     }
     fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
         (**self).list_materialized_views(db_name)
+    }
+    fn put_procedure(
+        &self,
+        db_name: &str,
+        name: &str,
+        proc: &StoredProcedure,
+    ) -> Result<()> {
+        (**self).put_procedure(db_name, name, proc)
+    }
+    fn get_procedure(&self, db_name: &str, name: &str) -> Result<Option<StoredProcedure>> {
+        (**self).get_procedure(db_name, name)
+    }
+    fn delete_procedure(&self, db_name: &str, name: &str) -> Result<()> {
+        (**self).delete_procedure(db_name, name)
+    }
+    fn list_procedures(&self, db_name: &str) -> Result<Vec<StoredProcedure>> {
+        (**self).list_procedures(db_name)
     }
     fn flush(&self) -> Result<()> {
         (**self).flush()

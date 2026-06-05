@@ -31,6 +31,9 @@ members = [
     "crates/lindorm-protocol",
     "crates/sql-translators",
 
+    # T-SQL / SAP ASE support
+    "crates/tsql-parser",
+
     # Metadata backend
     "crates/be-rocks",
 

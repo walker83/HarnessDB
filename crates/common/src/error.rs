@@ -55,6 +55,15 @@ pub enum DharnessError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("procedure error: {0}")]
+    Procedure(#[from] ProcedureError),
+
+    #[error("tds protocol error: {0}")]
+    Tds(String),
+
+    #[error("tsql parse error: {0}")]
+    TsqlParse(String),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -280,4 +289,78 @@ impl DharnessError {
             message: message.into(),
         }
     }
+
+    pub fn procedure(err: ProcedureError) -> Self {
+        DharnessError::Procedure(err)
+    }
+
+    pub fn tds(message: impl Into<String>) -> Self {
+        DharnessError::Tds(message.into())
+    }
+
+    pub fn tsql_parse(message: impl Into<String>) -> Self {
+        DharnessError::TsqlParse(message.into())
+    }
+}
+
+/// Errors specific to T-SQL stored procedure execution.
+#[derive(Error, Debug, Clone)]
+pub enum ProcedureError {
+    #[error("variable not declared: {0}")]
+    VariableNotDeclared(String),
+
+    #[error("procedure not found: {0}")]
+    ProcedureNotFound(String),
+
+    #[error("procedure already exists: {0}")]
+    ProcedureAlreadyExists(String),
+
+    #[error("cursor not declared: {0}")]
+    CursorNotDeclared(String),
+
+    #[error("cursor already declared: {0}")]
+    CursorAlreadyDeclared(String),
+
+    #[error("cursor is not open: {0}")]
+    CursorNotOpen(String),
+
+    #[error("label not found: {0}")]
+    LabelNotFound(String),
+
+    #[error("type conversion error: cannot convert {from} to {to}")]
+    TypeConversion { from: String, to: String },
+
+    #[error("parameter mismatch: expected {expected}, got {got}")]
+    ParameterMismatch { expected: usize, got: usize },
+
+    #[error("max nesting level ({0}) exceeded")]
+    MaxNestLevelExceeded(u32),
+
+    #[error("no active transaction")]
+    NoTransaction,
+
+    #[error("syntax error in procedure: {0}")]
+    SyntaxError(String),
+
+    #[error("division by zero")]
+    DivisionByZero,
+
+    #[error("user-raised error: severity={severity}, state={state}, message={message}")]
+    Raiserror {
+        severity: u8,
+        state: u8,
+        message: String,
+    },
+
+    #[error("break or continue outside of loop")]
+    BreakContinueOutsideLoop,
+
+    #[error("return outside procedure")]
+    ReturnOutsideProcedure,
+
+    #[error("output parameter not a variable: {0}")]
+    OutputParamNotVariable(String),
+
+    #[error("temp table error: {0}")]
+    TempTableError(String),
 }

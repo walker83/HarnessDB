@@ -1,0 +1,13 @@
+[package]
+name = "tsql-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hand-rolled T-SQL (SAP ASE 16 / Sybase) parser with full stored procedure support"
+
+[dependencies]
+types = { path = "../types" }
+common = { path = "../common" }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
