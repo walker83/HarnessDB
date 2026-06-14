@@ -8,5 +8,5 @@ repository.workspace = true
 [dependencies]
 tds-protocol = { path = "../tds-protocol" }
 mysql-protocol = { path = "../mysql-protocol" }
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true }
 tracing = "0.1"

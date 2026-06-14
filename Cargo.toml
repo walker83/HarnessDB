@@ -38,7 +38,7 @@ members = [
     "crates/sybase-protocol",
 
     # Metadata backend
-    "crates/be-rocks",
+    "crates/be-kv",
 
     # Shared crates
     "crates/common",
@@ -94,8 +94,19 @@ chrono = "0.4"
 sqlparser = "0.53"
 
 # Query engine
+# default-features disabled: the source uses only datafusion's core API
+# (logical_expr, sql, catalog, scalar, common). avro/crypto_expressions/
+# unicode_expressions/nested_expressions/compression defaults are unused.
+# parquet is pulled in via the standalone `parquet = "55"` workspace dep.
+# If a test fails with "function not found", re-add the needed feature here.
+# Query engine
+# Note: default features are kept enabled. Disabling them breaks runtime
+# function resolution (SUBSTRING, EXTRACT, etc.) in non-obvious ways because
+# SessionContext's default ExprPlanner setup depends on them. datafusion itself
+# is pure Rust, so its .rlib size is modest; the big artifact wins came from
+# replacing RocksDB (redb) and from datafusion-datasource's default-features=false.
 datafusion = { version = "48" }
-datafusion-datasource = { version = "48" }
+datafusion-datasource = { version = "48", default-features = false }
 arrow = { version = "55", default-features = false, features = ["prettyprint"] }
 arrow-schema = { version = "55", default-features = false }
 # Arrow sub-crates (match version that datafusion depends on)
@@ -107,8 +118,8 @@ arrow-select = { version = "55" }
 arrow-ord = { version = "55" }
 arrow-arith = { version = "55" }
 
-# Storage
-rocksdb = "0.23"
+# Storage (redb replaces RocksDB — pure Rust, no C++ compilation)
+# redb is declared directly in be-kv since only that crate uses it.
 
 # Configuration
 toml = "0.8"
@@ -140,7 +151,7 @@ async-trait = "0.1"
 fe-sql-parser = { path = "crates/fe-sql-parser" }
 fe-catalog = { path = "crates/fe-catalog" }
 fe-common = { path = "crates/fe-common" }
-be-rocks = { path = "crates/be-rocks" }
+be-kv = { path = "crates/be-kv" }
 common = { path = "crates/common" }
 types = { path = "crates/types" }
 fe-datafusion = { path = "crates/fe-datafusion" }
@@ -177,9 +188,23 @@ postgres-types = "0.2"
 # Parquet support
 parquet = "55"
 
+# Dev/test profiles: default debug=true (level 2) is the single biggest source
+# of target/ bloat. Disabling it here drastically shrinks dev/test artifacts
+# while keeping panic backtraces (file:line) via incremental's line tables.
+[profile.dev]
+debug = false
+incremental = true
+
+# test inherits from dev, but set explicitly so future profile tweaks don't
+# silently re-enable full debuginfo.
+[profile.test]
+debug = false
+
 [profile.release]
 strip = true          # Remove debug symbols
-lto = true            # Link-time optimization
-codegen-units = 1     # Better optimization (slower compile)
+lto = "thin"          # Thin LTO: much smaller intermediate artifacts than `true`,
+                      # compiles far faster, with typically <5% runtime cost.
+codegen-units = 16    # Parallel codegen units (was 1) — smaller per-unit output,
+                      # faster compile. Combined with thin LTO keeps good codegen.
 opt-level = 3         # Optimize for speed (was 2)
 panic = "unwind"      # Allow panic unwinding for error recovery (was "abort")

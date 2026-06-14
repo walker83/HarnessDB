@@ -1,0 +1,32 @@
+# Cargo build configuration for HarnessDB.
+#
+# This file is checked into the repo. The settings below are commented out by
+# default so a fresh clone builds without extra prerequisites. Uncomment the
+# block(s) you want after installing the relevant tool.
+
+# ----------------------------------------------------------------------------
+# sccache — compiler cache. Speeds up recompiles after `cargo clean` and across
+# machines. Does NOT shrink target/ size (it caches in ~/.cache/sccache), but
+# avoids re-paying the full RocksDB / datafusion compile cost every clean.
+#
+# Install:  brew install sccache        (macOS)
+#           apt install sccache         (Debian/Ubuntu)
+# Enable:   uncomment the two lines below.
+# ----------------------------------------------------------------------------
+# [build]
+# rustc-wrapper = "sccache"
+
+# ----------------------------------------------------------------------------
+# mold — a much faster linker on Linux x86_64. Reduces link time (the dominant
+# cost for the 19->1 test binary relink and for release LTO).
+#
+# Install:  apt install mold             (Debian/Ubuntu)
+#           or build from source
+# Enable:   uncomment the block below.
+#
+# NOTE: mold is Linux-only. macOS (arm64) already ships a fast linker; no
+# equivalent config is needed there.
+# ----------------------------------------------------------------------------
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]

@@ -8,7 +8,7 @@ echo "=== RorisDB Quick Demo ==="
 echo ""
 
 # Check if binary exists
-if [ ! -f "./target/release/roris-fe" ]; then
+if [ ! -f "./target/release/harness-db" ]; then
     echo "Building RorisDB..."
     cargo build --release
 fi
@@ -16,7 +16,7 @@ fi
 # Start server in background
 echo "Starting RorisDB server..."
 rm -rf /tmp/roris-demo-data /tmp/roris-demo-meta
-./target/release/roris-fe --mysql-port 9031 --data-dir /tmp/roris-demo-data --meta-dir /tmp/roris-demo-meta > /tmp/roris-demo.log 2>&1 &
+./target/release/harness-db --mysql-port 9031 --data-dir /tmp/roris-demo-data --meta-dir /tmp/roris-demo-meta > /tmp/roris-demo.log 2>&1 &
 SERVER_PID=$!
 sleep 2
 
