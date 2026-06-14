@@ -330,26 +330,10 @@ impl CatalogStore {
     // Internal helpers
 
     fn list_keys_with_prefix(&self, cf_name: &str, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let cf = self
-            .store
-            .db()
-            .cf_handle(cf_name)
-            .ok_or_else(|| RocksStoreError::InvalidKey(format!("CF {} not found", cf_name)))?;
-
-        let mut iter = self.store.db().raw_iterator_cf(&cf);
-        iter.seek(prefix);
-
-        let mut keys = Vec::new();
-        while iter.valid() {
-            let key = iter.key().unwrap_or_default();
-            if key.starts_with(prefix) {
-                keys.push(key.to_vec());
-                iter.next();
-            } else {
-                break;
-            }
-        }
-        Ok(keys)
+        // Delegates to MetaStore::iter_prefix (redb range scan + starts_with filter).
+        // Only the keys are needed here; values are discarded.
+        let pairs = self.store.iter_prefix(cf_name, prefix)?;
+        Ok(pairs.into_iter().map(|(k, _)| k).collect())
     }
 
     fn delete_keys_with_prefix(&self, cf_name: &str, prefix: &[u8]) -> Result<()> {

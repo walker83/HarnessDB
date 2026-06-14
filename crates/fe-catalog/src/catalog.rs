@@ -335,29 +335,29 @@ impl JsonMetaBackend {
     }
 }
 
-/// RocksDB-based metadata backend.
-/// Uses be-rocks::CatalogStore for persistent storage.
-pub struct RocksMetaBackend {
-    catalog_store: be_rocks::CatalogStore,
+/// redb-backed metadata backend.
+/// Uses be-kv::CatalogStore for persistent storage.
+pub struct KvMetaBackend {
+    catalog_store: be_kv::CatalogStore,
 }
 
-impl RocksMetaBackend {
+impl KvMetaBackend {
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        let meta_store = be_rocks::MetaStore::open(path)
-            .map_err(|e| DharnessError::Internal(format!("Failed to open RocksDB: {}", e)))?;
-        let catalog_store = be_rocks::CatalogStore::new(Arc::new(meta_store));
+        let meta_store = be_kv::MetaStore::open(path)
+            .map_err(|e| DharnessError::Internal(format!("Failed to open KV store: {}", e)))?;
+        let catalog_store = be_kv::CatalogStore::new(Arc::new(meta_store));
         Ok(Self { catalog_store })
     }
 }
 
-impl MetaBackend for RocksMetaBackend {
+impl MetaBackend for KvMetaBackend {
     fn put_database(&self, name: &str, db: &Database) -> Result<()> {
         // Serialize fe_catalog::Database to JSON bytes and store raw
         let data = serde_json::to_vec(db)
             .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
         self.catalog_store
             .put_database_raw(name, &data)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn get_database(&self, name: &str) -> Result<Option<Database>> {
@@ -365,7 +365,7 @@ impl MetaBackend for RocksMetaBackend {
         let data = self
             .catalog_store
             .get_database_raw(name)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
             .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
@@ -374,13 +374,13 @@ impl MetaBackend for RocksMetaBackend {
     fn delete_database(&self, name: &str) -> Result<()> {
         self.catalog_store
             .delete_database(name)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn list_databases(&self) -> Result<Vec<String>> {
         self.catalog_store
             .list_databases()
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn put_table(&self, db_name: &str, table_name: &str, table: &Table) -> Result<()> {
@@ -389,7 +389,7 @@ impl MetaBackend for RocksMetaBackend {
             .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
         self.catalog_store
             .put_table_raw(db_name, table_name, &data)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn get_table(&self, db_name: &str, table_name: &str) -> Result<Option<Table>> {
@@ -397,7 +397,7 @@ impl MetaBackend for RocksMetaBackend {
         let data = self
             .catalog_store
             .get_table_raw(db_name, table_name)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
             .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
@@ -406,31 +406,31 @@ impl MetaBackend for RocksMetaBackend {
     fn delete_table(&self, db_name: &str, table_name: &str) -> Result<()> {
         self.catalog_store
             .delete_table(db_name, table_name)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn list_tables(&self, db_name: &str) -> Result<Vec<String>> {
         self.catalog_store
             .list_tables(db_name)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn next_id(&self) -> Result<u64> {
         self.catalog_store
             .next_id()
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn set_next_id(&self, value: u64) -> Result<()> {
         self.catalog_store
             .set_next_id(value)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn get_next_id(&self) -> Result<u64> {
         self.catalog_store
             .get_next_id()
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn put_materialized_view(
@@ -445,7 +445,7 @@ impl MetaBackend for RocksMetaBackend {
             .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
         self.catalog_store
             .put_raw(&key, &value)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn get_materialized_view(&self, db_name: &str, name: &str) -> Result<Option<MaterializedView>> {
@@ -453,7 +453,7 @@ impl MetaBackend for RocksMetaBackend {
         let data = self
             .catalog_store
             .get_raw(&key)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
             .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
@@ -463,7 +463,7 @@ impl MetaBackend for RocksMetaBackend {
         let key = format!("mv:{}.{}", db_name, name);
         self.catalog_store
             .delete_raw(&key)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn list_materialized_views(&self, db_name: &str) -> Result<Vec<MaterializedView>> {
@@ -471,13 +471,13 @@ impl MetaBackend for RocksMetaBackend {
         let keys = self
             .catalog_store
             .list_keys_with_prefix_str(&prefix)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?;
         let mut mvs = Vec::new();
         for key in keys {
             if let Some(data) = self
                 .catalog_store
                 .get_raw(&key)
-                .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?
+                .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?
             {
                 if let Ok(mv) = serde_json::from_slice::<MaterializedView>(&data) {
                     mvs.push(mv);
@@ -498,7 +498,7 @@ impl MetaBackend for RocksMetaBackend {
             .map_err(|e| DharnessError::Internal(format!("Serialization error: {}", e)))?;
         self.catalog_store
             .put_raw(&key, &value)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn get_procedure(&self, db_name: &str, name: &str) -> Result<Option<StoredProcedure>> {
@@ -506,7 +506,7 @@ impl MetaBackend for RocksMetaBackend {
         let data = self
             .catalog_store
             .get_raw(&key)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?;
         data.map(|d| serde_json::from_slice(&d))
             .transpose()
             .map_err(|e| DharnessError::Internal(format!("Deserialization error: {}", e)))
@@ -516,7 +516,7 @@ impl MetaBackend for RocksMetaBackend {
         let key = format!("proc:{}.{}", db_name, name);
         self.catalog_store
             .delete_raw(&key)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn list_procedures(&self, db_name: &str) -> Result<Vec<StoredProcedure>> {
@@ -524,13 +524,13 @@ impl MetaBackend for RocksMetaBackend {
         let keys = self
             .catalog_store
             .list_keys_with_prefix_str(&prefix)
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?;
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?;
         let mut procs = Vec::new();
         for key in keys {
             if let Some(data) = self
                 .catalog_store
                 .get_raw(&key)
-                .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))?
+                .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))?
             {
                 if let Ok(proc) = serde_json::from_slice::<StoredProcedure>(&data) {
                     procs.push(proc);
@@ -543,11 +543,11 @@ impl MetaBackend for RocksMetaBackend {
     fn flush(&self) -> Result<()> {
         self.catalog_store
             .flush()
-            .map_err(|e| DharnessError::Internal(format!("RocksDB error: {}", e)))
+            .map_err(|e| DharnessError::Internal(format!("KV store error: {}", e)))
     }
 
     fn load(&self) -> Result<()> {
-        // RocksDB data is already persisted, no explicit load needed
+        // KV store data is already persisted, no explicit load needed
         Ok(())
     }
 }
@@ -769,13 +769,13 @@ impl CatalogManager {
     pub fn with_config(config: CatalogConfig) -> Self {
         let (backend, backend_type_name): (Arc<dyn MetaBackend>, &'static str) =
             if config.use_rocks_meta {
-                let rocks_path = format!("{}/rocksdb", config.catalog_path);
+                let kv_path = format!("{}/kvstore", config.catalog_path);
                 (
                     Arc::new(
-                        RocksMetaBackend::new(&rocks_path)
-                            .expect("Failed to initialize RocksDB backend"),
+                        KvMetaBackend::new(&kv_path)
+                            .expect("Failed to initialize KV store backend"),
                     ),
-                    "rocksdb",
+                    "kvstore",
                 )
             } else {
                 (Arc::new(JsonMetaBackend::new(&config.catalog_path)), "json")
@@ -800,18 +800,18 @@ impl CatalogManager {
     }
 
     /// Create a CatalogManager with dual-write mode.
-    /// Writes go to both JSON and RocksDB backends.
+    /// Writes go to both JSON and KV (redb) backends.
     pub fn with_dual_write(path: impl Into<String>) -> Self {
         let path = path.into();
         let json_backend = Arc::new(JsonMetaBackend::new(&path));
-        let rocks_path = format!("{}/rocksdb", path);
-        let rocks_backend = Arc::new(
-            RocksMetaBackend::new(&rocks_path).expect("Failed to initialize RocksDB backend"),
+        let kv_path = format!("{}/kvstore", path);
+        let kv_backend = Arc::new(
+            KvMetaBackend::new(&kv_path).expect("Failed to initialize KV store backend"),
         );
 
         let dual_backend = Arc::new(DualWriteBackend::new(
             json_backend.clone(),
-            rocks_backend.clone(),
+            kv_backend.clone(),
         ));
 
         let dbs = DashMap::new();
@@ -1453,7 +1453,7 @@ mod tests {
 
         mgr.save().unwrap();
 
-        // Drop mgr to release the RocksDB lock before reopening
+        // Drop mgr to release the KV store lock before reopening
         drop(mgr);
 
         // Reopen and verify

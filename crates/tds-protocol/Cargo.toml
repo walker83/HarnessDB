@@ -7,6 +7,6 @@ repository.workspace = true
 
 [dependencies]
 mysql-protocol = { path = "../mysql-protocol" }
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true }
 bytes = "1"
 tracing = "0.1"

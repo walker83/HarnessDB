@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 mysql-protocol = { path = "../../crates/mysql-protocol" }
 tpch-bench = { path = "../../benches/tpch" }
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true }
 anyhow = "1"
 types = { path = "../../crates/types" }
 tracing-subscriber = "0.3"

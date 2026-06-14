@@ -13,9 +13,9 @@ fe-catalog = { path = "../fe-catalog" }
 fe-storage = { path = "../fe-storage" }
 fe-datafusion = { path = "../fe-datafusion" }
 mysql-protocol = { path = "../mysql-protocol" }
-datafusion = "48"
-arrow = { version = "55", features = ["prettyprint"] }
-tokio = { version = "1", features = ["full"] }
+datafusion = { workspace = true }
+arrow = { workspace = true }
+tokio = { workspace = true }
 dashmap = "6"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
